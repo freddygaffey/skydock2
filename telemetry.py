@@ -1,0 +1,107 @@
+import threading
+import time
+import serial
+# import numpy as np
+
+from pymavlink import mavutil
+
+
+class Telemetry:
+    def __init__(self):
+
+        self.passer_has_started = False
+        self.passer_fuctions = []
+
+        threading.Thread(target=self.start_passer(),daemon=True)
+
+        # connect to drone
+        try:
+            path_to_uav = "/dev/ttyACM1"
+            self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
+            self.connection.wait_heartbeat()
+            move_singleton.connection = self.connection
+        except serial.serialutil.SerialException:
+            pass
+        try:
+            path_to_uav = "/dev/ttyACM0"
+            self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
+            self.connection.wait_heartbeat()
+            move_singleton.connection = self.connection
+        except serial.serialutil.SerialException:
+            pass
+
+    def passer(self,function: function, pram_and_time_dict :dict[str,int]):
+        """adds a functon that will be passed bu the passer and the interval"""    
+        for i in pram_and_time_dict:
+            self.set_a_message_interval(i,pram_and_time_dict[i]) # the name and the time
+
+        self.passer_fuctions.append(function)
+
+    def start_passer(self):
+        """this will itrate over the array of functons that are passed by the passer function"""
+        while True:
+            try:
+                msg = self.connection.recv_msg()
+            except serial.SerialException: pass
+
+            if msg is None:
+                time.sleep(0.0003)
+                continue
+
+            for i in self.passer_fuctions:
+                i(msg)
+
+    def run_pre_flight_checks(self):
+        """retun true if good to go
+        retun the arm fail message if not good to go"""
+        for _ in range(5):
+            self.connection.mav.command_long_send(
+                self.connection.target_system,       # target_system
+                self.connection.target_component,    # target_component
+                mavutil.mavlink.MAV_CMD_RUN_PREARM_CHECKS,  # command 401
+                0,                          # confirmation
+                0, 0, 0, 0, 0, 0, 0         # params 1-7 (not used)
+            )
+
+            result = self.connection.recv_match(type='COMMAND_ACK', blocking=True,timeout=1)
+            if result.command == 401:
+                break
+
+        msg = self.connection.recv_match(type='STATUSTEXT', blocking=True, timeout=1)
+        if msg:
+            return msg.text
+        if msg is None and result.command == 401:
+            return True
+        else:
+            return None
+        # example of fialing
+        # COMMAND_ACK {command : 401, result : 0, progress : 0, result_param2 : 0, target_system : 255, target_component : 0}
+        # PreArm: GPS 1: Bad fix
+
+    def set_a_message_interval(self,message_name,interval=1):
+        """interval in sec"""
+        # https://mavlink.io/en/mavgen_python/howto_requestmessages.html
+        interval *= 1000000
+        message = self.connection.mav.command_long_encode(
+            self.connection.target_system,
+            self.connection.target_component,
+            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+            0,  # Confirmation
+            eval(f"mavutil.mavlink.MAVLINK_MSG_ID_{message_name}"), # param1: Message streamed
+            interval, # param2: Interval in microseconds
+            0,0,0,0,0)
+
+        # Send the COMMAND_LONG
+        self.connection.mav.send(message)
+        string_to_print = f"set {message_name} to repeat every: {str(interval/1000000)} seconds"
+        print(string_to_print)
+
+    def send_text_message(self,message:str):
+        """a wrapper around a sending a text should do incoding somewhere else"""
+        if len(message) > 50-7:
+            raise ValueError("the send text message must be under 50 chars")
+        self.connection.mav.statustext_send(
+            mavutil.mavlink.MAV_SEVERITY_INFO,
+            f"{message}".encode("utf-8"))
+
+telemetry_singlton = Telemetry()
