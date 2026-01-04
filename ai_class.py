@@ -103,11 +103,6 @@ class ai_storage():
                 frames_to_return.append(i)
 
     def start_ai(self):
-        # Add hailo_apps path if editable install is pointing to wrong location
-        hailo_apps_path = Path("/home/fred/hailo-apps-infra")
-        if str(hailo_apps_path) not in sys.path:
-            sys.path.insert(0, str(hailo_apps_path))
-
         from hailo_apps.hailo_app_python.apps.detection.detection import (
             app_callback,
             user_app_callback_class
@@ -133,7 +128,7 @@ class ai_storage():
 ai_storage_singleton = ai_storage()
 # ai_storage_singleton._ai_storage__start_ai()
 
-camera_prams = Camera()
+# camera_prams = Camera()
 
 
 
