@@ -4,6 +4,7 @@ import time
 import threading
 import time
 from pymavlink import mavutil
+from passer import Passer
 
 class Move():
     def __init__(self):
@@ -16,6 +17,10 @@ class Move():
 
         self._v_thread = None
         self._v_thread_stop_event = threading.Event()
+
+        self.passer = Passer(self.msg_passer,{
+            "HEARTBEAT": 1})
+
 
     def set_mode(self, mode:str):
         if mode not in self.mode_mapping.keys():
@@ -36,7 +41,7 @@ class Move():
     def is_armed(self):
         # TODO: this is not garityed to work 
         return self.arm_state
-
+    
     def msg_passer(self,msg:str):
         """retuns the currnt mode (in eglish)"""
         if msg._type == "HEARTBEAT":
@@ -55,6 +60,7 @@ class Move():
             self.current_mode = current_mode
         # return current_mode
 
+    
     def send_displacement_command_yaw_stay_same(self,mx:float,my:float,mz:float,bitmask:int=4088):
             self.connection.mav.set_position_target_local_ned_send(
                 0,
