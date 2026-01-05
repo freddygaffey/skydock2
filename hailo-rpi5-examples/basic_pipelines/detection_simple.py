@@ -1,3 +1,5 @@
+from ai_class import ai_storage, Frame, Detection
+
 import os
 from pathlib import Path
 import gi
@@ -14,17 +16,33 @@ class user_app_callback_class(app_callback_class):
 
 # User-defined callback function: This is the callback function that will be called when data is available from the pipeline
 def app_callback(pad, info, user_data):
-    user_data.increment()  # Using the user_data to count the number of frames
-    string_to_print = f"Frame count: {user_data.get_count()}\n"
+    print("ai callbeck called ")
+    photo_palth = "NO_PHOTO_TAKEN" 
+
     buffer = info.get_buffer()  # Get the GstBuffer from the probe info
     if buffer is None:  # Check if the buffer is valid
         return Gst.PadProbeReturn.OK
-    for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  # Get the detections from the buffer & Parse the detections
-        string_to_print += (f"Detection: {detection.get_label()} Confidence: {detection.get_confidence():.2f}\n")
-    print(string_to_print)
+
+    det_array = []
+    for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  
+        bbox = detection.get_bbox()
+        label = detection.get_label()
+        confidence = detection.get_confidence()
+        
+        # Create Detection object instead of just appending bbox
+        det = Detection(
+            label=label,
+            confidence=confidence,
+            bbox=[(bbox.xmin(), bbox.ymin()), (bbox.xmax(), bbox.ymax())]
+        )
+        det_array.append(det)
+        
+    frame = Frame(det_array,photo_palth)
+    ai_storage.add_frame(frame)
+        
     return Gst.PadProbeReturn.OK
 
-if __name__ == "__main__":
+def start_ai():
     project_root = Path(__file__).resolve().parent.parent
     env_file     = project_root / ".env"
     env_path_str = str(env_file)
@@ -32,3 +50,6 @@ if __name__ == "__main__":
     user_data = user_app_callback_class()  # Create an instance of the user app callback class
     app = GStreamerDetectionApp(app_callback, user_data)
     app.run()
+
+if __name__ == "__main__":
+    start_ai()
