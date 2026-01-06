@@ -39,71 +39,62 @@ class Camera:
     height: int = 720
 
 class Frame:
-    def __init__(self,det:list[Detection],photo_palth):
-        self.photo_palth = photo_palth
+    def __init__(self,det:list[Detection],photo_path):
+        self.photo_path = photo_path
         self.detection = det
 
     def add_detection(self,det:Detection):
         self.detection.append(det)
         
+class _Ai_storage:
+    """Private class - do not instantiate directly. Use the ai_storage singleton."""
 
+    def __init__(self):
+       self.frame_array: List[Frame] = []
+       self.frame_array_lock = threading.Lock()
+       self.is_ai_running = False
 
-class ai_storage:
-    frame_array: List[Frame] = []
-    frame_array_lock = threading.Lock()
-    is_ai_running = False
+       self.take_photo = False
+       self.photo_taken_last_frame = False
 
-    take_photo = False
-    photo_taken_last_frame = False
+    def add_frame(self, frame: Frame):
+        # print(f"add_frame called on class id: {id(self)}")  # ADD THIS
+        # print(f"frame_array id: {id(self.frame_array)}")     # ADD THIS
 
-    @classmethod     
-    def add_frame(cls,frame:Frame):
-        print("added frame ") 
-        if frame.photo_palth != "NO_PHOTO_TAKEN":
-            cls.photo_taken_last_frame = True
-            
-        else: cls.photo_taken_last_frame = False
+        if frame.photo_path != "NO_PHOTO_TAKEN":
+            self.photo_taken_last_frame = True
+        else:
+            self.photo_taken_last_frame = False
+        with self.frame_array_lock:
+            self.frame_array.append(frame)
+            # print(self.frame_array)
+        # print("added frame ") 
+        
+    def get_frame_array(self):
+        with self.frame_array_lock: return self.frame_array
 
-        with cls.frame_array_lock:
-            cls.frame_array.append(frame)
-
-    @classmethod
-    def start_ai(cls):
-        if cls.is_ai_running == True:
+    def start_ai(self):
+        if self.is_ai_running == True:
             raise SystemError("the ai is allready running")
 
-        cls.is_ai_running = True
-        from ai_callback import start_ai
-        threading.Thread(target=start_ai,daemon=True).start()
+        self.is_ai_running = True
+        ######## I dont understand but it works thanks ai #########
+        import sys
+        import ai_callback
+        # Force it to use THIS module's ai_storage
+        sys.modules['ai_callback'].ai_storage = self
+        ############################################################
 
+        app = ai_callback.make_ai_app()
+        threading.Thread(target=app.run).start()
+
+ai_storage = _Ai_storage() 
 if __name__ == "__main__":
-    ai_storage.start_ai()
-    while True:
-        print(ai_storage.__dict__)
-
+    print(f"Main: ai_storage instance id: {id(ai_storage)}")  # ← ADD THIS
+    print(f"Main: frame_array id: {id(ai_storage.frame_array)}")  # ← ADD THIS
     
-
-
-
-
-if __name__ == "__main__":
-    # from ai import ai_storage_singleton
-    ai_storage_singleton.start_ai()
+    ai_storage.start_ai()
+    time.sleep(2)
+    
     while True:
-        time.sleep(0.5)
-
-        last_frames = ai_storage_singleton.get_last_frames(1)
-        print(f"Last frames: {last_frames}\n")
-        # print(last_frames)
-
-
-
-        # if not last_frames:
-        #     print("is none")
-        #     continue
-        # else:
-        #     print(type(last_frames))
-        #     for i in last_frames[0]:
-        #         print(i)
-        #         print("\n")
-        #     print("-"*10)
+        print(ai_storage.get_frame_array())

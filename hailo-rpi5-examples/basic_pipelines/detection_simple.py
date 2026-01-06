@@ -16,8 +16,8 @@ class user_app_callback_class(app_callback_class):
 
 # User-defined callback function: This is the callback function that will be called when data is available from the pipeline
 def app_callback(pad, info, user_data):
-    print("ai callbeck called ")
-    photo_palth = "NO_PHOTO_TAKEN" 
+    # print("ai callbeck called ")
+    photo_path = "NO_PHOTO_TAKEN" 
 
     buffer = info.get_buffer()  # Get the GstBuffer from the probe info
     if buffer is None:  # Check if the buffer is valid
@@ -37,19 +37,20 @@ def app_callback(pad, info, user_data):
         )
         det_array.append(det)
         
-    frame = Frame(det_array,photo_palth)
+    frame = Frame(det_array,photo_path)
     ai_storage.add_frame(frame)
         
     return Gst.PadProbeReturn.OK
 
-def start_ai():
+def make_ai_app():
     project_root = Path(__file__).resolve().parent.parent
     env_file     = project_root / ".env"
     env_path_str = str(env_file)
     os.environ["HAILO_ENV_FILE"] = env_path_str
     user_data = user_app_callback_class()  # Create an instance of the user app callback class
     app = GStreamerDetectionApp(app_callback, user_data)
-    app.run()
+    return app
+    
 
 if __name__ == "__main__":
-    start_ai()
+    make_ai_app().run()
