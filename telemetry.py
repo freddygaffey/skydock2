@@ -6,10 +6,9 @@ import serial
 from pymavlink import mavutil
 from typing import Callable
 
-from move import move_singleton
 from passer import Passer
 
-    
+
 class Telemetry:
     def __init__(self):
 
@@ -25,6 +24,8 @@ class Telemetry:
                 path_to_uav = i
                 self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
                 self.connection.wait_heartbeat()
+                # Lazy import to avoid circular dependency
+                from move import move_singleton
                 move_singleton.connection = self.connection
             except serial.serialutil.SerialException:
                 count_of_time_passed += 1
@@ -34,7 +35,7 @@ class Telemetry:
         
         threading.Thread(target=self.start_passer,daemon=True).start()
     def passer(self,passer:Passer):
-        """adds a functon that will be passed bu the passer and the interval"""    
+        """adds a functon that will be passed be the passer and the interval"""    
         for i in passer.pram_and_time_dict:
             self.set_a_message_interval(i,passer.pram_and_time_dict[i]) # the name and the time
 
@@ -47,11 +48,12 @@ class Telemetry:
             except serial.SerialException: pass
 
             if msg is None:
-                time.sleep(0.0003)
+                time.sleep(0.003)
                 continue
 
             for i in self.passer_fuctions:
                 i(msg)
+
     def run_pre_flight_checks(self):
         """retun true if good to go
         retun the arm fail message if not good to go"""
@@ -95,12 +97,13 @@ class Telemetry:
         self.connection.mav.send(message)
         string_to_print = f"set {message_name} to repeat every: {str(interval/1000000)} seconds"
         print(string_to_print)
+
     def send_text_message(self,message:str):
         """a wrapper around a sending a text should do incoding somewhere else"""
-        if len(message) > 50-7:
+        if len(message) > 50-4:
             raise ValueError("the send text message must be under 50 chars")
         self.connection.mav.statustext_send(
             mavutil.mavlink.MAV_SEVERITY_INFO,
-            f"{message}".encode("utf-8"))
+            f"msg:{message}".encode("utf-8"))
 
 telemetry_singlton = Telemetry()

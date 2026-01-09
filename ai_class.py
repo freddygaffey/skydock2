@@ -29,7 +29,7 @@ class Detection():
 
 
 class Camera:
-    x_flip  = 1 # 1 is not flip -1 is flip 
+    x_flip  = 1 # 1 is not flip -1 is flip
     y_flip  = 1
     x_dist_per_pix_per_meter: float = 0.0003792011843564136 * x_flip
     y_dist_per_pix_per_meter: float = 0.0005137066016141622 * y_flip
@@ -71,11 +71,17 @@ class _Ai_storage:
         # print("added frame ") 
         
     def get_frame_array(self):
-        with self.frame_array_lock: return self.frame_array
+        with self.frame_array_lock: 
+            return self.frame_array
+
+    def get_frame_array_copy(self):
+        with self.frame_array_lock: 
+            return self.frame_array.copy()
 
     def start_ai(self):
         if self.is_ai_running == True:
-            raise SystemError("the ai is allready running")
+            print("ai is allreday running")
+            # raise SystemError("the ai is allready running")
 
         self.is_ai_running = True
         ######## I dont understand but it works thanks ai #########
@@ -89,6 +95,8 @@ class _Ai_storage:
         threading.Thread(target=app.run).start()
 
 ai_storage = _Ai_storage() 
+# ai_storage.start_ai()
+
 if __name__ == "__main__":
     print(f"Main: ai_storage instance id: {id(ai_storage)}")  # ← ADD THIS
     print(f"Main: frame_array id: {id(ai_storage.frame_array)}")  # ← ADD THIS

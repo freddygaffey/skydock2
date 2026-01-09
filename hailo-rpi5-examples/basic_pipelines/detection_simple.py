@@ -47,7 +47,7 @@ def make_ai_app():
     env_file     = project_root / ".env"
     env_path_str = str(env_file)
     os.environ["HAILO_ENV_FILE"] = env_path_str
-    user_data = user_app_callback_class()  # Create an instance of the user app callback class
+    user_data = user_app_callback_class()  
     app = GStreamerDetectionApp(app_callback, user_data)
     return app
     

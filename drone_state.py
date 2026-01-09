@@ -54,3 +54,5 @@ class DroneStateForHoming:
                 self.enabel_homing_and_autonomy = True
                 
 drone_state = DroneStateForHoming()
+from telemetry import telemetry_singlton
+telemetry_singlton.passer(drone_state.passer)

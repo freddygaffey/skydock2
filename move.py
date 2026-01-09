@@ -154,7 +154,7 @@ class Move():
                 return True
             time.sleep(1)
             
-    def arm_and_take_off_to_hight(self,hight): # dange UNTESTED
+    def arm_and_take_off_to_hight(self,hight): # danger UNTESTED
         # TODO: test in real world
             self.arm()
             self.connection.mav.command_long_send(
@@ -179,4 +179,5 @@ class Move():
             0,0,0,  
             0,0
             )
+
 move_singleton = Move()
