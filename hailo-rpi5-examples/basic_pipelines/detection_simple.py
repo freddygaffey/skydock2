@@ -16,29 +16,16 @@ class user_app_callback_class(app_callback_class):
 
 # User-defined callback function: This is the callback function that will be called when data is available from the pipeline
 def app_callback(pad, info, user_data):
-    # print("ai callbeck called ")
-    photo_path = "NO_PHOTO_TAKEN" 
 
     buffer = info.get_buffer()  # Get the GstBuffer from the probe info
     if buffer is None:  # Check if the buffer is valid
         return Gst.PadProbeReturn.OK
 
-    det_array = []
     for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  
         bbox = detection.get_bbox()
         label = detection.get_label()
         confidence = detection.get_confidence()
         
-        # Create Detection object instead of just appending bbox
-        det = Detection(
-            label=label,
-            confidence=confidence,
-            bbox=[(bbox.xmin(), bbox.ymin()), (bbox.xmax(), bbox.ymax())]
-        )
-        det_array.append(det)
-        
-    frame = Frame(det_array,photo_path)
-    ai_storage.add_frame(frame)
         
     return Gst.PadProbeReturn.OK
 

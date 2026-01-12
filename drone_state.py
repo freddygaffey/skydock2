@@ -1,7 +1,4 @@
-
-
 from dataclasses import dataclass
-from telemetry import Passer
 
 @dataclass
 class DroneStateForHoming:
@@ -21,12 +18,7 @@ class DroneStateForHoming:
     gimble_orintaion = 0 # 0 is pointing down 
     heading: float = 0
 
-    def __post_init__(self):
-        self.passer = Passer(self.msg_passer,
-                            {"GLOBAL_POSITION_INT":0.05,
-                            "SERVO_OUTPUT_RAW":0.05})
-
-    def msg_passer(self,msg):
+    def set_pass_message(self,msg):
         if msg is None:
             return 0
 
@@ -52,7 +44,3 @@ class DroneStateForHoming:
                 self.enabel_homing_and_autonomy = False
             if msg.servo8_raw > 1000:
                 self.enabel_homing_and_autonomy = True
-                
-drone_state = DroneStateForHoming()
-from telemetry import telemetry_singlton
-telemetry_singlton.passer(drone_state.passer)
