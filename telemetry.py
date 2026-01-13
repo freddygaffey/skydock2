@@ -1,17 +1,18 @@
 import threading
 import time
 import serial
-# import numpy as np
 
 from pymavlink import mavutil
 from typing import Callable
 from drone_state import DroneStateForHoming
 
-class Telemetry:
+class Telemetry(object):
+    def __new__(cls):
+        if not hasattr(cls, 'instance'):
+            cls.instance = super(Telemetry, cls).__new__(cls)
+        return cls.instance
     def __init__(self):
-
         self.drone_state = DroneStateForHoming() 
-
         count_of_time_passed = 0
         # connect to drone
 
@@ -34,8 +35,11 @@ class Telemetry:
         self._v_thread = None
         self._v_thread_stop_event = threading.Event()
     def start_passer(self):
-        self.set_a_message_interval("GLOBAL_POSITION_INT",0.05)
-        self.set_a_message_interval("SERVO_OUTPUT_RAW",0.05)
+
+        drone_state_rate = 1/35
+        self.set_a_message_interval("GLOBAL_POSITION_INT",drone_state_rate)
+        self.set_a_message_interval("SERVO_OUTPUT_RAW",drone_state_rate)
+        self.set_a_message_interval("ATTITUDE", drone_state_rate)
         self.set_a_message_interval("HEARTBEAT", 1)
 
         while True:

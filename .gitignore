@@ -1,3 +1,7 @@
+venv_wsl_no_hailo/
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

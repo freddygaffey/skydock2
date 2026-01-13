@@ -15,8 +15,8 @@ class DroneStateForHoming:
 
     enabel_homing_and_autonomy: bool = False
 
-    gimble_orintaion = 0 # 0 is pointing down 
     heading: float = 0
+    rotaion: list[float] = [0,0,0] # in rad xyz
 
     def set_pass_message(self,msg):
         if msg is None:
@@ -44,3 +44,6 @@ class DroneStateForHoming:
                 self.enabel_homing_and_autonomy = False
             if msg.servo8_raw > 1000:
                 self.enabel_homing_and_autonomy = True
+
+        if msg._type == "ATTITUDE":
+            self.rotation = [msg.roll, msg.pitch, msg.yaw] # xyz
