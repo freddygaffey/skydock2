@@ -1,3 +1,4 @@
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
@@ -15,6 +16,19 @@ class Detection():
         y = (self.bbox[0][1] + self.bbox[1][1]) / 2
         return x , y
 
+    def to_db_format(self):
+        center = self.get_center()
+        return (self.label,
+                self.confidence,
+                self.bbox[0][0], 
+                self.bbox[0][1],
+                self.bbox[1][0],
+                self.bbox[1][1],
+                center[0],
+                center[1],
+                self.track_id,
+                self.time_detected)
+         
 class Frame:
     def __init__(self,det:list[Detection],photo_path):
         self.photo_path = photo_path

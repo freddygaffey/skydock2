@@ -16,7 +16,9 @@ class DroneStateForHoming:
     enabel_homing_and_autonomy: bool = False
 
     heading: float = 0
-    rotaion: list[float] = [0,0,0] # in rad xyz
+    rotaion_x: float = 0 # in rad 
+    rotaion_y: float = 0 # in rad 
+    rotaion_z: float = 0 # in rad 
 
     def set_pass_message(self,msg):
         if msg is None:
@@ -46,4 +48,17 @@ class DroneStateForHoming:
                 self.enabel_homing_and_autonomy = True
 
         if msg._type == "ATTITUDE":
-            self.rotation = [msg.roll, msg.pitch, msg.yaw] # xyz
+            self.rotaion_x = msg.roll 
+            self.rotaion_y = msg.pitch
+            self.rotaion_z = msg.yaw
+
+    def to_db_format(self):
+        return (self.time_updated_GLOBAL_POSITION_INT,
+                self.longitude,
+                self.latitude,
+                self.altitude_rel_home,
+                self.heading,
+                self.enabel_homing_and_autonomy,
+                self.rotaion_x,
+                self.rotaion_y,
+                self.rotaion_z)

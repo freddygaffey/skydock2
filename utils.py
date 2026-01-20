@@ -1,13 +1,14 @@
 from ai_class import Detection
 from drone_state import DroneStateForHoming
 from math import radians, tan
+import math
 
 
 def rotate_det(det,dgr):
     # TODO: actualy make work
     return det
 
-def calulate_s_for_drone_state_and_frame(drone_state: DroneState, detection: Detection) -> float:
+def calulate_s_for_drone_state_and_frame(drone_state: DroneStateForHoming, detection: Detection) -> float:
     detection = rotate_det(detection)
     MIN_HIGHT = 1 # m
     MAX_SPEED = 3 # m/s
@@ -36,3 +37,19 @@ def calulate_s_for_drone_state_and_frame(drone_state: DroneState, detection: Det
     return xs, ys
 
     
+def haversine_distance(lat1, lon1, lat2, lon2) -> float:
+    """Calculate the great-circle distance between two GPS points in meters."""
+    R = 6371000  # Earth radius in meters
+    # lat1, lon1 = poss_1
+    # lat2, lon2 = poss_2
+
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_phi / 2) ** 2 + \
+        math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c

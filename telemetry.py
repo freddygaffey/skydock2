@@ -11,21 +11,24 @@ class Telemetry(object):
         if not hasattr(cls, 'instance'):
             cls.instance = super(Telemetry, cls).__new__(cls)
         return cls.instance
+
     def __init__(self):
         self.drone_state = DroneStateForHoming() 
         count_of_time_passed = 0
         # connect to drone
 
-        connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10"]
+        # connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10","udp:127.0.0.1:14552"]
+        connection_palths = ["udp:127.0.0.1:14552"]
         for i in connection_palths:
             try:
                 path_to_uav = i
                 self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
-                self.connection.wait_heartbeat()
+                self.connection.wait_heartbeat(timeout=5)
+                # self.connection.wait_heartbeat(timeout=5)
             except serial.serialutil.SerialException:
-                count_of_time_passed += 1
+                pass
 
-        if count_of_time_passed == len(connection_palths):
+        if not self.connection:
             raise ConnectionError("could not connect to the fc")
 
         self.mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
@@ -34,9 +37,11 @@ class Telemetry(object):
 
         self._v_thread = None
         self._v_thread_stop_event = threading.Event()
-    def start_passer(self):
+        threading.Thread(target=self.start_passer).start()
 
+    def start_passer(self):
         drone_state_rate = 1/35
+        # drone_state_rate = 1
         self.set_a_message_interval("GLOBAL_POSITION_INT",drone_state_rate)
         self.set_a_message_interval("SERVO_OUTPUT_RAW",drone_state_rate)
         self.set_a_message_interval("ATTITUDE", drone_state_rate)
@@ -250,3 +255,7 @@ class Telemetry(object):
             )
 
 telemetry_singlton = Telemetry()
+
+if __name__ == "__main__":
+    while 1:print(telemetry_singlton.drone_state)
+    pass
