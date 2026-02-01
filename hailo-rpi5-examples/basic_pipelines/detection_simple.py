@@ -1,5 +1,7 @@
-from ai_class import ai_storage, Frame, Detection
+# from ai_class import ai_storage, Frame, Detection
+from ai_class import ai_storage_singleton, Detection, Frame
 
+import time
 import os
 from pathlib import Path
 import gi
@@ -21,12 +23,23 @@ def app_callback(pad, info, user_data):
     if buffer is None:  # Check if the buffer is valid
         return Gst.PadProbeReturn.OK
 
+    caps = pad.get_current_caps()
+    structure = caps.get_structure(0)
+    width = structure.get_value('width')
+    height = structure.get_value('height')
+    
+    frame = Frame([])
     for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  
         bbox = detection.get_bbox()
+        bbox = [(bbox.xmin() * width, bbox.ymin() * height),
+                (bbox.xmax() * width, bbox.ymax() * height)]
+
         label = detection.get_label()
         confidence = detection.get_confidence()
-        
-        
+        det = Detection(label=label,confidence=confidence,bbox=bbox) 
+        frame.add_detection(det)
+
+    ai_storage_singleton.set_latest_frame(frame) 
     return Gst.PadProbeReturn.OK
 
 def make_ai_app():
@@ -40,4 +53,15 @@ def make_ai_app():
     
 
 if __name__ == "__main__":
-    make_ai_app().run()
+    import threading
+    th = threading.Thread(target=make_ai_app().run)
+    th.start()
+    while True:
+        try:
+            print(ai_storage_singleton.get_latest_frame().detection[0].label)
+            time.sleep(1)
+        except AttributeError:
+            print("passing atribuie error")
+        except KeyboardInterrupt:
+            th.stop()
+             

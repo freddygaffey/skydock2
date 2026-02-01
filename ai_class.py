@@ -30,7 +30,7 @@ class Detection():
                 self.time_detected)
          
 class Frame:
-    def __init__(self,det:list[Detection],photo_path):
+    def __init__(self,det:list[Detection],photo_path="No photo taken"):
         self.photo_path = photo_path
         self.detection = det
 
@@ -51,7 +51,7 @@ class _AiStorage:
             return
         self._initialized = True
 
-        self.current_frame = None
+        self.current_frame = Frame([])
         self.current_frame_lock = threading.Lock()
         self.is_ai_running = False
 
@@ -73,14 +73,17 @@ class _AiStorage:
 
         self.is_ai_running = True
         ######## I dont understand but it works thanks ai #########
-        import sys
+        # import sys
         import ai_callback
         # Force it to use THIS module's ai_storage
-        sys.modules['ai_callback'].ai_storage = self
+        # sys.modules['ai_callback'].ai_storage = self
         ############################################################
         app = ai_callback.make_ai_app()
         threading.Thread(target=app.run).start()
 
 
 ai_storage_singleton = _AiStorage()
+
+
+
 

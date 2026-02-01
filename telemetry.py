@@ -14,22 +14,22 @@ class Telemetry(object):
 
     def __init__(self):
         self.drone_state = DroneStateForHoming() 
-        count_of_time_passed = 0
         # connect to drone
 
-        # connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10","udp:127.0.0.1:14552"]
-        connection_palths = ["udp:127.0.0.1:14552"]
+        connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10","udp:127.0.0.1:14552",None]
+        # connection_palths = ["udp:127.0.0.1:14552"]
         for i in connection_palths:
+            if i is None:
+                raise ConnectionError("could not connect to the fc")
             try:
                 path_to_uav = i
                 self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
                 self.connection.wait_heartbeat(timeout=5)
-                # self.connection.wait_heartbeat(timeout=5)
+                if self.connection is not None:
+                    break
             except serial.serialutil.SerialException:
+                print(f"cant connect to {i}")
                 pass
-
-        if not self.connection:
-            raise ConnectionError("could not connect to the fc")
 
         self.mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
         self.current_mode = None
