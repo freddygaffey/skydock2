@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pymavlink import mavutil
 
 @dataclass
 class DroneStateForHoming:
@@ -14,6 +15,7 @@ class DroneStateForHoming:
     velocity_z: float = 0.0
 
     enabel_homing_and_autonomy: bool = False
+    mode: str = 'STABILIZE'
 
     heading: float = 0
     rotaion_x: float = 0 # in rad 
@@ -23,6 +25,22 @@ class DroneStateForHoming:
     def set_pass_message(self,msg):
         if msg is None:
             return 0
+
+        if msg._type == "HEARTBEAT":
+            mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
+            mode_id = msg.custom_mode
+            current_mode = None
+            for i in mode_mapping:
+                if mode_mapping[i] == mode_id:
+                    current_mode = i
+                    break
+            if msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
+                self.arm_state = True
+            else: 
+                self.arm_state = False
+
+            if current_mode ==  None: raise Exception("mode not found (freddy)")
+            self.mode = current_mode
 
         if msg._type == "GLOBAL_POSITION_INT":
         # if True:
@@ -61,4 +79,5 @@ class DroneStateForHoming:
                 self.enabel_homing_and_autonomy,
                 self.rotaion_x,
                 self.rotaion_y,
-                self.rotaion_z)
+                self.rotaion_z,
+                self.mode)

@@ -255,9 +255,10 @@ class DBAbstraction:
                 velocity_z=drone_state.velocity_z,
                 enable_homing_and_autonomy=drone_state.enabel_homing_and_autonomy,
                 heading=drone_state.heading,
-                rotation_x=0.0,  # Add if you have rotation data
-                rotation_y=0.0,
-                rotation_z=0.0
+                rotation_x=drone_state.rotaion_x,
+                rotation_y=drone_state.rotaion_y,
+                rotation_z=drone_state.rotaion_z,
+                mode=drone_state.mode
             )
             
             session.add(state_model)
@@ -315,7 +316,8 @@ class DBAbstraction:
                     velocity_y=state_model.velocity_y,
                     velocity_z=state_model.velocity_z,
                     enabel_homing_and_autonomy=state_model.enable_homing_and_autonomy,
-                    heading=state_model.heading
+                    heading=state_model.heading,
+                    mode=state_model.mode
                 )
                 
                 # Reconstruct Frame with detections
@@ -375,7 +377,8 @@ class DBAbstraction:
                 velocity_y=state_model.velocity_y,
                 velocity_z=state_model.velocity_z,
                 enabel_homing_and_autonomy=state_model.enable_homing_and_autonomy,
-                heading=state_model.heading
+                heading=state_model.heading,
+                mode=state_model.mode
             )
             
             # Reconstruct Frame with detections

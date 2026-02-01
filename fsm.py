@@ -1,10 +1,10 @@
 import time
 from enum import Enum, auto
 
-from telemetry import telemetry_singlton 
+from telemetry import telemetry_singlton
+from drone_state import DroneStateForHoming
 from ai_class import ai_storage_singleton
-from DB import db_class
-
+from DB_abstraction import Frame
 
 class DroneStateEnum(Enum):
     OVERRIDE = auto()
@@ -17,7 +17,6 @@ class DroneStateEnum(Enum):
 class StateMachine:
     def __init__(self):
         self.current_state = DroneStateEnum.OVERRIDE
-
 
     def update(self):
         frame = ai_storage_singleton.get_latest_frame()
@@ -36,67 +35,60 @@ class StateMachine:
             case DroneStateEnum.RTL:
                 self.current_state = self._update_rtl(frame,drone_state)
 
-    def _update_override(self,frame,drone_state) -> DroneStateEnum:
+    def _update_override(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
+        if drone_state.enabel_homing_and_autonomy and drone_state.mode == 'GUIDED':
+            return DroneStateEnum.SCAN
+
+        if drone_state.mode == 'RTL':
+            return DroneStateEnum.RTL
         time.sleep(0.5) 
         return DroneStateEnum.OVERRIDE
+        
+    def _update_scan(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
+        # rtl check
+        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
+            return DroneStateEnum.RTL
+        if drone_state.mode == 'RTL':
+            return DroneStateEnum.RTL
 
-    def _update_scan(self,frame,drone_state) -> DroneStateEnum:
         # TODO: implement
+        if rtn := self._check_if_scan(): return rtn
         return DroneStateEnum.SCAN
 
-    def _update_goto(self,frame,drone_state) -> DroneStateEnum:
+    def _update_goto(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
+        # rtl check
+        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
+            return DroneStateEnum.RTL
+        if drone_state.mode == 'RTL':
+            return DroneStateEnum.RTL
+
         # TODO: implement
         return DroneStateEnum.GOTO
 
-    def _update_homing(self,frame,drone_state) -> DroneStateEnum:
+    def _update_homing(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
+        # rtl check
+        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
+            return DroneStateEnum.RTL
+        if drone_state.mode == 'RTL':
+            return DroneStateEnum.RTL
+
         # TODO: implement
         return DroneStateEnum.HOMING
 
-    def _update_spray(self,frame,drone_state) -> DroneStateEnum:
+    def _update_spray(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
+        # rtl check
+        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
+            return DroneStateEnum.RTL
+        if drone_state.mode == 'RTL':
+            return DroneStateEnum.RTL
+
         # TODO: implement
         return DroneStateEnum.SPRAY
 
-    def _update_rtl(self,frame,drone_state) -> DroneStateEnum:
+    def _update_rtl(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         # TODO: implement
+
         return DroneStateEnum.RTL
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
