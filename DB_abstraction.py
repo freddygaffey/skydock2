@@ -61,24 +61,26 @@ class Waypoint:
 @dataclass
 class Weed:
     """Weed location data class"""
-    lon: float
     lat: float
+    lon: float
     sprayed: bool = False
     traveled_to: bool = False
+    confidence: float = 0.0
     id: Optional[int] = None  # Database ID after persistence
     
     def to_db_format(self):
         """Legacy format for compatibility"""
-        return (self.lon, self.lat, int(self.sprayed), int(self.traveled_to))
+        return (self.lat, self.lon, int(self.sprayed), int(self.traveled_to))
     
     @classmethod
     def from_model(cls, model: WeedModel) -> "Weed":
         """Create Weed from SQLAlchemy model"""
         return cls(
-            lon=model.lon,
             lat=model.lat,
+            lon=model.lon,
             sprayed=model.sprayed,
             traveled_to=model.traveled_to,
+            confidence=model.confidence,
             id=model.id
         )
     
@@ -88,7 +90,8 @@ class Weed:
             lon=self.lon,
             lat=self.lat,
             sprayed=self.sprayed,
-            traveled_to=self.traveled_to
+            traveled_to=self.traveled_to,
+            confidence=self.confidence
         )
         if self.id is not None:
             model.id = self.id
@@ -207,8 +210,8 @@ class DBAbstraction:
             
             for weed_model in weeds:
                 dist = haversine_distance(
-                    weed_model.lon, weed_model.lat,
-                    drone_state.longitude, drone_state.latitude
+                    weed_model.lat, weed_model.lon,
+                    drone_state.latitude, drone_state.longitude
                 )
                 if dist < min_dist:
                     min_dist = dist
@@ -461,7 +464,7 @@ if __name__ == "__main__":
         # Random offset of ~100m
         lat = base_lat + random.uniform(-0.001, 0.001)
         lon = base_lon + random.uniform(-0.001, 0.001)
-        weed = Weed(lon=lon, lat=lat)
+        weed = Weed(lat=lat, lon=lon)
         weed_id = db.log_weed(weed)
         print(f"  Added weed {weed_id} at ({lat:.6f}, {lon:.6f})")
     

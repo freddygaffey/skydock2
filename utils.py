@@ -2,40 +2,77 @@ from ai_class import Detection
 from drone_state import DroneStateForHoming
 from math import radians, tan
 import math
+import numpy as np
 
+def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
+    CAMERA_FOV_X = 27.4
+    CAMERA_FOV_Y = 21.0
+    NUM_OF_PIX_X = 640
+    NUM_OF_PIX_Y = 640
 
-def rotate_det(det,dgr):
-    # TODO: actualy make work
-    return det
+    fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(CAMERA_FOV_X/2)))
+    fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(CAMERA_FOV_Y/2)))
+    cx = NUM_OF_PIX_X/2
+    cy = NUM_OF_PIX_Y/2
 
-def calulate_s_for_drone_state_and_frame(drone_state: DroneStateForHoming, detection: Detection) -> float:
-    detection = rotate_det(detection)
-    MIN_HIGHT = 1 # m
-    MAX_SPEED = 3 # m/s
+    x_cam = (detection.get_center()[0] - cx)/fx
+    y_cam = (detection.get_center()[1] - cy)/fy
     
-    # all camera parameters are relative to ned of the drone not the camera xy 
-    CAMERA_FOV_X = 27.4 # TODO: make this actually right
-    CAMERA_FOV_y = 21.0 # TODO: make this actually right
-    NUM_OF_PIX_X = 1280 # TODO: make this actually right
-    NUM_OF_PIX_Y = 720  # TODO: make this actually right
- 
-    def calculate_displacement(angle_of_drone, alt, fov, nomolised_pos) -> float:
-        target_angle = (nomolised_pos - 0.5) * radians(fov) 
-        ned_angle = angle_of_drone + target_angle
-        return alt * tan(ned_angle)
-    
-    xs = calculate_displacement(drone_state.rotation[0],
-                                drone_state.altitude_rel_home,
-                                CAMERA_FOV_X,
-                                detection.get_center()[0])
-                                
-    ys = calculate_displacement(drone_state.rotation[1],
-                                drone_state.altitude_rel_home,
-                                CAMERA_FOV_y,
-                                detection.get_center()[1])
-    
-    return xs, ys
+    cam_ray = np.array([x_cam,y_cam,1])
+    cam_ray = cam_ray / np.linalg.norm(cam_ray)
 
+    camera_rotation = 0 # rotaiain in dgr
+    rho = np.deg2rad(camera_rotation)
+
+    R_cam_to_body = np.array([
+        [np.cos(rho), -np.sin(rho), 0],
+        [np.sin(rho),  np.cos(rho), 0],
+        [0, 0, 1]]) @ np.array([
+            [0,  1,  0],
+            [1,  0,  0],
+            [0,  0, -1] 
+            ])
+
+    ray_body = R_cam_to_body @ cam_ray
+    roll,pitch,yaw = drone_state.rotaion_x,drone_state.rotaion_y,drone_state.rotaion_z
+
+    Rx = np.array([
+        [1,  0, 0],
+        [0,  np.cos(roll),  -np.sin(roll)],
+        [0,  np.sin(roll),   np.cos(roll)]
+    ])
+
+    Ry = np.array([
+        [np.cos(pitch),  0,  np.sin(pitch)],
+        [0, 1, 0],
+        [-np.sin(pitch), 0,  np.cos(pitch)]
+    ])
+
+    Rz = np.array([
+        [np.cos(yaw), -np.sin(yaw), 0],
+        [np.sin(yaw),  np.cos(yaw), 0],
+        [0, 0, 1]
+    ])
+
+    ray_to_ned = Rz @ Ry @ Rx
+    ray_NED = ray_to_ned @ ray_body
+
+    multiply_factor = drone_state.altitude_rel_home / ray_NED[2]
+    N = multiply_factor * ray_NED[0]
+    E = multiply_factor * ray_NED[1]
+    return N, E
+def detection_to_dist(drone_state: DroneStateForHoming, detection: Detection):
+    NE = detection_to_ned(drone_state,detection)
+    return (NE[0]**2 + NE[1]**2)**0.5
+
+def detection_to_latlon(drone_state: DroneStateForHoming, detection: Detection):
+    N, E = detection_to_ned(drone_state,detection)
+    dlat = N / 111320
+    dlon = E / (111320*np.cos(radians(drone_state.latitude)))
+
+    lat = dlat + drone_state.latitude
+    lon = dlon + drone_state.longitude
+    return lat, lon
     
 def haversine_distance(lat1, lon1, lat2, lon2) -> float:
     """Calculate the great-circle distance between two GPS points in meters."""

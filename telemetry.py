@@ -100,6 +100,7 @@ class Telemetry(object):
         self.connection.mav.send(message)
         string_to_print = f"set {message_name} to repeat every: {str(interval/1000000)} seconds"
         print(string_to_print)
+
     def send_text_message(self,message:str):
         """a wrapper around a sending a text should do incoding somewhere else"""
         if len(message) > 50-4:

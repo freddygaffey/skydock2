@@ -3,8 +3,13 @@ from enum import Enum, auto
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
-from ai_class import ai_storage_singleton
-from DB_abstraction import Frame
+from ai_class import ai_storage_singleton, Frame
+
+from states.homing import homing
+from states.scan import scan
+from states.spray import spraying 
+from states.goto import goto
+
 
 class DroneStateEnum(Enum):
     OVERRIDE = auto()
@@ -50,10 +55,7 @@ class StateMachine:
             return DroneStateEnum.RTL
         if drone_state.mode == 'RTL':
             return DroneStateEnum.RTL
-
-        # TODO: implement
-        if rtn := self._check_if_scan(): return rtn
-        return DroneStateEnum.SCAN
+        return scan(drone_state,frame)
 
     def _update_goto(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         # rtl check
@@ -61,9 +63,7 @@ class StateMachine:
             return DroneStateEnum.RTL
         if drone_state.mode == 'RTL':
             return DroneStateEnum.RTL
-
-        # TODO: implement
-        return DroneStateEnum.GOTO
+        return goto(drone_state,frame)
 
     def _update_homing(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         # rtl check
@@ -71,9 +71,7 @@ class StateMachine:
             return DroneStateEnum.RTL
         if drone_state.mode == 'RTL':
             return DroneStateEnum.RTL
-
-        # TODO: implement
-        return DroneStateEnum.HOMING
+        return homing(drone_state,frame) 
 
     def _update_spray(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         # rtl check
@@ -81,9 +79,7 @@ class StateMachine:
             return DroneStateEnum.RTL
         if drone_state.mode == 'RTL':
             return DroneStateEnum.RTL
-
-        # TODO: implement
-        return DroneStateEnum.SPRAY
+        return spraying(drone_state,frame)
 
     def _update_rtl(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         # TODO: implement

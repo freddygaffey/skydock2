@@ -37,9 +37,10 @@ class WeedModel(Base):
     lat = Column(Float, nullable=False)
     sprayed = Column(Boolean, default=False, nullable=False)
     traveled_to = Column(Boolean, default=False, nullable=False)
-    
+    confidence = Column(Float, default=0.0, nullable=False)
+
     def __repr__(self):
-        return f"<Weed(id={self.id}, lat={self.lat}, lon={self.lon}, sprayed={self.sprayed})>"
+        return f"<Weed(id={self.id}, lat={self.lat}, lon={self.lon}, sprayed={self.sprayed}, confidence={self.confidence})>"
 
 
 class DroneStateModel(Base):
