@@ -35,6 +35,7 @@ class Frame:
         self.detection = det
 
     def add_detection(self,det:Detection):
+        if det.label not in ["sports ball", "frisbee", "person"]: return
         self.detection.append(det)
 
 

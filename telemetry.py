@@ -44,8 +44,8 @@ class Telemetry(object):
         # drone_state_rate = 1
         self.set_a_message_interval("GLOBAL_POSITION_INT",drone_state_rate)
         self.set_a_message_interval("SERVO_OUTPUT_RAW",drone_state_rate)
-        self.set_a_message_interval("ATTITUDE", drone_state_rate)
-        self.set_a_message_interval("HEARTBEAT", 1)
+        self.set_a_message_interval("ATTITUDE", 1/100)
+        self.set_a_message_interval("HEARTBEAT", 1/2)
 
         while True:
             try:
@@ -225,7 +225,8 @@ class Telemetry(object):
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0, 1, 0, 0, 0, 0, 0, 0
         )
-        while True:
+        start_time = time.time()
+        while time.time() + 10 > start_time:
             msg = self.connection.recv_match(type='HEARTBEAT', blocking=True)
             if msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
                 return True
@@ -254,6 +255,28 @@ class Telemetry(object):
             0,0,0,  
             0,0
             )
+    def get_auto_mission_wp(self):
+        self.connection.mav.mission_request_list_send(
+            self.connection.target_system,
+            self.connection.target_component,
+            0 # this is the one to get waypoints
+        )
+        msg = self.connection.recv_match(type='MISSION_COUNT', blocking=True, timeout=5)
+        if msg:
+            wp_count = msg.count
+
+            wps = []
+            for i in range(wp_count):
+                self.connection.mav.mission_request_int_send(
+                    self.connection.target_system,
+                    self.connection.target_component,
+                    i, # wp ID
+                    mission_type =0
+                )
+                wp = self.connection.recv_match(type='MISSION_ITEM_INT', blocking=True, timeout=5)
+                if wp:
+                    wps.append((wp.x / 1e7,  wp.y / 1e7))
+        return wps
 
 telemetry_singlton = Telemetry()
 

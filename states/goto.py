@@ -6,8 +6,10 @@ from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
-from fsm import DroneStateEnum
 from states.constants import GOTO_ALT, MAX_HOMING_DIST
+
+from states.enum import DroneStateEnum
+
 
 
 def goto(drone_state:DroneStateForHoming,frame:Frame):

@@ -78,7 +78,7 @@ if __name__ == "__main__":
     while True:
         loop_count += 1
         time.sleep(0.1)
-        if not drone_state.enabel_homing_and_autonomy:
+        if not drone_state.enable_homing_and_autonomy:
             if loop_count % 10 == 0:
                 print("not running homing because swich not flipped")
             if move_singleton.get_mode() == "GUIDED":

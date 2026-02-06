@@ -1,5 +1,4 @@
 import time
-from enum import Enum, auto
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
@@ -9,15 +8,9 @@ from states.homing import homing
 from states.scan import scan
 from states.spray import spraying 
 from states.goto import goto
+from states.enum import DroneStateEnum
 
 
-class DroneStateEnum(Enum):
-    OVERRIDE = auto()
-    SCAN = auto()
-    GOTO = auto()
-    HOMING = auto()
-    SPRAY = auto()
-    RTL = auto()
     
 class StateMachine:
     def __init__(self):
@@ -39,55 +32,49 @@ class StateMachine:
                 self.current_state = self._update_spray(frame,drone_state)
             case DroneStateEnum.RTL:
                 self.current_state = self._update_rtl(frame,drone_state)
+            case _:
+                self.current_state = DroneStateEnum.OVERRIDE            
 
     def _update_override(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
-        if drone_state.enabel_homing_and_autonomy and drone_state.mode == 'GUIDED':
-            return DroneStateEnum.SCAN
-
-        if drone_state.mode == 'RTL':
-            return DroneStateEnum.RTL
-        time.sleep(0.5) 
+        if (check := self._overide_and_rtl_checks(drone_state)):return check
         return DroneStateEnum.OVERRIDE
         
     def _update_scan(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
-        # rtl check
-        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
-            return DroneStateEnum.RTL
-        if drone_state.mode == 'RTL':
-            return DroneStateEnum.RTL
+        if (check := self._overide_and_rtl_checks(drone_state)):return check
         return scan(drone_state,frame)
 
     def _update_goto(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
-        # rtl check
-        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
-            return DroneStateEnum.RTL
-        if drone_state.mode == 'RTL':
-            return DroneStateEnum.RTL
+        if (check := self._overide_and_rtl_checks(drone_state)):return check
         return goto(drone_state,frame)
 
     def _update_homing(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
-        # rtl check
-        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
-            return DroneStateEnum.RTL
-        if drone_state.mode == 'RTL':
-            return DroneStateEnum.RTL
+        if (check := self._overide_and_rtl_checks(drone_state)):return check
+
         return homing(drone_state,frame) 
 
     def _update_spray(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
-        # rtl check
-        if drone_state.enabel_homing_and_autonomy and drone_state.mode != 'GUIDED':
-            return DroneStateEnum.RTL
-        if drone_state.mode == 'RTL':
-            return DroneStateEnum.RTL
+        if (check := self._overide_and_rtl_checks(drone_state)):return check
+
         return spraying(drone_state,frame)
 
     def _update_rtl(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
-        # TODO: implement
-
+        if (check := self._overide_and_rtl_checks(drone_state)):return check
         return DroneStateEnum.RTL
 
 
-
+    def _overide_and_rtl_checks(self,drone_state:DroneStateForHoming):
+        if drone_state.mode == 'RTL':
+            return DroneStateEnum.RTL
+        elif drone_state.mode != 'GUIDED':
+            return DroneStateEnum.OVERRIDE
+        elif not drone_state.enable_homing_and_autonomy:
+            telemetry_singlton.stop_volocity_command()
+            return DroneStateEnum.OVERRIDE
+        elif drone_state.mode == 'GUIDED' and (self.current_state in [DroneStateEnum.OVERRIDE,DroneStateEnum.RTL]):
+            return DroneStateEnum.SCAN
+        else:
+            return None
+        
 
 
 # from typing import Protocol

@@ -4,8 +4,8 @@ from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import Frame
 from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
-from fsm import DroneStateEnum
 from states.constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
+from states.enum import DroneStateEnum
 
 
 def homing(drone_state:DroneStateForHoming,frame:Frame):
@@ -28,7 +28,6 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
 
     ned = detection_to_ned(drone_state, closest_det)
     telemetry_singlton.send_displacement_command_yaw_stay_same(ned[0], ned[1], dalt)
-    time.sleep(2)
     return DroneStateEnum.HOMING
     
     

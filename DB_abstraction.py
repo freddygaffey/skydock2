@@ -256,7 +256,7 @@ class DBAbstraction:
                 velocity_x=drone_state.velocity_x,
                 velocity_y=drone_state.velocity_y,
                 velocity_z=drone_state.velocity_z,
-                enable_homing_and_autonomy=drone_state.enabel_homing_and_autonomy,
+                enable_homing_and_autonomy=drone_state.enable_homing_and_autonomy,
                 heading=drone_state.heading,
                 rotation_x=drone_state.rotaion_x,
                 rotation_y=drone_state.rotaion_y,
@@ -318,7 +318,7 @@ class DBAbstraction:
                     velocity_x=state_model.velocity_x,
                     velocity_y=state_model.velocity_y,
                     velocity_z=state_model.velocity_z,
-                    enabel_homing_and_autonomy=state_model.enable_homing_and_autonomy,
+                    enable_homing_and_autonomy=state_model.enable_homing_and_autonomy,
                     heading=state_model.heading,
                     mode=state_model.mode
                 )
@@ -379,7 +379,7 @@ class DBAbstraction:
                 velocity_x=state_model.velocity_x,
                 velocity_y=state_model.velocity_y,
                 velocity_z=state_model.velocity_z,
-                enabel_homing_and_autonomy=state_model.enable_homing_and_autonomy,
+                enable_homing_and_autonomy=state_model.enable_homing_and_autonomy,
                 heading=state_model.heading,
                 mode=state_model.mode
             )
@@ -431,6 +431,82 @@ class DBAbstraction:
                 "total_detections": session.query(DetectionModel).count()
             }
     
+    def backup_and_clear(self, backup_dir: str = "backups") -> str:
+        """
+        Backup all data to JSON file, then clear the database.
+        Returns the backup file path.
+        """
+        import json
+        import os
+        from datetime import datetime
+
+        # Create backup directory if needed
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # Generate timestamped filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(backup_dir, f"drone_backup_{timestamp}.json")
+
+        # Collect all data
+        backup_data = {
+            "timestamp": timestamp,
+            "stats": self.get_stats(),
+            "waypoints": [],
+            "weeds": [],
+            "snapshots": []
+        }
+
+        # Export waypoints
+        for wp in self.get_all_waypoints():
+            backup_data["waypoints"].append({
+                "id": wp.id,
+                "lat": wp.lat,
+                "lon": wp.lon,
+                "visited": wp.visited
+            })
+
+        # Export weeds
+        for weed in self.get_all_weeds():
+            backup_data["weeds"].append({
+                "id": weed.id,
+                "lat": weed.lat,
+                "lon": weed.lon,
+                "sprayed": weed.sprayed,
+                "traveled_to": weed.traveled_to,
+                "confidence": weed.confidence
+            })
+
+        # Export snapshots (drone states + detections)
+        for snap in self.get_all_snapshots():
+            snapshot_data = {
+                "id": snap.id,
+                "drone_state": {
+                    "time": snap.drone_state.time_updated_GLOBAL_POSITION_INT,
+                    "lat": snap.drone_state.latitude,
+                    "lon": snap.drone_state.longitude,
+                    "alt": snap.drone_state.altitude_rel_home,
+                    "mode": snap.drone_state.mode
+                },
+                "detections": []
+            }
+            for det in snap.frame.detection:
+                snapshot_data["detections"].append({
+                    "label": det.label,
+                    "confidence": det.confidence,
+                    "bbox": det.bbox,
+                    "track_id": det.track_id
+                })
+            backup_data["snapshots"].append(snapshot_data)
+
+        # Write backup file
+        with open(backup_path, 'w') as f:
+            json.dump(backup_data, f, indent=2)
+
+        # Clear the database
+        self.clear_all_data()
+
+        return backup_path
+
     def clear_all_data(self):
         """Clear all data from database (use with caution!)"""
         with self.db_session.get_session() as session:

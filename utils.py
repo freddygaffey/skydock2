@@ -21,7 +21,7 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     cam_ray = np.array([x_cam,y_cam,1])
     cam_ray = cam_ray / np.linalg.norm(cam_ray)
 
-    camera_rotation = 0 # rotaiain in dgr
+    camera_rotation = 90 # rotaiain in dgr
     rho = np.deg2rad(camera_rotation)
 
     R_cam_to_body = np.array([
@@ -56,11 +56,12 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
 
     ray_to_ned = Rz @ Ry @ Rx
     ray_NED = ray_to_ned @ ray_body
-
     multiply_factor = drone_state.altitude_rel_home / ray_NED[2]
+        
     N = multiply_factor * ray_NED[0]
     E = multiply_factor * ray_NED[1]
     return N, E
+
 def detection_to_dist(drone_state: DroneStateForHoming, detection: Detection):
     NE = detection_to_ned(drone_state,detection)
     return (NE[0]**2 + NE[1]**2)**0.5

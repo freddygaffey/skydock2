@@ -30,12 +30,16 @@ def app_callback(pad, info, user_data):
     
     frame = Frame([])
     for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  
+        label = str(detection.get_label())
+        # print(f"seen {label}")
+        # if label not in ["sports_ball","frisby","person"]: continue
+        # if label not in ["sports_ball","frisby"]: continue
+        # print(f"saved {label}")
         bbox = detection.get_bbox()
         bbox = [(bbox.xmin() * width, bbox.ymin() * height),
                 (bbox.xmax() * width, bbox.ymax() * height)]
 
-        label = detection.get_label()
-        confidence = detection.get_confidence()
+        confidence = float(detection.get_confidence())
         det = Detection(label=label,confidence=confidence,bbox=bbox) 
         frame.add_detection(det)
 
@@ -58,8 +62,8 @@ if __name__ == "__main__":
     th.start()
     while True:
         try:
-            print(ai_storage_singleton.get_latest_frame().detection[0].label)
-            time.sleep(1)
+            for i in ai_storage_singleton.get_latest_frame().detection:
+                print(i.label)
         except AttributeError:
             print("passing atribuie error")
         except KeyboardInterrupt:

@@ -14,7 +14,7 @@ class DroneStateForHoming:
     velocity_y: float = 0.0
     velocity_z: float = 0.0
 
-    enabel_homing_and_autonomy: bool = False
+    enable_homing_and_autonomy: bool = False
     mode: str = 'STABILIZE'
 
     heading: float = 0
@@ -61,9 +61,9 @@ class DroneStateForHoming:
 
         if msg._type == "SERVO_OUTPUT_RAW":
             if msg.servo8_raw <= 1000:
-                self.enabel_homing_and_autonomy = False
+                self.enable_homing_and_autonomy = False
             if msg.servo8_raw > 1000:
-                self.enabel_homing_and_autonomy = True
+                self.enable_homing_and_autonomy = True
 
         if msg._type == "ATTITUDE":
             self.rotaion_x = msg.roll 
@@ -76,7 +76,7 @@ class DroneStateForHoming:
                 self.latitude,
                 self.altitude_rel_home,
                 self.heading,
-                self.enabel_homing_and_autonomy,
+                self.enable_homing_and_autonomy,
                 self.rotaion_x,
                 self.rotaion_y,
                 self.rotaion_z,
