@@ -34,6 +34,7 @@ class StateMachine:
                 self.current_state = self._update_rtl(frame,drone_state)
             case _:
                 self.current_state = DroneStateEnum.OVERRIDE            
+        print(self.current_state)
         # Log everything in one place
         timestamp = time.time_ns()
 
@@ -56,10 +57,7 @@ class StateMachine:
         # Log drone state
         with open(session_dir / "drone_state.txt", "a") as file:
             file.write(f"{timestamp},{vars(drone_state)}\n")
-        
-        print(drone_state)
-        print(self.current_state)
-        print(frame)
+    
 
     def _update_override(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         if (check := self._overide_and_rtl_checks(drone_state)):return check
