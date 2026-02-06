@@ -1,7 +1,19 @@
 import threading
 import time
+import os
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
+from datetime import datetime
+
+# Setup missions directory - relative to project, with timestamped session folder
+_project_root = Path(__file__).resolve().parent
+_session_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+session_dir = _project_root / "missions" / _session_name
+frames_dir = session_dir / "frames"
+os.makedirs(session_dir, exist_ok=True)
+os.makedirs(frames_dir, exist_ok=True)
+
 
 @dataclass
 class Detection():

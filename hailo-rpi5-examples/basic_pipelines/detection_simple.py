@@ -1,6 +1,7 @@
 # from ai_class import ai_storage, Frame, Detection
-from ai_class import ai_storage_singleton, Detection, Frame
+from ai_class import ai_storage_singleton, Detection, Frame, frames_dir
 
+import threading
 import time
 import os
 from pathlib import Path
@@ -10,6 +11,26 @@ from gi.repository import Gst
 import hailo
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection_simple.detection_pipeline_simple import GStreamerDetectionApp
+
+import numpy as np
+import cv2
+import queue as queue_module  # rename to avoid shadowing
+
+# Frame saving queue
+frame_queue = queue_module.Queue(maxsize=200)
+
+def frame_saver_thread():
+    """Background thread - saves frames as JPEG"""
+    while True:
+        try:
+            timestamp_ns, data, width, height = frame_queue.get(timeout=2)
+            frame = np.frombuffer(data, dtype=np.uint8).reshape((height, width, 3))
+            cv2.imwrite(str(frames_dir / f"{timestamp_ns}.jpg"), frame)
+        except queue_module.Empty:
+            continue
+
+# Start the saver thread
+threading.Thread(target=frame_saver_thread, daemon=True).start()
 
 # User-defined class to be used in the callback function: Inheritance from the app_callback_class
 class user_app_callback_class(app_callback_class):
@@ -44,6 +65,19 @@ def app_callback(pad, info, user_data):
         frame.add_detection(det)
 
     ai_storage_singleton.set_latest_frame(frame) 
+    # Save frame as JPEG (every 5th frame to save space)
+    if not hasattr(app_callback, 'count'):
+        app_callback.count = 0
+    app_callback.count += 1
+
+    if app_callback.count % 2 == 0:
+        success, map_info = buffer.map(Gst.MapFlags.READ)
+        if success:
+            try:
+                frame_queue.put_nowait((time.time_ns(), bytes(map_info.data), width, height))
+            except queue_module.Full:
+                pass
+            buffer.unmap(map_info)
     return Gst.PadProbeReturn.OK
 
 def make_ai_app():
@@ -54,7 +88,9 @@ def make_ai_app():
     user_data = user_app_callback_class()  
     app = GStreamerDetectionApp(app_callback, user_data)
     return app
-    
+
+
+
 
 if __name__ == "__main__":
     import threading

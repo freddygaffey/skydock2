@@ -56,6 +56,9 @@ class Telemetry(object):
                 continue
 
             self.drone_state.set_pass_message(msg)
+            with open("missions/drone_state.txt","a") as file:
+                file.write(f"{self.drone_state.__dict__}\n")
+
             self.move_msg_passer(msg)
     def run_pre_flight_checks(self):
         """retun true if good to go

@@ -2,11 +2,11 @@ import time
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
-from ai_class import ai_storage_singleton, Frame
+from ai_class import ai_storage_singleton, Frame, session_dir
 
 from states.homing import homing
 from states.scan import scan
-from states.spray import spraying 
+from states.spray import spraying
 from states.goto import goto
 from states.enum import DroneStateEnum
 
@@ -34,6 +34,32 @@ class StateMachine:
                 self.current_state = self._update_rtl(frame,drone_state)
             case _:
                 self.current_state = DroneStateEnum.OVERRIDE            
+        # Log everything in one place
+        timestamp = time.time_ns()
+
+        # Log FSM state
+        with open(session_dir / "fsm.txt", "a") as file:
+            file.write(f"{self.current_state},{timestamp}\n")
+
+        # Log frame detections
+        with open(session_dir / "frames.txt", "a") as file:
+            det = []
+            for i in frame.detection:
+                det.append(vars(i))
+
+            frame_data = {
+                'time_ns': timestamp,
+                'detections': det
+            }
+            file.write(f"{frame_data}\n")
+
+        # Log drone state
+        with open(session_dir / "drone_state.txt", "a") as file:
+            file.write(f"{timestamp},{vars(drone_state)}\n")
+        
+        print(drone_state)
+        print(self.current_state)
+        print(frame)
 
     def _update_override(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         if (check := self._overide_and_rtl_checks(drone_state)):return check
