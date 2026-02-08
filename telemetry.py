@@ -1,10 +1,13 @@
 import threading
 import time
 import serial
+from queue import Queue, Full
+
 
 from pymavlink import mavutil
 from typing import Callable
 from drone_state import DroneStateForHoming
+
 
 class Telemetry(object):
     def __new__(cls):
@@ -30,6 +33,8 @@ class Telemetry(object):
             except serial.serialutil.SerialException:
                 print(f"cant connect to {i}")
                 pass
+        
+        self.wp_q = Queue(maxsize=1000) 
 
         self.mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
         self.current_mode = None
@@ -60,6 +65,13 @@ class Telemetry(object):
                 file.write(f"{self.drone_state.__dict__}\n")
 
             self.move_msg_passer(msg)
+            
+            if msg._type in ["MISSION_ITEM_INT","MISSION_COUNT"]:
+                try:
+                    self.wp_q.put_nowait(msg)
+                except Full:
+                    raise ValueError(f"the queu is full and has more the {self.wp_q.maxsize} edit the max size if you want more")
+
     def run_pre_flight_checks(self):
         """retun true if good to go
         retun the arm fail message if not good to go"""
@@ -247,7 +259,7 @@ class Telemetry(object):
         lat = int(lat * 1e7)
         lon = int(lon * 1e7)
 
-        self.connection.mav.set_position_target_global_int(
+        self.connection.mav.set_position_target_global_int_send(
             0,
             self.connection.target_system,
             self.connection.target_component,
@@ -259,27 +271,38 @@ class Telemetry(object):
             0,0
             )
     def get_auto_mission_wp(self):
+        # empty the que
+        while not self.wp_q.empty():
+            self.wp_q.get_nowait()
         self.connection.mav.mission_request_list_send(
             self.connection.target_system,
             self.connection.target_component,
             0 # this is the one to get waypoints
         )
-        msg = self.connection.recv_match(type='MISSION_COUNT', blocking=True, timeout=5)
-        if msg:
-            wp_count = msg.count
+        msg = self.wp_q.get(timeout=5)
+        if msg._type != "MISSION_COUNT": raise ValueError(f"the message receved is not valid {vars(msg)}")
 
-            wps = []
-            for i in range(wp_count):
-                self.connection.mav.mission_request_int_send(
-                    self.connection.target_system,
-                    self.connection.target_component,
-                    i, # wp ID
-                    mission_type =0
-                )
-                wp = self.connection.recv_match(type='MISSION_ITEM_INT', blocking=True, timeout=5)
-                if wp:
-                    wps.append((wp.x / 1e7,  wp.y / 1e7))
-        return wps
+
+        wps = []
+        for i in range(msg.count):
+            self.connection.mav.mission_request_int_send(
+                self.connection.target_system,
+                self.connection.target_component,
+                i, # wp ID
+                mission_type =0
+            )
+            wp = self.wp_q.get(timeout=3)
+            if wp._type == 'MISSION_ITEM_INT':
+                wps.append((wp.x / 1e7,  wp.y / 1e7))
+            else: raise ValueError(f"the que has a {vars(wp)} in it this is not type mission count")
+        
+        new_array = []
+        for i in wps:
+            if i != (0,0):
+                new_array.append(i)
+
+        for i in new_array:print(i)
+        return new_array
 
 telemetry_singlton = Telemetry()
 

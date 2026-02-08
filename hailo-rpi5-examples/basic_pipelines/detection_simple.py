@@ -70,7 +70,7 @@ def app_callback(pad, info, user_data):
         app_callback.count = 0
     app_callback.count += 1
 
-    if app_callback.count % 2 == 0:
+    if app_callback.count % 5 == 0:
         success, map_info = buffer.map(Gst.MapFlags.READ)
         if success:
             try:

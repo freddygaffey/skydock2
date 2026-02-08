@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from ai_class import Detection
 
@@ -6,13 +7,14 @@ from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
-from states.constants import GOTO_ALT, MAX_HOMING_DIST
+from states.constants import GOTO_ALT, MAX_HOMING_DIST, LAST_GO_TO_TIME
 
 from states.enum import DroneStateEnum
 
 
 
 def goto(drone_state:DroneStateForHoming,frame:Frame):
+
     weed = db_abstraction.get_closest_weed(drone_state)
     if not weed:
         return DroneStateEnum.RTL

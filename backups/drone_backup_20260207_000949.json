@@ -1,0 +1,88 @@
+{
+  "timestamp": "20260207_000949",
+  "stats": {
+    "total_waypoints": 12,
+    "traveled_waypoints": 0,
+    "total_weeds": 0,
+    "sprayed_weeds": 0,
+    "unsprayed_weeds": 0,
+    "total_snapshots": 0,
+    "total_detections": 0
+  },
+  "waypoints": [
+    {
+      "id": 0,
+      "lat": -35.3305436,
+      "lon": 149.1282988,
+      "visited": false
+    },
+    {
+      "id": 1,
+      "lat": 0.0,
+      "lon": 0.0,
+      "visited": false
+    },
+    {
+      "id": 2,
+      "lat": -35.3305053,
+      "lon": 149.1282721,
+      "visited": false
+    },
+    {
+      "id": 3,
+      "lat": -35.3306009,
+      "lon": 149.1283296,
+      "visited": false
+    },
+    {
+      "id": 4,
+      "lat": -35.3306551,
+      "lon": 149.1283374,
+      "visited": false
+    },
+    {
+      "id": 5,
+      "lat": -35.3305131,
+      "lon": 149.1282523,
+      "visited": false
+    },
+    {
+      "id": 6,
+      "lat": -35.3305208,
+      "lon": 149.1282324,
+      "visited": false
+    },
+    {
+      "id": 7,
+      "lat": -35.3306628,
+      "lon": 149.1283177,
+      "visited": false
+    },
+    {
+      "id": 8,
+      "lat": -35.3306706,
+      "lon": 149.1282978,
+      "visited": false
+    },
+    {
+      "id": 9,
+      "lat": -35.3305286,
+      "lon": 149.1282126,
+      "visited": false
+    },
+    {
+      "id": 10,
+      "lat": -35.3305363,
+      "lon": 149.1281927,
+      "visited": false
+    },
+    {
+      "id": 11,
+      "lat": -35.3306783,
+      "lon": 149.128278,
+      "visited": false
+    }
+  ],
+  "weeds": [],
+  "snapshots": []
+}

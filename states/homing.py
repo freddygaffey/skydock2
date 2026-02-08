@@ -6,6 +6,7 @@ from ai_class import Frame
 from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
 from states.constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
 from states.enum import DroneStateEnum
+from DB_abstraction import db_abstraction
 
 
 def homing(drone_state:DroneStateForHoming,frame:Frame):
@@ -19,7 +20,10 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
         if min_actual <= MIN_SPRAY_ERROR:
             return DroneStateEnum.SPRAY
 
-    if closest_det is None or min_actual > MAX_HOMING_DIST:
+    if closest_det is None:
+        db
+        
+        or min_actual > MAX_HOMING_DIST:
         return DroneStateEnum.GOTO
 
     dalt = -1

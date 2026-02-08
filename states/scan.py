@@ -9,13 +9,17 @@ from utils import detection_to_latlon, haversine_distance, detection_to_ned
 from states.constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET
 from states.enum import DroneStateEnum
 
+_scan_data_processed = False
 
 def scan(drone_state:DroneStateForHoming,frame:Frame):
+    global _scan_data_processed
     point = db_abstraction.get_next_waypoint()
     if point == None:
-        print("prosesing all data")
-        prosess_all_scan_data()
-        print("prosess_all_scan_data is compleate")
+        if not _scan_data_processed:
+            print("prosesing all data")
+            prosess_all_scan_data()
+            print("prosess_all_scan_data is compleate")
+            _scan_data_processed = True
         return DroneStateEnum.GOTO
     db_abstraction.log_drone_state_and_frame(drone_state,frame)
 
