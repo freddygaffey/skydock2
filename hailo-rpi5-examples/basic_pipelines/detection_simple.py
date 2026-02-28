@@ -81,11 +81,15 @@ def app_callback(pad, info, user_data):
     return Gst.PadProbeReturn.OK
 
 def make_ai_app():
+    import sys
     project_root = Path(__file__).resolve().parent.parent
     env_file     = project_root / ".env"
     env_path_str = str(env_file)
     os.environ["HAILO_ENV_FILE"] = env_path_str
-    user_data = user_app_callback_class()  
+    # Force RPi camera input so we don't need to pass -i rpi on the command line
+    if "-i" not in sys.argv and "--input" not in sys.argv:
+        sys.argv += ["-i", "rpi"]
+    user_data = user_app_callback_class()
     app = GStreamerDetectionApp(app_callback, user_data)
     return app
 

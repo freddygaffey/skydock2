@@ -1,5 +1,7 @@
 venv_wsl_no_hailo/
 droneDB.db
+backups/
+missions/
 
 
 

@@ -320,13 +320,16 @@ class DBAbstraction:
                     velocity_z=state_model.velocity_z,
                     enable_homing_and_autonomy=state_model.enable_homing_and_autonomy,
                     heading=state_model.heading,
+                    rotaion_x=state_model.rotation_x,
+                    rotaion_y=state_model.rotation_y,
+                    rotaion_z=state_model.rotation_z,
                     mode=state_model.mode
                 )
-                
+
                 # Reconstruct Frame with detections
                 detections = []
                 photo_path = "NO_PHOTO_TAKEN"
-                
+
                 for det_model in state_model.detections:
                     # Reconstruct bbox from bounds
                     bbox = [
@@ -381,13 +384,16 @@ class DBAbstraction:
                 velocity_z=state_model.velocity_z,
                 enable_homing_and_autonomy=state_model.enable_homing_and_autonomy,
                 heading=state_model.heading,
+                rotaion_x=state_model.rotation_x,
+                rotaion_y=state_model.rotation_y,
+                rotaion_z=state_model.rotation_z,
                 mode=state_model.mode
             )
-            
+
             # Reconstruct Frame with detections
             detections = []
             photo_path = "NO_PHOTO_TAKEN"
-            
+
             for det_model in state_model.detections:
                 bbox = [
                     (det_model.bbox_x1, det_model.bbox_y1),
@@ -485,6 +491,14 @@ class DBAbstraction:
                     "lat": snap.drone_state.latitude,
                     "lon": snap.drone_state.longitude,
                     "alt": snap.drone_state.altitude_rel_home,
+                    "velocity_x": snap.drone_state.velocity_x,
+                    "velocity_y": snap.drone_state.velocity_y,
+                    "velocity_z": snap.drone_state.velocity_z,
+                    "enable_homing_and_autonomy": snap.drone_state.enable_homing_and_autonomy,
+                    "heading": snap.drone_state.heading,
+                    "rotation_x": snap.drone_state.rotaion_x,
+                    "rotation_y": snap.drone_state.rotaion_y,
+                    "rotation_z": snap.drone_state.rotaion_z,
                     "mode": snap.drone_state.mode
                 },
                 "detections": []

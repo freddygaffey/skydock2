@@ -56,7 +56,7 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
 
     ray_to_ned = Rz @ Ry @ Rx
     ray_NED = ray_to_ned @ ray_body
-    multiply_factor = drone_state.altitude_rel_home / ray_NED[2]
+    multiply_factor = drone_state.altitude_rel_home / max(ray_NED[2], 0.1) # no div 0
         
     N = multiply_factor * ray_NED[0]
     E = multiply_factor * ray_NED[1]

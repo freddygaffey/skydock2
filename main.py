@@ -9,7 +9,7 @@ print("press n for a new mission from the currently saved auto mission")
 print("press c to cancel and ctrl + c should also stop it at any time mabey")
 print("w just uplod a weed location this is where home is")
 
-inp = input("press r/n/c ")
+inp = input("press r/n/c/w ")
 
 if inp == "n":
     wps_new = []
@@ -32,7 +32,7 @@ elif inp == "w":
     db_abstraction.backup_and_clear()
     lon,lat = telemetry_singlton.drone_state.longitude, telemetry_singlton.drone_state.latitude
     wp = Waypoint(lon=lon,lat=lat)
-    db_abstraction.add_waypoint()
+    db_abstraction.add_waypoint(wp)
 
 else:
     exit()

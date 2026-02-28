@@ -80,3 +80,5 @@ def prosess_all_scan_data():
     for i in all_points:
         weed = Weed(lat=i.location[0], lon=i.location[1])
         db_abstraction.log_weed(weed)
+
+    print(f"there are {len(all_points)} weed detected")

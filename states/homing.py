@@ -17,13 +17,10 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
         if dist < min_actual:
             min_actual = dist
             closest_det = i
-        if min_actual <= MIN_SPRAY_ERROR:
-            return DroneStateEnum.SPRAY
+    if min_actual <= MIN_SPRAY_ERROR:
+        return DroneStateEnum.SPRAY
 
-    if closest_det is None:
-        db
-        
-        or min_actual > MAX_HOMING_DIST:
+    if closest_det is None or min_actual > MAX_HOMING_DIST:
         return DroneStateEnum.GOTO
 
     dalt = -1
