@@ -52,12 +52,15 @@ class Point:
         return haversine_distance(*self.location,*poss)
 
 def prosess_all_scan_data():
-    all_points = []
+    all_points : list[Point] = []
     frame_state = db_abstraction.get_all_snapshots()
-    all_det = []
+    all_det : list[detState] = []
+
+    # unpack to a array of 
     for i in frame_state:
         for j in i.frame.detection:
             all_det.append(detState(j,i.drone_state))
+
     for i in all_det:
         det_loc = detection_to_latlon(i.state,i.det)
         min_dist = float("inf")

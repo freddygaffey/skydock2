@@ -72,29 +72,51 @@ def test_telemetry_connection(results: TestResults):
 
 
 def test_gps_fix(results: TestResults, state):
-    """Test GPS has a valid fix"""
+    """Test GPS has a valid fix with detailed quality diagnostics"""
     print("\n[2/6] GPS FIX")
 
     if state is None:
         results.fail("No drone state available")
         return
 
-    if state.latitude == 0 and state.longitude == 0:
-        results.fail("NO GPS FIX - lat/lon are zero")
+    # --- Data freshness (time_updated is boot-time seconds, so sample twice) ---
+    if state.time_updated_GLOBAL_POSITION_INT == 0:
+        results.fail("No GLOBAL_POSITION_INT message received yet")
         return
+    t1 = state.time_updated_GLOBAL_POSITION_INT
+    time.sleep(0.3)
+    t2 = state.time_updated_GLOBAL_POSITION_INT
+    if t1 == t2:
+        results.warn("GPS data has stopped updating - telemetry may be lagging")
+    else:
+        results.ok("GPS data is updating")
 
-    results.ok(f"GPS position: {state.latitude:.7f}, {state.longitude:.7f}")
+    # --- Position ---
+    if state.latitude == 0 and state.longitude == 0:
+        results.fail("Position is 0,0 - no valid position fix")
+        return
+    results.ok(f"Position: {state.latitude:.7f}, {state.longitude:.7f}")
 
+    # --- Altitude ---
     if state.altitude_rel_home == 0:
-        results.warn("Altitude is 0 - might be normal if on ground")
+        results.warn("Altitude relative to home is 0 (normal on ground before arming)")
     else:
         results.ok(f"Altitude: {state.altitude_rel_home:.1f}m (rel home)")
 
-    # Check heading
-    if state.heading is None or state.heading == 0:
-        results.warn("Heading unknown or 0 - compass may need calibration")
+    # --- Heading ---
+    if state.heading is None:
+        results.fail("Heading unknown (hdg=65535) - compass may not be calibrated")
+    elif state.heading == 0:
+        results.warn("Heading is 0° - could be north or compass not ready")
     else:
         results.ok(f"Heading: {state.heading:.1f}°")
+
+    # --- Ground speed (should be near zero on ground) ---
+    speed = math.sqrt(state.velocity_x**2 + state.velocity_y**2)
+    if speed > 1.0:
+        results.warn(f"Ground speed {speed:.1f} m/s - drone should be stationary")
+    else:
+        results.ok(f"Ground speed: {speed:.2f} m/s (stationary)")
 
 
 def test_flight_mode(results: TestResults, state):
@@ -293,11 +315,17 @@ def main():
     parser.add_argument("--quick", action="store_true", help="Quick mode - minimal waits")
     args = parser.parse_args()
 
+    results = TestResults()
+
+    # Start AI first so camera noise appears before any test output
+    if not args.no_ai:
+        test_ai_pipeline(results)
+    else:
+        print("\n[5/6] AI PIPELINE - SKIPPED")
+
     print("="*50)
     print("SKYDOCK PRE-FLIGHT TEST SUITE")
     print("="*50)
-
-    results = TestResults()
 
     # Test 1: Telemetry connection
     state = test_telemetry_connection(results)
@@ -310,12 +338,6 @@ def main():
 
     # Test 4: Attitude data
     test_attitude_data(results, state)
-
-    # Test 5: AI pipeline (optional)
-    if not args.no_ai:
-        test_ai_pipeline(results)
-    else:
-        print("\n[5/6] AI PIPELINE - SKIPPED")
 
     # Test 6: Database
     test_database(results)

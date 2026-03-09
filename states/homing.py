@@ -6,8 +6,10 @@ from ai_class import Frame
 from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
 from states.constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
 from states.enum import DroneStateEnum
+from states.shared_data import last_goto_time
 from DB_abstraction import db_abstraction
 
+last_det_time = time.time()
 
 def homing(drone_state:DroneStateForHoming,frame:Frame):
     min_actual = float("inf")
@@ -18,14 +20,20 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             min_actual = dist
             closest_det = i
     if min_actual <= MIN_SPRAY_ERROR:
+        if (weed := db_abstraction.get_closest_weed(drone_state)): db_abstraction.mark_weed_sprayed(weed) 
+        else: return DroneStateEnum.RTL
+
         return DroneStateEnum.SPRAY
 
-    if closest_det is None or min_actual > MAX_HOMING_DIST:
-        return DroneStateEnum.GOTO
+    if closest_det: last_det_time = time.time()
 
-    dalt = -1
-    if drone_state.altitude_rel_home < MIN_ALT + dalt:
-        dalt = 0
+    if (last_goto_time - time.time()) > 10 and (last_det_time - time.time()) > 1:
+        return DroneStateEnum.GOTO
+    
+    if (last_det_time - time.time()) > 1: dalt = 1
+    if drone_state.altitude_rel_home < MIN_ALT + dalt: dalt = 0
+    else: dalt = -1
+
 
     ned = detection_to_ned(drone_state, closest_det)
     telemetry_singlton.send_displacement_command_yaw_stay_same(ned[0], ned[1], dalt)
