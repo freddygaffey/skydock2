@@ -60,10 +60,13 @@ class DroneStateForHoming:
             self.heading = msg.hdg / 100.0 if msg.hdg != 65535 else None
 
         if msg._type == "SERVO_OUTPUT_RAW":
-            if msg.servo8_raw <= 1000:
-                self.enable_homing_and_autonomy = False
-            if msg.servo8_raw > 1000:
+            import sys
+            if "-s" in sys.argv or "--sim" in sys.argv:
                 self.enable_homing_and_autonomy = True
+            elif msg.servo8_raw > 1000:
+                self.enable_homing_and_autonomy = True
+            else:
+                self.enable_homing_and_autonomy = False
 
         if msg._type == "ATTITUDE":
             self.rotaion_x = msg.roll 

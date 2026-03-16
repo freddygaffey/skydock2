@@ -14,3 +14,5 @@ MIN_ALT = 5  # m
 
 # Spray state constants
 MIN_SPRAY_ERROR = 2  # m
+
+last_det_time = 0

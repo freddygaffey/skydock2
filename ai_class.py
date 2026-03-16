@@ -79,12 +79,17 @@ class _AiStorage:
         with self.current_frame_lock:
             return self.current_frame
 
-    def start_ai(self):
+    def start_ai(self,sim_weeds: list[list[float]]):
         if self.is_ai_running:
             print("ai is already running")
             return
 
         self.is_ai_running = True
+        if sim_weeds is not None and len(sim_weeds) > 0:
+            from sim_ai import run_sim_ai
+            run_sim_ai(sim_weeds)
+            return
+
         ######## I dont understand but it works thanks ai #########
         # import sys
         import ai_callback

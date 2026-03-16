@@ -7,3 +7,4 @@ class DroneStateEnum(Enum):
     HOMING = auto()
     SPRAY = auto()
     RTL = auto()
+    DONE = auto()

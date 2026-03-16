@@ -19,11 +19,9 @@ class Telemetry(object):
         self.drone_state = DroneStateForHoming() 
         # connect to drone
 
-        connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10","udp:127.0.0.1:14552",None]
-        # connection_palths = ["udp:127.0.0.1:14552"]
+        connection_palths = ["udp:127.0.0.1:14552","/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10",None]
+
         for i in connection_palths:
-            if i is None:
-                raise ConnectionError("could not connect to the fc")
             try:
                 path_to_uav = i
                 self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
@@ -32,8 +30,10 @@ class Telemetry(object):
                     break
             except serial.serialutil.SerialException:
                 print(f"cant connect to {i}")
-                pass
-        
+
+            if i is None:
+                raise ConnectionError("could not connect to the fc")
+
         self.wp_q = Queue(maxsize=1000) 
 
         self.mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
@@ -307,5 +307,7 @@ class Telemetry(object):
 telemetry_singlton = Telemetry()
 
 if __name__ == "__main__":
-    while 1:print(telemetry_singlton.drone_state)
+    while 1:
+        print(telemetry_singlton.drone_state)
+        time.sleep(1)
     pass

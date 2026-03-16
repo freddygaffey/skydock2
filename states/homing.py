@@ -25,14 +25,23 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
 
         return DroneStateEnum.SPRAY
 
-    if closest_det: last_det_time = time.time()
+    global last_det_time
+    if closest_det:
+        last_det_time = time.time()
 
-    if (last_goto_time - time.time()) > 10 and (last_det_time - time.time()) > 1:
+    if (last_goto_time - time.time()) > 10 and (time.time() - last_det_time) > 1:
         return DroneStateEnum.GOTO
     
-    if (last_det_time - time.time()) > 1: dalt = 1
-    if drone_state.altitude_rel_home < MIN_ALT + dalt: dalt = 0
-    else: dalt = -1
+    if closest_det is None:
+        return DroneStateEnum.HOMING
+
+    # Choose altitude change based on how recently we saw a detection
+    if (time.time() - last_det_time) > 1:
+        dalt = 1
+    elif drone_state.altitude_rel_home < MIN_ALT:
+        dalt = 0
+    else:
+        dalt = -1
 
 
     ned = detection_to_ned(drone_state, closest_det)

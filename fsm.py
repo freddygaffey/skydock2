@@ -1,4 +1,5 @@
 import time
+import sys
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
@@ -17,8 +18,8 @@ class StateMachine:
         self.current_state = DroneStateEnum.OVERRIDE
 
     def update(self):
-        frame = ai_storage_singleton.get_latest_frame()
         drone_state = telemetry_singlton.drone_state
+        frame = ai_storage_singleton.get_latest_frame()
         match self.current_state:
             case DroneStateEnum.OVERRIDE:
                 self.current_state = self._update_override(frame,drone_state)
@@ -32,6 +33,9 @@ class StateMachine:
                 self.current_state = self._update_spray(frame,drone_state)
             case DroneStateEnum.RTL:
                 self.current_state = self._update_rtl(frame,drone_state)
+            case DroneStateEnum.DONE:
+                print("the mission is done")
+                return False 
             case _:
                 self.current_state = DroneStateEnum.OVERRIDE            
         print(self.current_state)
