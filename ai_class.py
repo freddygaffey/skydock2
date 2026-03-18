@@ -4,12 +4,12 @@ import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
-from datetime import datetime
+from mission_logging import allocate_mission_dir, configure_mission_dir
 
-# Setup missions directory - relative to project, with timestamped session folder
+# Setup missions directory - relative to project, SD-card style numbering
 _project_root = Path(__file__).resolve().parent
-_session_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-session_dir = _project_root / "missions" / _session_name
+session_dir = allocate_mission_dir(_project_root)
+configure_mission_dir(session_dir)
 frames_dir = session_dir / "frames"
 os.makedirs(session_dir, exist_ok=True)
 os.makedirs(frames_dir, exist_ok=True)

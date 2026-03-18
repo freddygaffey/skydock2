@@ -7,6 +7,7 @@ from queue import Queue, Full
 from pymavlink import mavutil
 from typing import Callable
 from drone_state import DroneStateForHoming
+from mission_logging import log_event
 
 
 class Telemetry(object):
@@ -52,6 +53,7 @@ class Telemetry(object):
         self.set_a_message_interval("ATTITUDE", 1/100)
         self.set_a_message_interval("HEARTBEAT", 1/2)
 
+        last_log_s = 0.0
         while True:
             try:
                 msg = self.connection.recv_msg()
@@ -61,8 +63,17 @@ class Telemetry(object):
                 continue
 
             self.drone_state.set_pass_message(msg)
-            with open("missions/drone_state.txt","a") as file:
-                file.write(f"{self.drone_state.__dict__}\n")
+            # Throttle telemetry logging; high-rate raw logs are noisy.
+            now = time.time()
+            if (now - last_log_s) >= 1.0:
+                last_log_s = now
+                ds = self.drone_state
+                log_event(
+                    "telemetry_sample",
+                    logger="telemetry",
+                    level="DEBUG",
+                    drone_state=ds,
+                )
 
             self.move_msg_passer(msg)
             
@@ -160,6 +171,13 @@ class Telemetry(object):
 
         # return current_mode
     def send_displacement_command_yaw_stay_same(self,mx:float,my:float,mz:float,bitmask:int=4088):
+            log_event(
+                "move_command",
+                logger="telemetry",
+                level="INFO",
+                drone_state=self.drone_state,
+                command={"type": "displacement_body_offset_ned", "mx": mx, "my": my, "mz": mz, "bitmask": bitmask},
+            )
             self.connection.mav.set_position_target_local_ned_send(
                 0,
                 self.connection.target_system,
@@ -176,6 +194,13 @@ class Telemetry(object):
         if not bitmask:
             raise ValueError("bit mask not set for volocity command")
 
+        log_event(
+            "move_command",
+            logger="telemetry",
+            level="INFO",
+            drone_state=self.drone_state,
+            command={"type": "velocity_body_offset_ned", "vx": mx, "vy": my, "vz": mz, "bitmask": bitmask},
+        )
         self.connection.mav.set_position_target_local_ned_send(
             0,
             self.connection.target_system,
@@ -193,20 +218,15 @@ class Telemetry(object):
         time.sleep(3)
         self.set_mode(old_mode)
         self.stop_volocity_command()
-    def send_displacement_command_yaw_stay_same(self,mx,my,mz,bitmask=4088):
-            self.connection.mav.set_position_target_local_ned_send(
-                0,
-                self.connection.target_system,
-                self.connection.target_component,
-                mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
-                bitmask,  # ignore velocity, acceleration, yaw/yaw_rate (position only)
-                mx, my, mz,  # position offsets in meters
-                0, 0, 0,     # velocity ignored
-                0, 0, 0,     # acceleration ignored
-                0, 0         # yaw and yaw_rate ignored
-                )
     def move_volocity_until_stop_or_max_time(self,direction,max_time,change_yaw=False):
         self.stop_volocity_command()
+        log_event(
+            "move_command",
+            logger="telemetry",
+            level="INFO",
+            drone_state=self.drone_state,
+            command={"type": "velocity_until", "direction": direction, "max_time_s": max_time, "change_yaw": change_yaw},
+        )
 
         def repeatedly_send_v_command(direction,max_time,change_yaw):
             dyaw = 3527
@@ -256,6 +276,13 @@ class Telemetry(object):
                 0, 0, 0, 0, 0, 0, 0, hight
             )
     def fly_to_point(self,lat,lon,alt_above_home,bitmask=3576):
+        log_event(
+            "move_command",
+            logger="telemetry",
+            level="INFO",
+            drone_state=self.drone_state,
+            command={"type": "fly_to_point", "lat": lat, "lon": lon, "alt_above_home": alt_above_home, "bitmask": bitmask},
+        )
         lat = int(lat * 1e7)
         lon = int(lon * 1e7)
 

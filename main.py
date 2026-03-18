@@ -7,10 +7,29 @@ from telemetry import telemetry_singlton
 from DB_abstraction import db_abstraction, Waypoint
 from fsm import StateMachine
 from sim_ai import run_sim_ai
+from mission_logging import init_mission_log
+from states.constants import MIN_SPRAY_ERROR
 
 if "-s" in sys.argv or "--sim" in sys.argv:
     print("sim mode")
-    sim_file = input("sim file: ")
+    # Accept an optional sim filename on the command line:
+    #   python main.py --sim cmac
+    #   python main.py --sim cmac.json
+    # If not provided (or stdin is non-interactive), run all sim_data/*.json.
+    sim_file = ""
+    try:
+        sim_idx = sys.argv.index("--sim")
+    except ValueError:
+        try:
+            sim_idx = sys.argv.index("-s")
+        except ValueError:
+            sim_idx = -1
+
+    if sim_idx != -1 and sim_idx + 1 < len(sys.argv) and not sys.argv[sim_idx + 1].startswith("-"):
+        sim_file = sys.argv[sim_idx + 1]
+    elif sys.stdin.isatty():
+        sim_file = input("sim file (blank = all): ").strip()
+
     if sim_file.endswith(".json"):
         files = [sim_file]
     elif sim_file != "":
@@ -19,6 +38,15 @@ if "-s" in sys.argv or "--sim" in sys.argv:
         files = [f for f in os.listdir("sim_data") if f.endswith(".json")]
 
     for file in files:
+        # Create mission.jsonl header as soon as we know which sim file is being used.
+        init_mission_log(
+            is_sim=True,
+            # Store just the filename so the log viewer can pass it to /sim_compare.
+            # (Older logs may include "sim_data/..." and are handled in the UI.)
+            sim_truth_file=file,
+            weed_match_m=0.5,
+            min_spray_error_m=float(MIN_SPRAY_ERROR),
+        )
         with open(f"sim_data/{file}", "r") as f:
             data = json.load(f)
             weeds = data["weed_locations"]
@@ -36,7 +64,10 @@ if "-s" in sys.argv or "--sim" in sys.argv:
                 db_abstraction.add_waypoint(i)
         fsm = StateMachine()
         while fsm.update() != False:
-            pass
+            # Avoid a 100% CPU tight loop in sim.
+            # The FSM only changes meaningfully as telemetry + sim_ai update.
+            import time
+            time.sleep(1/30)
     
 print("you are about to fly do your prflight checks")
 print("press r to resume")
@@ -75,6 +106,11 @@ else:
 if input("type y when taken off (y) ") != "y":
     exit()
 
+init_mission_log(
+    is_sim=False,
+    weed_match_m=0.5,
+    min_spray_error_m=float(MIN_SPRAY_ERROR),
+)
 ai_storage_singleton.start_ai()
 fsm = StateMachine()
 

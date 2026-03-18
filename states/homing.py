@@ -8,6 +8,7 @@ from states.constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
 from states.enum import DroneStateEnum
 from states.shared_data import last_goto_time
 from DB_abstraction import db_abstraction
+from mission_logging import log_event
 
 last_det_time = time.time()
 
@@ -20,7 +21,19 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             min_actual = dist
             closest_det = i
     if min_actual <= MIN_SPRAY_ERROR:
-        if (weed := db_abstraction.get_closest_weed(drone_state)): db_abstraction.mark_weed_sprayed(weed) 
+        if (weed := db_abstraction.get_closest_weed(drone_state)):
+            log_event(
+                "spray_ready",
+                logger="spray",
+                level="INFO",
+                drone_state=drone_state,
+                frame=frame,
+                dist_horizontal_m=float(min_actual),
+                min_spray_error_m=float(MIN_SPRAY_ERROR),
+                target_weed={"id": getattr(weed, "id", None), "lat": getattr(weed, "lat", None), "lon": getattr(weed, "lon", None)},
+                closest_detection={"time_detected": getattr(closest_det, "time_detected", None) if closest_det else None},
+            )
+            db_abstraction.mark_weed_sprayed(weed)
         else: return DroneStateEnum.RTL
 
         return DroneStateEnum.SPRAY

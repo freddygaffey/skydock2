@@ -8,6 +8,7 @@ from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
 from states.constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET
 from states.enum import DroneStateEnum
+from mission_logging import log_event
 
 _scan_data_processed = False
 
@@ -83,5 +84,14 @@ def prosess_all_scan_data():
     for i in all_points:
         weed = Weed(lat=i.location[0], lon=i.location[1])
         db_abstraction.log_weed(weed)
+        log_event(
+            "weed_detected",
+            logger="ai",
+            level="INFO",
+            drone_state=None,
+            frame=None,
+            weed={"lat": float(i.location[0]), "lon": float(i.location[1])},
+            num_detections=len(i.det_location) if i.det_location is not None else None,
+        )
 
     print(f"there are {len(all_points)} weed detected")

@@ -4,6 +4,7 @@ import sys
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import ai_storage_singleton, Frame, session_dir
+from mission_logging import log_event
 
 from states.homing import homing
 from states.scan import scan
@@ -20,6 +21,7 @@ class StateMachine:
     def update(self):
         drone_state = telemetry_singlton.drone_state
         frame = ai_storage_singleton.get_latest_frame()
+        prev_state = self.current_state
         match self.current_state:
             case DroneStateEnum.OVERRIDE:
                 self.current_state = self._update_override(frame,drone_state)
@@ -39,28 +41,27 @@ class StateMachine:
             case _:
                 self.current_state = DroneStateEnum.OVERRIDE            
         print(self.current_state)
-        # Log everything in one place
-        timestamp = time.time_ns()
-
-        # Log FSM state
-        with open(session_dir / "fsm.txt", "a") as file:
-            file.write(f"{self.current_state},{timestamp}\n")
-
-        # Log frame detections
-        with open(session_dir / "frames.txt", "a") as file:
-            det = []
-            for i in frame.detection:
-                det.append(vars(i))
-
-            frame_data = {
-                'time_ns': timestamp,
-                'detections': det
-            }
-            file.write(f"{frame_data}\n")
-
-        # Log drone state
-        with open(session_dir / "drone_state.txt", "a") as file:
-            file.write(f"{timestamp},{vars(drone_state)}\n")
+        timestamp_ns = time.time_ns()
+        if prev_state != self.current_state:
+            log_event(
+                "fsm_transition",
+                logger="fsm",
+                level="INFO",
+                drone_state=drone_state,
+                frame=frame,
+                time_ns=timestamp_ns,
+                state_from=str(prev_state),
+                state_to=str(self.current_state),
+            )
+        else:
+            log_event(
+                "fsm_tick",
+                logger="fsm",
+                level="DEBUG",
+                drone_state=drone_state,
+                time_ns=timestamp_ns,
+                state=str(self.current_state),
+            )
     
 
     def _update_override(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:

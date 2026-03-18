@@ -3,4 +3,5 @@ opencv-python
 pymavlink
 pyserial
 sqlalchemy
+flask
 
