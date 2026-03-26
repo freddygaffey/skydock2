@@ -2,7 +2,7 @@
 # globa
 # #######################
 import sys
-SIM_SPEED = float(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1.0
+SIM_SPEED = int(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1
 
 
 ###########################

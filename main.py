@@ -1,6 +1,27 @@
 import sys
 import os
 import json
+import time
+import subprocess
+
+
+if "-s" in sys.argv or "--sim" in sys.argv:
+    _speed = float(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1
+    _speed = int(_speed)
+    print(f"[sitl] launching SITL at {_speed}x speed...")
+    _cmd = (
+        f"source ~/venv-ardupilot/bin/activate && "
+        f"cd ~/ardupilot/ArduCopter && "
+        f"sim_vehicle.py -v ArduCopter -w --console --map "
+        f"--out=tcp:127.0.0.1:5760 --out=udp:127.0.0.1:14552 "
+        f"--speedup={_speed} ; "
+        f"read -p 'press enter to close'"
+    )
+    subprocess.Popen(["xterm", "-e", "bash", "-c", _cmd])
+    # clear mavinit so mavproxy doesn't run stale startup commands
+    open(os.path.expanduser("~/.mavinit.scr"), "w").close()
+    print("[sitl] waiting 15s for SITL to boot...")
+    time.sleep(15)
 
 from ai_class import ai_storage_singleton
 from telemetry import telemetry_singlton
@@ -12,6 +33,32 @@ import constants
 from constants import MIN_SPRAY_ERROR
 
 if "-s" in sys.argv or "--sim" in sys.argv:
+    from pymavlink import mavutil as _mavutil
+    _conn = telemetry_singlton.connection
+    print("[sitl] waiting for EKF and GPS to be ready (retrying arm)...")
+    for _attempt in range(30):
+        _conn.mav.command_long_send(
+            _conn.target_system, _conn.target_component,
+            _mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
+            1, 4, 0, 0, 0, 0, 0  # 4 = GUIDED
+        )
+        time.sleep(1)
+        _conn.mav.command_long_send(
+            _conn.target_system, _conn.target_component,
+            _mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
+            1, 21196, 0, 0, 0, 0, 0  # 21196 = force arm
+        )
+        time.sleep(2)
+        if telemetry_singlton.arm_state:
+            print("[sitl] armed! taking off...")
+            _conn.mav.command_long_send(
+                _conn.target_system, _conn.target_component,
+                _mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0,
+                0, 0, 0, 0, 0, 0, 10
+            )
+            time.sleep(5)
+            break
+        print(f"[sitl] attempt {_attempt + 1}/30 failed, retrying...")
     print("sim mode")
     # Accept an optional sim filename on the command line:
     #   python main.py --sim cmac
