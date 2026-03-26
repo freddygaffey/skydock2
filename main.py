@@ -8,7 +8,8 @@ from DB_abstraction import db_abstraction, Waypoint
 from fsm import StateMachine
 from sim_ai import run_sim_ai
 from mission_logging import init_mission_log
-from states.constants import MIN_SPRAY_ERROR
+import constants
+from constants import MIN_SPRAY_ERROR
 
 if "-s" in sys.argv or "--sim" in sys.argv:
     print("sim mode")
@@ -67,7 +68,7 @@ if "-s" in sys.argv or "--sim" in sys.argv:
             # Avoid a 100% CPU tight loop in sim.
             # The FSM only changes meaningfully as telemetry + sim_ai update.
             import time
-            time.sleep(1/30)
+            time.sleep((1/30)/constants.SIM_SPEED)
     
 print("you are about to fly do your prflight checks")
 print("press r to resume")

@@ -6,7 +6,7 @@ from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
-from states.constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET
+from constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
@@ -38,7 +38,7 @@ class detState:
 
 @dataclass
 class Point:
-    location: list = None # lat lon
+    location: list[tuple[float, float]] = None # lat lon
     det_location: list = None # [lat, lon]
 
     def add_det(self,lat,lon):

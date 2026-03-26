@@ -4,4 +4,5 @@ pymavlink
 pyserial
 sqlalchemy
 flask
-
+numpy
+sklearn

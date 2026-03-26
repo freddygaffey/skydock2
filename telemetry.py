@@ -8,6 +8,7 @@ from pymavlink import mavutil
 from typing import Callable
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
+from constants import SIM_SPEED
 
 
 class Telemetry(object):
@@ -59,7 +60,7 @@ class Telemetry(object):
                 msg = self.connection.recv_msg()
             except serial.SerialException: pass
             if msg is None:
-                time.sleep(0.003)
+                time.sleep(0.003/SIM_SPEED)
                 continue
 
             self.drone_state.set_pass_message(msg)
@@ -239,7 +240,7 @@ class Telemetry(object):
             while time.time() < start_time + max_time and not self._v_thread_stop_event.is_set():
                 print("sending volocity command on thread")
                 self.send_volocity_command_yaw_stay_same(direction[0],direction[1],direction[2],bitmask)
-                time.sleep(0.03)
+                time.sleep(0.03/SIM_SPEED)
                 
         if self._v_thread is None or not self._v_thread.is_alive(): # this will check if none like after init or later is not runing
             self._v_thread_stop_event.clear()

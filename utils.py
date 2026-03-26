@@ -66,7 +66,7 @@ def detection_to_dist(drone_state: DroneStateForHoming, detection: Detection):
     NE = detection_to_ned(drone_state,detection)
     return (NE[0]**2 + NE[1]**2)**0.5
 
-def detection_to_latlon(drone_state: DroneStateForHoming, detection: Detection):
+def detection_to_latlon(drone_state: DroneStateForHoming, detection: Detection) -> tuple[float, float]:
     N, E = detection_to_ned(drone_state,detection)
     dlat = N / 111320
     dlon = E / (111320*np.cos(radians(drone_state.latitude)))

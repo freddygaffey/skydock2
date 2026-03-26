@@ -1,3 +1,14 @@
+#########################
+# globa
+# #######################
+import sys
+SIM_SPEED = float(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1.0
+
+
+###########################
+###### fsm ################
+###########################
+
 # Scan state constants
 SCAN_HIGHT = 10  # m
 MIN_DIST_FROM_WAYPOINT = 8  # m

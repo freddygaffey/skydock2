@@ -7,6 +7,7 @@ from telemetry import telemetry_singlton
 from ai_class import ai_storage_singleton, Detection, Frame
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
+from constants import SIM_SPEED
 
 
 # Camera parameters – must match utils.detection_to_ned
@@ -269,7 +270,7 @@ def run_sim_ai(weed_locations: list[list[float]]):
 
             # Schedule next frame based on absolute time
             frame_idx += 1
-            next_time = start + frame_idx * dt
+            next_time = (start + frame_idx * dt)/SIM_SPEED
 
             now = time.perf_counter()
             sleep_time = next_time - now

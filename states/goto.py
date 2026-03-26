@@ -7,7 +7,7 @@ from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
-from states.constants import GOTO_ALT, MAX_HOMING_DIST
+from constants import GOTO_ALT, MAX_HOMING_DIST
 from states.enum import DroneStateEnum
 from states.shared_data import last_goto_time
 

@@ -4,7 +4,7 @@ from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import Frame
 from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
-from states.constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
+from constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
 from states.enum import DroneStateEnum
 from states.shared_data import last_goto_time
 from DB_abstraction import db_abstraction
