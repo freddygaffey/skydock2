@@ -1,9 +1,21 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pymavlink import mavutil
+from collections import deque
+
+import time
+@dataclass
+class Rotation:
+    time_ns: float
+    rotaion_x: float
+    rotaion_y: float
+    rotaion_z: float
+
 
 @dataclass
 class DroneStateForHoming:
+    # time_to_boot_real_time_ofset:float = 0
     time_updated_GLOBAL_POSITION_INT: float = 0
+    time_updated_angle: float = 0
     # Global position in degrees/meters
     latitude: float = 0
     longitude: float = 0
@@ -18,9 +30,9 @@ class DroneStateForHoming:
     mode: str = 'STABILIZE'
 
     heading: float = 0
-    rotaion_x: float = 0 # in rad
-    rotaion_y: float = 0 # in rad
-    rotaion_z: float = 0 # in rad
+    
+    rotaion:Rotation = field(default_factory=lambda: Rotation(0,0,0,0))
+    rotaion_history: deque = field(default_factory=lambda: deque(maxlen=1000))
 
     rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, 0 = no data
 
@@ -71,9 +83,13 @@ class DroneStateForHoming:
                 self.enable_homing_and_autonomy = False
 
         if msg._type == "ATTITUDE":
-            self.rotaion_x = msg.roll
-            self.rotaion_y = msg.pitch
-            self.rotaion_z = msg.yaw
+            rotaion = Rotation(time_ns=time.time_ns,rotaion_x=msg.roll,rotaion_y=msg.pitch,rotaion_z=msg.yaw)
+            self.rotaion_history.put(rotaion)
+
+            # # TODO: remove
+            # self.rotaion_x = 0.0
+            # self.rotaion_y = 0.0
+            # self.rotaion_z = 0.0
 
         if msg._type == "DISTANCE_SENSOR":
             self.rangefinder_m = msg.current_distance / 100.0  # cm to m, co-axial slant range
@@ -89,3 +105,11 @@ class DroneStateForHoming:
                 self.rotaion_y,
                 self.rotaion_z,
                 self.mode)
+    def get_rotation_at_time(self,time_ns:time):
+        # time is valid
+        if not (time_ns > self.rotaion_history.extend()[-1] and time_ns < self.rotaion_history.extend()[0]):
+            raise ValueError("the time valuse is not valid")
+        
+        def liner_intepolate(max_rot,max_rot_time,min_rot,min_rot_time):
+            
+         

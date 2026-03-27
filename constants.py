@@ -10,7 +10,7 @@ SIM_SPEED = int(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.arg
 ###########################
 
 # Scan state constants
-SCAN_HIGHT = 10  # m
+SCAN_HIGHT = 50  # m
 MIN_DIST_FROM_WAYPOINT = 8  # m
 MIN_WEED_SPACING = 2  # m
 MIN_NUM_DET = 3
