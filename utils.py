@@ -21,17 +21,8 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     cam_ray = np.array([x_cam,y_cam,1])
     cam_ray = cam_ray / np.linalg.norm(cam_ray)
 
-    camera_rotation = 90 # rotaiain in dgr
-    rho = np.deg2rad(camera_rotation)
-
-    R_cam_to_body = np.array([
-        [np.cos(rho), -np.sin(rho), 0],
-        [np.sin(rho),  np.cos(rho), 0],
-        [0, 0, 1]]) @ np.array([
-            [0,  1,  0],
-            [1,  0,  0],
-            [0,  0, -1] 
-            ])
+    # Camera is nadir-mounted, frame aligned with body: x=forward(N), y=right(E), z=down
+    R_cam_to_body = np.eye(3)
 
     ray_body = R_cam_to_body @ cam_ray
     roll,pitch,yaw = drone_state.rotaion_x,drone_state.rotaion_y,drone_state.rotaion_z
@@ -56,8 +47,15 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
 
     ray_to_ned = Rz @ Ry @ Rx
     ray_NED = ray_to_ned @ ray_body
-    multiply_factor = drone_state.altitude_rel_home / max(ray_NED[2], 0.1) # no div 0
-        
+
+    if drone_state.rangefinder_m > 0.3:
+        # Rangefinder is co-axial with camera — measures slant range directly to target.
+        # ray_NED is a unit vector so multiplying by r gives the NED displacement.
+        multiply_factor = drone_state.rangefinder_m
+    else:
+        # Fall back: use ArduPilot EKF altitude to find where ray hits the ground plane.
+        multiply_factor = drone_state.altitude_rel_home / max(ray_NED[2], 0.1)
+
     N = multiply_factor * ray_NED[0]
     E = multiply_factor * ray_NED[1]
     return N, E

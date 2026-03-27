@@ -1,12 +1,19 @@
 import json
 import math
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, redirect, render_template_string, request, send_file, url_for
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # skydock2/
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from ai_class import Detection  # noqa: E402
+from drone_state import DroneStateForHoming  # noqa: E402
+from utils import detection_to_latlon  # noqa: E402
 
 SIM_DATA_ROOT = Path(os.environ.get("SKYDOCK_SIM_DATA_DIR", str(_PROJECT_ROOT / "sim_data")))
 MISSIONS_ROOT = Path(os.environ.get("SKYDOCK_MISSIONS_DIR", str(_PROJECT_ROOT / "missions")))
@@ -222,6 +229,78 @@ def _grid_dedup(pts: list, thresh_m: float = 0.5) -> list:
     return list(seen.values())
 
 
+def _drone_state_from_dict(ds: dict | None) -> DroneStateForHoming | None:
+    if not ds or not isinstance(ds, dict):
+        return None
+    return DroneStateForHoming(
+        latitude=float(ds.get("latitude") or 0.0),
+        longitude=float(ds.get("longitude") or 0.0),
+        altitude_rel_home=float(ds.get("altitude_rel_home") or 0.0),
+        rotaion_x=float(ds.get("rotaion_x") or 0.0),
+        rotaion_y=float(ds.get("rotaion_y") or 0.0),
+        rotaion_z=float(ds.get("rotaion_z") or 0.0),
+    )
+
+
+def _ground_project_one(det: dict, ds: DroneStateForHoming) -> dict | None:
+    """
+    Project bbox center + four pixel corners to lat/lon using the same model as utils.detection_to_latlon.
+    """
+    bbox = det.get("bbox")
+    if not bbox or len(bbox) < 2:
+        return None
+    try:
+        p0, p1 = bbox[0], bbox[1]
+        x0, y0 = float(p0[0]), float(p0[1])
+        x1, y1 = float(p1[0]), float(p1[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    label = str(det.get("label") or "?")
+    conf = det.get("confidence")
+    try:
+        full = Detection(
+            label=label,
+            confidence=float(conf) if conf is not None else 0.0,
+            bbox=[(x0, y0), (x1, y1)],
+        )
+        c_lat, c_lon = detection_to_latlon(ds, full)
+        c_lat, c_lon = float(c_lat), float(c_lon)
+    except Exception:
+        return None
+
+    corners_ll: list[dict[str, float]] = []
+    for u, v in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        try:
+            pt = Detection(label=label, confidence=0.0, bbox=[(u, v), (u, v)])
+            la, lo = detection_to_latlon(ds, pt)
+            corners_ll.append({"lat": float(la), "lon": float(lo)})
+        except Exception:
+            continue
+
+    return {
+        "label": label,
+        "confidence": conf,
+        "bbox_px": bbox,
+        "center": {"lat": c_lat, "lon": c_lon},
+        "corners": corners_ll,
+        "truth_id": det.get("truth_id"),
+    }
+
+
+def _ground_project_list(detections: list[dict], ds: DroneStateForHoming | None) -> tuple[list[dict], str | None]:
+    if ds is None:
+        return [], "no drone_state on this log line (needed for projection)"
+    if ds.altitude_rel_home <= 0:
+        return [], "altitude_rel_home must be > 0 to project rays to ground"
+    out: list[dict] = []
+    for det in detections:
+        g = _ground_project_one(det, ds)
+        if g:
+            out.append(g)
+    return out, None
+
+
 # ─── index ────────────────────────────────────────────────────────────────────
 
 _INDEX_HTML = """<!doctype html>
@@ -236,6 +315,8 @@ _INDEX_HTML = """<!doctype html>
     <div>
       <h2 class="mb-0">Skydock Logs</h2>
       <div class="muted">Mission browser &amp; analysis</div>
+      <div class="small mt-1">Scanning: <code class="{{ 'better' if missions_root_exists else 'worse' }}">{{ missions_path }}</code>
+        <span class="muted">({{ 'found' if missions_root_exists else 'missing' }})</span></div>
     </div>
     <div class="d-flex gap-2 align-items-center">
       <a href="{{ url_for('compare_page') }}" class="btn btn-sm btn-outline-info">&hArr; Compare missions</a>
@@ -253,12 +334,13 @@ _INDEX_HTML = """<!doctype html>
                  href="{{ url_for('mission_dashboard', mission_id=m.id) }}">
                 <div class="d-flex justify-content-between align-items-center">
                   <span><b>Mission {{ m.id }}</b></span>
-                  <span class="muted small">{{ m.path }}</span>
+                  <span class="small better">{{ m.path }}</span>
                 </div>
               </a>
             {% else %}
               <div class="list-group-item">
-                <b>{{ m.id }}</b> <span class="muted small">(no mission.jsonl)</span>
+                <b>{{ m.id }}</b> <span class="small worse">{{ m.path }}</span>
+                <span class="muted small"> — no mission.jsonl</span>
               </div>
             {% endif %}
           {% endfor %}
@@ -271,7 +353,8 @@ _INDEX_HTML = """<!doctype html>
     <div class="col-12 col-lg-4">
       <div class="card p-3">
         <h5 class="mb-2">SIM ground truth</h5>
-        <div class="muted small mb-2">Files in <code>sim_data/</code>:</div>
+        <div class="small mb-2">Files in <code class="{{ 'better' if sim_root_exists else 'worse' }}">{{ sim_data_path }}</code>
+          <span class="muted">({{ 'found' if sim_root_exists else 'missing' }})</span></div>
         <ul>
           {% for f in sim_files %}<li><code>{{ f }}</code></li>{% endfor %}
           {% if sim_files|length == 0 %}<li class="muted">(none found)</li>{% endif %}
@@ -296,6 +379,8 @@ def missions_list():
         for d in _mission_paths()
     ]
     return render_template_string(_INDEX_HTML, missions=missions, sim_files=_sim_files(),
+                                  missions_path=str(MISSIONS_ROOT), missions_root_exists=MISSIONS_ROOT.exists(),
+                                  sim_data_path=str(SIM_DATA_ROOT), sim_root_exists=SIM_DATA_ROOT.exists(),
                                   SS=_SHARED_STYLE, TJ=_THEME_JS)
 
 
@@ -344,8 +429,17 @@ _DASHBOARD_HTML = """<!doctype html>
   </div>
 
   <!-- summary pills -->
-  <div id="summaryBar" class="mb-3">
+  <div id="summaryBar" class="mb-2">
     <span class="muted small">Loading…</span>
+  </div>
+  <div class="card p-3 mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h6 class="mb-0">Mission insights</h6>
+      <span class="muted small" id="insightsHint">Log size, path length, altitude, DB mirrors</span>
+    </div>
+    <div id="insightsBody" class="row g-2 small">
+      <span class="muted">Loading…</span>
+    </div>
   </div>
 
   <!-- tabs -->
@@ -361,6 +455,9 @@ _DASHBOARD_HTML = """<!doctype html>
     </li>
     <li class="nav-item">
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabReport">Report</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabFrameReview">Frame Review</button>
     </li>
   </ul>
 
@@ -403,10 +500,16 @@ _DASHBOARD_HTML = """<!doctype html>
             <input class="form-check-input" type="checkbox" id="layerSpray" checked>
             <label class="form-check-label small" for="layerSpray">Spray</label>
           </div>
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="checkbox" id="layerBboxGround">
+            <label class="form-check-label small" for="layerBboxGround" title="Camera bbox corners projected to lat/lon (from frame logs)">BBox ground</label>
+          </div>
           <button id="tileToggle" class="btn btn-sm btn-outline-secondary">Satellite</button>
         </div>
       </div>
+      <div id="mapInfoLine" class="muted small mb-2" style="min-height:1.3em"></div>
       <div id="map"></div>
+      <div id="bboxGroundNote" class="muted small mt-2 d-none" style="min-height:1.3em"></div>
       <div id="mapStats" class="muted small mt-2" style="min-height:1.4em"></div>
     </div>
 
@@ -424,10 +527,24 @@ _DASHBOARD_HTML = """<!doctype html>
           <div id="framelist" class="card p-0"></div>
         </div>
         <div class="col-12 col-md-8">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="toggleFrameGround">
+            <label class="form-check-label small" for="toggleFrameGround">Show bbox on ground (map + table + coordinates)</label>
+          </div>
           <div id="frameInfo" class="muted small mb-2" style="min-height:1.4em">
             Click a frame in the list to view
           </div>
-          <canvas id="frameCanvas" width="640" height="640"></canvas>
+          <div id="frameGroundWrap" class="d-none">
+            <div class="muted small mb-1">Ground: each bbox projected to the ground (center + four corners)</div>
+            <div id="frameGroundMap" style="height:280px;border-radius:8px;border:1px solid var(--sd-border)"></div>
+            <div id="frameGroundNote" class="muted small mt-2" style="min-height:1.2em"></div>
+            <div id="frameGroundTableWrap" class="table-responsive small mt-2"></div>
+          </div>
+          <canvas id="frameCanvas" width="640" height="640" class="mt-3"></canvas>
+          <div id="frameRawBlock" class="card p-2 mt-2">
+            <div class="muted small mb-1">Ground + pixel JSON <span id="frameRawHint" class="d-none">(raw pixel list only exists when logged separately)</span></div>
+            <pre id="frameRawPre" class="mb-0" style="max-height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-word"></pre>
+          </div>
         </div>
       </div>
     </div>
@@ -436,6 +553,69 @@ _DASHBOARD_HTML = """<!doctype html>
     <div class="tab-pane fade" id="tabReport">
       <div id="reportContent">
         <div class="muted small">Open this tab to load the report.</div>
+      </div>
+    </div>
+
+    <!-- ── FRAME REVIEW ───────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tabFrameReview">
+      <div class="row g-3">
+
+        <!-- Left panel: controls -->
+        <div class="col-12 col-md-3">
+          <div class="mb-2">
+            <label class="form-label muted small mb-1">Truth file</label>
+            <select id="frTruthFile" class="form-select form-select-sm">
+              <option value="">(no truth file)</option>
+              {% for f in sim_files %}
+                <option value="{{ f }}"{% if auto_truth == f %} selected{% endif %}>{{ f }}</option>
+              {% endfor %}
+            </select>
+            <button id="frLoadTruth" class="btn btn-sm btn-outline-secondary mt-1 w-100">Load truth</button>
+          </div>
+          <hr style="border-color:var(--sd-border)">
+          <div id="frLoading" class="muted small mb-2">Open tab to load frames…</div>
+          <div id="frSliderWrap" class="d-none">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="muted small">Frame</span>
+              <span class="small"><b id="frIdxDisplay">0</b> / <span id="frTotal">0</span></span>
+            </div>
+            <input type="range" id="frSlider" min="0" max="0" value="0" class="form-range mb-1">
+            <div class="d-flex gap-2">
+              <button id="frPrev" class="btn btn-sm btn-outline-secondary flex-fill">&#8249; Prev</button>
+              <button id="frNext" class="btn btn-sm btn-outline-secondary flex-fill">Next &#8250;</button>
+            </div>
+            <div id="frInfo" class="muted small mt-3 p-2 card" style="font-size:11px;min-height:90px"></div>
+          </div>
+          <hr style="border-color:var(--sd-border)">
+          <div class="muted small mb-2">Layers</div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="frCkTruth" checked>
+            <label class="form-check-label small" for="frCkTruth" style="color:#ffffff">&#9679; Truth weeds</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="frCkPred" checked>
+            <label class="form-check-label small" for="frCkPred" style="color:#4a9eff">&#9675; Clustered waypoints</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="frCkFootprint" checked>
+            <label class="form-check-label small" for="frCkFootprint" style="color:#ffe74a">&#9632; Frame footprint</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="frCkDetections" checked>
+            <label class="form-check-label small" for="frCkDetections" style="color:#ff9a4a">&#9679; Frame detections</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="frCkPath">
+            <label class="form-check-label small" for="frCkPath" style="color:#4a9eff">&#8213; Drone path</label>
+          </div>
+          <button id="frTileToggle" class="btn btn-sm btn-outline-secondary mt-2 w-100">Satellite</button>
+        </div>
+
+        <!-- Right panel: map -->
+        <div class="col-12 col-md-9">
+          <div id="frMap" style="height:72vh;min-height:500px;border-radius:8px;background:var(--sd-input)"></div>
+        </div>
+
       </div>
     </div>
 
@@ -460,6 +640,9 @@ function labelColor(lbl){
   let h=0; for(let i=0;i<lbl.length;i++) h=(h*31+lbl.charCodeAt(i))>>>0;
   return LABEL_PAL[h % LABEL_PAL.length];
 }
+function escHtml(s){
+  return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
 
 // ── fetch / format helpers ───────────────────────────────────────────────────
 async function api(path){
@@ -476,21 +659,72 @@ function fmtTs(ts){
   if(!ts) return "";
   return new Date(ts).toISOString().replace("T"," ").slice(0,23)+"Z";
 }
+function fmtBytes(n){
+  if(n==null||n===0) return "0 B";
+  const u=["B","KB","MB","GB"];
+  let i=0,x=+n;
+  while(x>=1024&&i<u.length-1){ x/=1024; i++; }
+  return `${x.toFixed(i?1:0)} ${u[i]}`;
+}
+
+function insightTablesHtml(ins){
+  if(!ins) return '<div class="col-12 muted">No insights</div>';
+  const altR = (ins.altitude_rel_m_min!=null && ins.altitude_rel_m_max!=null)
+    ? `${ins.altitude_rel_m_min}–${ins.altitude_rel_m_max} m (μ ${ins.altitude_rel_m_mean ?? "—"})`
+    : "—";
+  const db = ins.db_writes || {};
+  const dbRows = Object.keys(db).length
+    ? Object.entries(db).sort((a,b)=>b[1]-a[1]).map(([k,v])=>
+        `<tr><td><code>${escHtml(k)}</code></td><td>${v}</td></tr>`).join("")
+    : '<tr><td colspan="2" class="muted">No <code>db_*</code> events yet</td></tr>';
+  return `
+<div class="col-12 col-lg-6">
+  <table class="table table-sm stats-tbl mb-0">
+    <tr><td>Log file</td><td>${fmtBytes(ins.log_file_bytes)} · <b>${ins.jsonl_lines||0}</b> lines</td></tr>
+    <tr><td>Telemetry samples</td><td>${ins.telemetry_samples ?? 0}</td></tr>
+    <tr><td>Path length (from GPS)</td><td><b>${(ins.path_length_m??0).toFixed(1)}</b> m</td></tr>
+    <tr><td>Altitude rel. home</td><td>${altR}</td></tr>
+    <tr><td>FSM ticks / transitions</td><td>${ins.fsm_ticks ?? 0} / ${ins.fsm_transitions ?? 0}</td></tr>
+    <tr><td>Move commands</td><td>${ins.move_commands ?? 0}</td></tr>
+    <tr><td>Lines with frame + detections</td><td>${ins.frames_with_detections ?? 0}</td></tr>
+  </table>
+</div>
+<div class="col-12 col-lg-6">
+  <div class="muted small mb-1">DB operations mirrored to <code>mission.jsonl</code></div>
+  <table class="table table-sm stats-tbl mb-0"><thead><tr><th>Event</th><th>Count</th></tr></thead><tbody>${dbRows}</tbody></table>
+</div>`;
+}
+
+function updateMapInfoLine(){
+  const el = document.getElementById("mapInfoLine");
+  if(!el || !_summary || !_summary.insights) return;
+  const i = _summary.insights;
+  const alt = (i.altitude_rel_m_min!=null)
+    ? `${i.altitude_rel_m_min}–${i.altitude_rel_m_max} m`
+    : "—";
+  el.innerHTML = `Telemetry <b>${i.telemetry_samples||0}</b> samples · path ~<b>${(i.path_length_m||0).toFixed(1)}</b> m · alt ${alt}`;
+}
 
 // ── summary bar ─────────────────────────────────────────────────────────────
 let _summary = null;
 async function loadSummary(){
   _summary = await api(`/missions/${MID}/summary`);
-  const { duration_s, weed_detections, unique_weeds, spray_events, header } = _summary;
+  const { duration_s, weed_detections, unique_weeds, spray_events, header, insights, event_counts } = _summary;
+  const ec = event_counts || {};
+  const totalEv = Object.values(ec).reduce((a,b)=>a+b,0);
   document.getElementById("summaryBar").innerHTML = `
     <span class="stat-pill">Duration <span class="val">${fmtDur(duration_s)}</span></span>
     <span class="stat-pill">Weed events <span class="val">${weed_detections}</span></span>
     <span class="stat-pill">Unique weeds <span class="val">${unique_weeds}</span></span>
     <span class="stat-pill">Spray events <span class="val">${spray_events}</span></span>
+    <span class="stat-pill">Log events <span class="val">${totalEv}</span></span>
     <span class="stat-pill">${header.is_sim
       ? '<span style="color:#ff9a4a">SIM</span>'
       : '<span style="color:#4adf86">REAL</span>'}</span>
   `;
+  const ib = document.getElementById("insightsBody");
+  if(ib) ib.innerHTML = `<div class="row g-2">${insightTablesHtml(insights)}</div>`;
+  updateMapInfoLine();
   // Auto-select linked truth file
   if(_summary.sim_truth_file){
     const sel = document.getElementById("truthFile");
@@ -500,18 +734,68 @@ async function loadSummary(){
 }
 
 // ═══════════════════════════ MAP TAB ════════════════════════════════════════
-let map, layerPath=null, layerPred=null, layerTruth=null, layerSpray=null;
+let map, layerPath=null, layerPred=null, layerTruth=null, layerSpray=null, layerBboxGround=null;
 let osmTile, satTile, usingSat=false;
+
+function buildFootprintLayerFromFrames(frames, colorForDet){
+  const g = L.layerGroup();
+  const all = [];
+  (frames||[]).forEach(f=>{
+    (f.ground_projections||[]).forEach(p=>{
+      const col = typeof colorForDet === "function" ? colorForDet(p) : colorForDet;
+      const tTag = p.truth_id != null ? ` — truth #${p.truth_id}` : ` — false positive`;
+      const c = p.center;
+      if(c && c.lat!=null && c.lon!=null){
+        L.circleMarker([c.lat,c.lon],{
+          radius:5, color:col, fillColor:col, fillOpacity:0.45, weight:1
+        }).bindPopup(`${escHtml(p.label||"?")} (center)${tTag}`).addTo(g);
+        all.push([c.lat,c.lon]);
+      }
+      const corners = p.corners||[];
+      if(corners.length >= 3){
+        const pts = corners.map(q=>[q.lat,q.lon]);
+        L.polygon(pts,{
+          color:col, fillColor:col, fillOpacity:0.12, weight:2
+        }).bindPopup(`<b>${escHtml(p.label||"?")}</b> ground footprint${tTag}`).addTo(g);
+        corners.forEach(q=>{ if(q.lat!=null&&q.lon!=null) all.push([q.lat,q.lon]); });
+      }
+    });
+  });
+  return { group: g, bounds: all };
+}
+
+async function refreshMissionBboxGroundLayer(){
+  if(!map) return null;
+  if(layerBboxGround){ try{ map.removeLayer(layerBboxGround); }catch(e){} layerBboxGround=null; }
+  const frames = await api(`/missions/${MID}/frame_events`);
+  let fpCount = 0;
+  (frames||[]).forEach(f=>{ fpCount += (f.ground_projections||[]).length; });
+  const noteEl = document.getElementById("bboxGroundNote");
+  if(noteEl){
+    noteEl.classList.remove("d-none");
+    if(!frames.length){
+      noteEl.innerHTML = "BBox ground: <b>no frame events</b> in this log (only state transitions used to log frames). <span class=\\\"muted\\\">Re-run the mission with the current code — FSM now snapshots frames with detections a few times per second.</span>";
+    } else if(!fpCount){
+      const hint = (frames[0] && frames[0].ground_projection_note) ? ` ${frames[0].ground_projection_note}` : "";
+      noteEl.innerHTML = "BBox ground: frames in log but <b>no ground footprints</b> (need valid GPS and altitude_rel_home &gt; 0 on the same lines)."+hint;
+    } else {
+      noteEl.textContent = `BBox ground: ${fpCount} projected footprint(s) from frame log.`;
+    }
+  }
+  const { group, bounds } = buildFootprintLayerFromFrames(frames, p=>labelColor(p.label||"?"));
+  layerBboxGround = group;
+  return bounds;
+}
 
 function initMap(){
   map = L.map("map");
   osmTile = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {attribution:"© OpenStreetMap contributors", maxZoom:19}
+    {attribution:"© OpenStreetMap contributors", maxZoom:22}
   );
   satTile = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {attribution:"Tiles © Esri", maxZoom:19}
+    {attribution:"Tiles © Esri", maxZoom:22}
   );
   osmTile.addTo(map);
 
@@ -532,6 +816,19 @@ function initMap(){
       e.target.checked ? lyr.addTo(map) : map.removeLayer(lyr);
     });
   }
+  const bb = document.getElementById("layerBboxGround");
+  if(bb) bb.addEventListener("change", async e=>{
+    const n = document.getElementById("bboxGroundNote");
+    if(n && !e.target.checked){ n.classList.add("d-none"); n.textContent=""; }
+    if(e.target.checked){
+      try{
+        await refreshMissionBboxGroundLayer();
+        if(layerBboxGround) layerBboxGround.addTo(map);
+      }catch(err){ alert(err); e.target.checked=false; if(n){ n.classList.add("d-none"); } }
+    } else {
+      if(layerBboxGround){ try{ map.removeLayer(layerBboxGround); }catch(x){} }
+    }
+  });
   document.getElementById("runCompare").addEventListener("click", ()=>{
     loadTruth().catch(err=>alert(err));
   });
@@ -539,7 +836,7 @@ function initMap(){
 
 async function loadMap(){
   const [pathPts, predPts, sprayEvs] = await Promise.all([
-    api(`/missions/${MID}/path?stride=5`),
+    api(`/missions/${MID}/path?stride=1`),
     api(`/missions/${MID}/weeds/pred?dedup=1`),
     api(`/missions/${MID}/spray`),
   ]);
@@ -590,7 +887,7 @@ async function loadTruth(){
   layerTruth = L.layerGroup(res.truth_points.map(p=>
     L.circleMarker([p.lat,p.lon],{
       radius:7, color:"#ffffff", fillColor:"transparent", fillOpacity:0, weight:2
-    }).bindPopup(`Truth weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`)
+    }).bindPopup(`Truth weed #${p.id}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`)
   ));
   document.getElementById("layerTruth").checked = true;
   layerTruth.addTo(map);
@@ -679,6 +976,88 @@ async function loadTimeline(){
 // ═══════════════════════ FRAMES TAB ═════════════════════════════════════════
 let _frameEvents = [];
 let framesLoaded = false;
+let frameMap = null, frameGroundGrp = null;
+let _activeFrame = null;
+
+function renderFrameGround(f){
+  const noteEl = document.getElementById("frameGroundNote");
+  const tblWrap = document.getElementById("frameGroundTableWrap");
+  const el = document.getElementById("frameGroundMap");
+  if(!el) return;
+  if(!frameMap){
+    frameMap = L.map("frameGroundMap");
+    L.tileLayer(
+      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {attribution:"© OpenStreetMap", maxZoom:22}
+    ).addTo(frameMap);
+    frameGroundGrp = L.layerGroup().addTo(frameMap);
+  }
+  frameGroundGrp.clearLayers();
+  const projs = f.ground_projections || [];
+  const rawProjs = f.raw_ground_projections || [];
+  const hasProjs = projs.length > 0 || rawProjs.length > 0;
+  if(noteEl){
+    const n = f.ground_projection_note;
+    noteEl.textContent = (!hasProjs && n) ? n : "";
+  }
+  const rows = [];
+  function addRows(list, prefix){
+    (list||[]).forEach((p,idx)=>{
+      const c = p.center || {};
+      const clat = (c.lat!=null&&!Number.isNaN(+c.lat)) ? (+c.lat).toFixed(7) : "—";
+      const clon = (c.lon!=null&&!Number.isNaN(+c.lon)) ? (+c.lon).toFixed(7) : "—";
+      const cornerLines = (p.corners||[]).map((q,j)=>{
+        const la = (q.lat!=null) ? (+q.lat).toFixed(7) : "?";
+        const lo = (q.lon!=null) ? (+q.lon).toFixed(7) : "?";
+        return `C${j+1}: ${la}, ${lo}`;
+      }).join("<br/>");
+      rows.push(`<tr><td>${escHtml(prefix)}${idx+1}</td><td>${escHtml(p.label||"")}</td><td>${clat}</td><td>${clon}</td><td style="font-size:11px">${cornerLines||"—"}</td></tr>`);
+    });
+  }
+  addRows(rawProjs, "raw ");
+  addRows(projs, "");
+  if(tblWrap){
+    if(!rows.length && f.ground_projection_note){
+      tblWrap.innerHTML = `<div class="muted">${escHtml(f.ground_projection_note)}</div>`;
+    } else if(!rows.length){
+      tblWrap.innerHTML = '<div class="muted">No ground projections (need drone_state with GPS + altitude &gt; 0).</div>';
+    } else {
+      tblWrap.innerHTML =
+        `<table class="table table-sm stats-tbl mb-0"><thead><tr><th>#</th><th>label</th><th>center lat</th><th>center lon</th><th>corners W→E→E→W</th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+    }
+  }
+  const all = [];
+  function drawFootprints(list, dashed, colorFn){
+    (list||[]).forEach(p=>{
+      const col = typeof colorFn === "function" ? colorFn(p) : colorFn;
+      const c = p.center;
+      if(c && c.lat!=null && c.lon!=null){
+        L.circleMarker([c.lat,c.lon],{
+          radius:6, color:col, fillColor:col, fillOpacity:0.55, weight:2
+        }).bindPopup(`${escHtml(p.label||"")} center`).addTo(frameGroundGrp);
+        all.push([c.lat,c.lon]);
+      }
+      const corners = p.corners||[];
+      if(corners.length >= 3){
+        const pts = corners.map(q=>[q.lat,q.lon]);
+        L.polygon(pts,{
+          color:col, fillColor:col, fillOpacity:0.14, weight:2,
+          dashArray: dashed ? "6 5" : null,
+        }).bindPopup(`<b>${escHtml(p.label||"")}</b> ground footprint`).addTo(frameGroundGrp);
+        corners.forEach(q=>{ if(q.lat!=null&&q.lon!=null) all.push([q.lat,q.lon]); });
+      }
+    });
+  }
+  drawFootprints(rawProjs, true, "#ff9a4a");
+  drawFootprints(projs, false, p=>labelColor(p.label||"?"));
+  if(all.length){
+    frameMap.fitBounds(L.latLngBounds(all), {padding:[24,24]});
+  } else {
+    frameMap.setView([0,0], 2);
+  }
+  setTimeout(()=>{ try{ frameMap.invalidateSize(); }catch(e){} }, 120);
+}
+
 async function loadFrames(){
   if(framesLoaded) return;
   framesLoaded = true;
@@ -708,6 +1087,7 @@ async function loadFrames(){
     div.addEventListener("click", ()=>{
       document.querySelectorAll(".frame-item").forEach(el=>el.classList.remove("active"));
       div.classList.add("active");
+      _activeFrame = f;
       renderFrame(f);
     });
     list.appendChild(div);
@@ -727,19 +1107,45 @@ function renderFrame(f){
     `<span style="color:${hasPhoto?"#4adf86":"#9fb0c7"}">`+
     `${hasPhoto ? f.photo_path : "synthetic — no photo saved"}</span>`;
 
-  function drawBoxes(){
-    for(const det of (f.detections||[])){
+  const rawPre = document.getElementById("frameRawPre");
+  const rawHint = document.getElementById("frameRawHint");
+  if(rawPre){
+    rawPre.textContent = JSON.stringify({
+      ground_projection_note: f.ground_projection_note || null,
+      ground_projections: f.ground_projections || [],
+      raw_ground_projections: f.raw_ground_projections || null,
+      pixel_detections: f.detections || [],
+      raw_detections_pixel: f.raw_detections || null,
+    }, null, 2);
+    if(rawHint) rawHint.classList.toggle("d-none", !!(f.raw_detections && f.raw_detections.length));
+  }
+
+  function drawDetList(list, opts){
+    const dashed = opts && opts.dashed;
+    const overrideColor = opts && opts.color;
+    for(const det of (list||[])){
       if(!det.bbox||det.bbox.length<2) continue;
       const [[x0,y0],[x1,y1]] = det.bbox;
-      const color = labelColor(det.label||"?");
-      ctx.strokeStyle=color; ctx.lineWidth=2;
+      const color = overrideColor || labelColor(det.label||"?");
+      ctx.strokeStyle=color;
+      ctx.lineWidth= dashed ? 2 : 2;
+      ctx.setLineDash(dashed ? [6,4] : []);
       ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+      ctx.setLineDash([]);
+      if(dashed) continue;
       const lbl=`${det.label||"?"} ${((det.confidence||0)*100).toFixed(0)}%`;
       ctx.font="12px monospace";
       const tw=ctx.measureText(lbl).width;
       ctx.fillStyle=color+"cc"; ctx.fillRect(x0,y0-16,tw+6,16);
       ctx.fillStyle="#fff";     ctx.fillText(lbl,x0+3,y0-3);
     }
+  }
+
+  function drawBoxes(){
+    if(f.raw_detections && f.raw_detections.length){
+      drawDetList(f.raw_detections, {dashed:true, color:"#ff9a4a"});
+    }
+    drawDetList(f.detections||[], null);
   }
 
   if(hasPhoto){
@@ -751,6 +1157,8 @@ function renderFrame(f){
     drawSyntheticBg(ctx,W,H);
     drawBoxes();
   }
+  const tgf = document.getElementById("toggleFrameGround");
+  if(tgf && tgf.checked) renderFrameGround(f);
 }
 
 function drawSyntheticBg(ctx,W,H){
@@ -817,6 +1225,14 @@ function renderAccuracy(elId, s, thresh, tf){
 
 function buildReport(summary, timeline, pred, visionEv){
   const { duration_s, weed_detections, unique_weeds, spray_events, event_counts, header } = summary;
+  const flightCard = summary.insights
+    ? `<div class="col-12">
+         <div class="card p-3">
+           <h6>Flight &amp; log</h6>
+           <div class="row g-2">${insightTablesHtml(summary.insights)}</div>
+         </div>
+       </div>`
+    : "";
 
   const evRows = Object.entries(event_counts)
     .sort((a,b)=>b[1]-a[1])
@@ -854,6 +1270,10 @@ function buildReport(summary, timeline, pred, visionEv){
           <tr><td>Schema</td>      <td>v${header.schema_version||1}</td></tr>
           ${header.sim_truth_file
             ? `<tr><td>Truth file</td><td><code>${header.sim_truth_file}</code></td></tr>`:""}
+          ${header.weed_match_m!=null
+            ? `<tr><td>weed_match_m (header)</td><td>${header.weed_match_m} m</td></tr>`:""}
+          ${header.min_spray_error_m!=null
+            ? `<tr><td>min_spray_error_m</td><td>${header.min_spray_error_m} m</td></tr>`:""}
         </table>
       </div>
     </div>
@@ -880,6 +1300,7 @@ function buildReport(summary, timeline, pred, visionEv){
       </div>
     </div>
     ${visionBlock ? `<div class="col-12 col-lg-12">${visionBlock}</div>` : ""}
+    ${flightCard}
     <div class="col-12 col-md-6">
       <div class="card p-3">
         <h6>State Time Breakdown</h6>
@@ -973,7 +1394,17 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
   btn.addEventListener("shown.bs.tab", e=>{
     const t = e.target.getAttribute("data-bs-target");
     if(t==="#tabTimeline") loadTimeline().catch(console.error);
-    if(t==="#tabFrames")   loadFrames().catch(console.error);
+    if(t==="#tabFrames"){
+      loadFrames().catch(console.error);
+      setTimeout(()=>{
+        try{
+          const tg = document.getElementById("toggleFrameGround");
+          if(tg && tg.checked && typeof _activeFrame !== "undefined" && _activeFrame)
+            renderFrameGround(_activeFrame);
+          if(frameMap) frameMap.invalidateSize();
+        }catch(e){}
+      }, 250);
+    }
     if(t==="#tabReport")   loadReport().catch(console.error);
     if(t==="#tabMap")      { if(map) map.invalidateSize(); }
   });
@@ -981,13 +1412,247 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
 // ═══════════════════════ INIT ════════════════════════════════════════════════
 (async ()=>{
-  await loadSummary();
   initMap();
-  await loadMap();
+  try{
+    await loadMap();
+  }catch(e){
+    const ms = document.getElementById("mapStats");
+    if(ms) ms.innerHTML = `<span style="color:#ff9a4a">Map load error:</span> ${e}`;
+  }
+  try{
+    await loadSummary();
+  }catch(e){
+    const sb = document.getElementById("summaryBar");
+    if(sb) sb.innerHTML = `<span class="muted">Summary unavailable: ${e}</span>`;
+  }
+  const tg = document.getElementById("toggleFrameGround");
+  const wrap = document.getElementById("frameGroundWrap");
+  if(tg && wrap){
+    tg.addEventListener("change", ()=>{
+      if(tg.checked) wrap.classList.remove("d-none");
+      else wrap.classList.add("d-none");
+      setTimeout(()=>{
+        try{
+          if(frameMap && tg.checked){
+            frameMap.invalidateSize();
+            if(_activeFrame) renderFrameGround(_activeFrame);
+          }
+        }catch(e){}
+      }, 80);
+    });
+  }
   // Auto-run truth comparison if linked in mission header
   if(_summary && _summary.sim_truth_file){
     document.getElementById("layerTruth").checked = true;
-    await loadTruth();
+    try{ await loadTruth(); }catch(e){}
+  }
+})();
+
+// ═══════════════════════ FRAME REVIEW TAB ═══════════════════════════════════
+(function(){
+  let frMap = null, frOsmTile = null, frSatTile = null, frUsingSat = false;
+  let frFrames = [];
+  let frCurrentIdx = 0;
+  let frGrpTruth = null, frGrpPred = null, frGrpPath = null;
+  let frGrpFootprint = null, frGrpDetections = null;
+
+  const frTab = document.querySelector('[data-bs-target="#tabFrameReview"]');
+  if(!frTab) return;
+
+  frTab.addEventListener('shown.bs.tab', initFR);
+
+  async function initFR(){
+    if(frMap) return;
+
+    frMap = L.map('frMap');
+    frOsmTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {attribution:'&copy; OpenStreetMap contributors', maxZoom:21}).addTo(frMap);
+    frSatTile = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {attribution:'Esri World Imagery', maxZoom:21});
+
+    document.getElementById('frTileToggle').addEventListener('click', ()=>{
+      frUsingSat = !frUsingSat;
+      if(frUsingSat){ frMap.removeLayer(frOsmTile); frSatTile.addTo(frMap); }
+      else { frMap.removeLayer(frSatTile); frOsmTile.addTo(frMap); }
+      document.getElementById('frTileToggle').textContent = frUsingSat ? 'Street' : 'Satellite';
+    });
+
+    // Load frame data (reuse cached _frameEvents if already populated)
+    const loadingEl = document.getElementById('frLoading');
+    loadingEl.textContent = 'Loading frames…';
+    try{
+      frFrames = (_frameEvents && _frameEvents.length)
+        ? _frameEvents
+        : await api(`/missions/${MID}/frame_events`);
+    }catch(e){
+      loadingEl.textContent = `Error loading frames: ${e}`;
+      return;
+    }
+
+    if(!frFrames.length){
+      loadingEl.textContent = 'No frames with detections found.';
+      return;
+    }
+    loadingEl.classList.add('d-none');
+    document.getElementById('frSliderWrap').classList.remove('d-none');
+
+    const slider = document.getElementById('frSlider');
+    slider.max = frFrames.length - 1;
+    document.getElementById('frTotal').textContent = frFrames.length - 1;
+    slider.addEventListener('input', ()=>{ frCurrentIdx=+slider.value; frRenderFrame(frCurrentIdx); });
+
+    document.getElementById('frPrev').addEventListener('click', ()=>{
+      if(frCurrentIdx > 0){ frCurrentIdx--; slider.value=frCurrentIdx; frRenderFrame(frCurrentIdx); }
+    });
+    document.getElementById('frNext').addEventListener('click', ()=>{
+      if(frCurrentIdx < frFrames.length-1){ frCurrentIdx++; slider.value=frCurrentIdx; frRenderFrame(frCurrentIdx); }
+    });
+
+    // Layer checkboxes
+    function ckToggle(id, getGrp){
+      const el = document.getElementById(id);
+      if(el) el.addEventListener('change', ()=>{
+        const g = getGrp();
+        if(!g) return;
+        el.checked ? g.addTo(frMap) : frMap.removeLayer(g);
+      });
+    }
+    ckToggle('frCkTruth',      ()=>frGrpTruth);
+    ckToggle('frCkPred',       ()=>frGrpPred);
+    ckToggle('frCkFootprint',  ()=>frGrpFootprint);
+    ckToggle('frCkDetections', ()=>frGrpDetections);
+    ckToggle('frCkPath',       ()=>frGrpPath);
+
+    // Truth file button
+    document.getElementById('frLoadTruth').addEventListener('click', frLoadTruth);
+
+    // Auto-load truth if linked
+    const tf = document.getElementById('frTruthFile');
+    if(tf && tf.value) frLoadTruth();
+
+    // Load pred + path eagerly
+    frLoadPred();
+    // Path loaded lazily on checkbox change
+    document.getElementById('frCkPath').addEventListener('change', async function(){
+      if(this.checked && !frGrpPath) await frLoadPath();
+      if(frGrpPath){ this.checked ? frGrpPath.addTo(frMap) : frMap.removeLayer(frGrpPath); }
+    });
+
+    frRenderFrame(0);
+  }
+
+  async function frLoadTruth(){
+    const tf = document.getElementById('frTruthFile').value;
+    if(frGrpTruth){ try{ frMap.removeLayer(frGrpTruth); }catch(e){} frGrpTruth=null; }
+    if(!tf) return;
+    try{
+      const res = await api(`/missions/${MID}/sim_compare?truth=${encodeURIComponent(tf)}&thresh_m=999999`);
+      const markers = (res.truth_points||[]).map(p=>
+        L.circleMarker([p.lat,p.lon],{
+          radius:6, color:"#ffffff", fillColor:"#ffffff", fillOpacity:0.9, weight:1.5
+        }).bindPopup(`Truth weed #${p.id}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`));
+      frGrpTruth = L.layerGroup(markers);
+      if(document.getElementById('frCkTruth').checked) frGrpTruth.addTo(frMap);
+      if(markers.length){
+        const lats = res.truth_points.map(p=>p.lat);
+        const lons = res.truth_points.map(p=>p.lon);
+        frMap.fitBounds([[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]],{padding:[30,30]});
+      }
+    }catch(e){ alert('Truth load error: '+e); }
+  }
+
+  async function frLoadPred(){
+    if(frGrpPred){ try{ frMap.removeLayer(frGrpPred); }catch(e){} frGrpPred=null; }
+    try{
+      const pred = await api(`/missions/${MID}/weeds/pred`);
+      const markers = (pred||[]).map(p=>
+        L.circleMarker([p.lat,p.lon],{
+          radius:7, color:"#4a9eff", fillColor:"#4a9eff", fillOpacity:0.35, weight:2
+        }).bindPopup(`Clustered prediction<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`));
+      frGrpPred = L.layerGroup(markers);
+      if(document.getElementById('frCkPred').checked) frGrpPred.addTo(frMap);
+    }catch(e){}
+  }
+
+  async function frLoadPath(){
+    try{
+      const pts = await api(`/missions/${MID}/path`);
+      if(!pts||!pts.length) return;
+      const lls = pts.map(p=>[p.lat,p.lon]);
+      frGrpPath = L.layerGroup([L.polyline(lls,{color:"#4a9eff",weight:2,opacity:0.6})]);
+      if(document.getElementById('frCkPath').checked) frGrpPath.addTo(frMap);
+    }catch(e){}
+  }
+
+  function frRenderFrame(idx){
+    const f = frFrames[idx];
+    if(!f) return;
+    document.getElementById('frIdxDisplay').textContent = idx;
+    document.getElementById('frSlider').value = idx;
+
+    // Info panel
+    const ds = f.drone_state || {};
+    const alt = ds.altitude_rel_home != null ? ds.altitude_rel_home.toFixed(1)+'m' : '—';
+    const lat = ds.latitude != null ? ds.latitude.toFixed(6) : '—';
+    const lon = ds.longitude != null ? ds.longitude.toFixed(6) : '—';
+    const ts  = f.ts ? new Date(f.ts).toISOString().replace('T',' ').slice(0,23)+'Z' : '—';
+    const nDet = (f.detections||[]).length;
+    const state = f.state_to || f.state_from || '—';
+    document.getElementById('frInfo').innerHTML =
+      `<div><b>Frame ${idx}</b></div>`+
+      `<div>Time: ${escHtml(ts)}</div>`+
+      `<div>State: ${escHtml(state)}</div>`+
+      `<div>Alt: ${escHtml(alt)} &nbsp; Detections: <b>${nDet}</b></div>`+
+      `<div>Drone: ${escHtml(lat)}, ${escHtml(lon)}</div>`;
+
+    // Remove old per-frame layers
+    if(frGrpFootprint){ try{ frMap.removeLayer(frGrpFootprint); }catch(e){} frGrpFootprint=null; }
+    if(frGrpDetections){ try{ frMap.removeLayer(frGrpDetections); }catch(e){} frGrpDetections=null; }
+
+    const items = [];
+
+    // Footprint polygon
+    const fp = f.frame_footprint || [];
+    if(fp.length >= 3){
+      const ring = fp.map(p=>[p.lat,p.lon]);
+      items.push(L.polygon(ring,{
+        color:"#ffe74a", fillColor:"#ffe74a", fillOpacity:0.08, weight:2, dashArray:"6 4"
+      }).bindPopup(`Frame ${idx} footprint`));
+    }
+    frGrpFootprint = L.layerGroup(items);
+    if(document.getElementById('frCkFootprint').checked) frGrpFootprint.addTo(frMap);
+
+    // Detection markers
+    const detItems = [];
+    (f.ground_projections||[]).forEach(gp=>{
+      if(!gp.center) return;
+      const c = gp.center;
+      const truthTag = gp.truth_id != null ? `truth #${gp.truth_id}` : `false positive`;
+      detItems.push(L.circleMarker([c.lat,c.lon],{
+        radius:5, color:"#ff9a4a", fillColor:"#ff9a4a", fillOpacity:0.9, weight:1.5
+      }).bindPopup(`${escHtml(gp.label||'?')} (${((gp.confidence||0)*100).toFixed(0)}%) — ${truthTag}<br>${c.lat.toFixed(6)}, ${c.lon.toFixed(6)}`));
+      // Draw projected bbox corners too
+      if(gp.corners && gp.corners.length >= 4){
+        const ring = gp.corners.map(p=>[p.lat,p.lon]);
+        detItems.push(L.polygon(ring,{
+          color:"#ff9a4a", fillColor:"#ff9a4a", fillOpacity:0.12, weight:1.5
+        }));
+      }
+    });
+    frGrpDetections = L.layerGroup(detItems);
+    if(document.getElementById('frCkDetections').checked) frGrpDetections.addTo(frMap);
+
+    // Fit map to footprint (or drone pos fallback)
+    if(fp.length >= 3){
+      const lats = fp.map(p=>p.lat), lons = fp.map(p=>p.lon);
+      frMap.fitBounds(
+        [[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]],
+        {padding:[40,40], maxZoom:20}
+      );
+    } else if(f.drone_pos){
+      frMap.setView([f.drone_pos.lat, f.drone_pos.lon], 18);
+    }
   }
 })();
 </script>
@@ -1069,9 +1734,9 @@ def mission_weeds_pred(mission_id: str):
 
 @app.get("/missions/<mission_id>/path")
 def mission_path(mission_id: str):
-    """Downsampled drone path from telemetry_sample events."""
+    """Drone path from telemetry_sample (GPS ~1 Hz). Use stride=1 for full resolution."""
     p = _mission_log(mission_id)
-    stride = max(1, int(request.args.get("stride", "10")))
+    stride = max(1, int(request.args.get("stride", "1")))
     pts, count = [], 0
     for ev in _iter_events(p):
         if ev.get("event") != "telemetry_sample":
@@ -1143,15 +1808,21 @@ def mission_timeline(mission_id: str):
 
 @app.get("/missions/<mission_id>/summary")
 def mission_summary(mission_id: str):
-    """One-pass mission summary: header, duration, event counts, weed stats."""
+    """One-pass mission summary: header, duration, event counts, weed stats, insights."""
     p = _mission_log(mission_id)
     header: dict = {}
     event_counts: dict[str, int] = {}
     first_ts = last_ts = None
     weed_pts: list[dict] = []
     spray_n = 0
+    n_lines = 0
+    frames_with_detections = 0
+    prev_ll: tuple[float, float] | None = None
+    path_length_m = 0.0
+    alts: list[float] = []
 
     for ev in _iter_events(p):
+        n_lines += 1
         ev_type = ev.get("event", "")
         event_counts[ev_type] = event_counts.get(ev_type, 0) + 1
         ts = _parse_ts(ev.get("ts", ""))
@@ -1168,12 +1839,50 @@ def mission_summary(mission_id: str):
                 weed_pts.append({"lat": float(lat), "lon": float(lon)})
         if ev_type in ("weed_sprayed", "spray_attempt"):
             spray_n += 1
+        fr = ev.get("frame")
+        if fr and (fr.get("detections") or []):
+            frames_with_detections += 1
+        if ev_type == "telemetry_sample":
+            ds = ev.get("drone_state") or {}
+            lat, lon = ds.get("latitude"), ds.get("longitude")
+            if lat is not None and lon is not None:
+                la, lo = float(lat), float(lon)
+                if not (la == 0.0 and lo == 0.0):
+                    if prev_ll is not None:
+                        path_length_m += _haversine_m(prev_ll[0], prev_ll[1], la, lo)
+                    prev_ll = (la, lo)
+                alt = ds.get("altitude_rel_home")
+                if alt is not None:
+                    try:
+                        alts.append(float(alt))
+                    except (TypeError, ValueError):
+                        pass
 
     duration_s = (last_ts - first_ts) if first_ts and last_ts else 0.0
     unique_weeds = len(_grid_dedup(weed_pts, 0.5))
 
     sim_truth_raw = header.get("sim_truth_file")
     sim_truth_file = Path(str(sim_truth_raw)).name if sim_truth_raw else None
+
+    alt_min = min(alts) if alts else None
+    alt_max = max(alts) if alts else None
+    alt_mean = sum(alts) / len(alts) if alts else None
+    db_writes = {k: v for k, v in event_counts.items() if k.startswith("db_")}
+
+    insights = {
+        "log_file_bytes":      p.stat().st_size,
+        "jsonl_lines":         n_lines,
+        "telemetry_samples":   event_counts.get("telemetry_sample", 0),
+        "fsm_ticks":           event_counts.get("fsm_tick", 0),
+        "fsm_transitions":     event_counts.get("fsm_transition", 0),
+        "move_commands":       event_counts.get("move_command", 0),
+        "frames_with_detections": frames_with_detections,
+        "path_length_m":       round(path_length_m, 2),
+        "altitude_rel_m_min":  round(alt_min, 3) if alt_min is not None else None,
+        "altitude_rel_m_max":  round(alt_max, 3) if alt_max is not None else None,
+        "altitude_rel_m_mean": round(alt_mean, 3) if alt_mean is not None else None,
+        "db_writes":           db_writes,
+    }
 
     return jsonify({
         "header":          header,
@@ -1183,6 +1892,7 @@ def mission_summary(mission_id: str):
         "unique_weeds":    unique_weeds,
         "spray_events":    spray_n,
         "sim_truth_file":  sim_truth_file,
+        "insights":        insights,
     })
 
 
@@ -1233,14 +1943,46 @@ def mission_frame_events(mission_id: str):
         dets = frame.get("detections") or []
         if not dets:
             continue
+        raw_dets = frame.get("raw_detections")
+        ds_obj = _drone_state_from_dict(ev.get("drone_state"))
+        g_logged, g_note = _ground_project_list(dets, ds_obj)
+        g_raw: list[dict] | None = None
+        g_raw_note: str | None = None
+        if raw_dets:
+            g_raw, g_raw_note = _ground_project_list(raw_dets, ds_obj)
+        note = g_note or g_raw_note
+
+        # Project the 4 image corners to GPS — gives the camera footprint on the ground.
+        footprint: list[dict] = []
+        if ds_obj and ds_obj.altitude_rel_home > 0:
+            W, H = 640, 640
+            for u, v in [(0, 0), (W, 0), (W, H), (0, H)]:
+                try:
+                    pt = Detection(label="", confidence=0.0, bbox=[(u, v), (u, v)])
+                    la, lo = detection_to_latlon(ds_obj, pt)
+                    footprint.append({"lat": float(la), "lon": float(lo)})
+                except Exception:
+                    pass
+
+        drone_pos = None
+        if ds_obj:
+            drone_pos = {"lat": ds_obj.latitude, "lon": ds_obj.longitude}
+
         results.append({
+            "frame_index": len(results),
             "ts":         ev.get("ts"),
             "event":      ev.get("event"),
             "state_from": (ev.get("state_from") or "").replace("DroneStateEnum.", ""),
             "state_to":   (ev.get("state_to")   or "").replace("DroneStateEnum.", ""),
             "photo_path": frame.get("photo_path", ""),
             "detections": dets,
+            "raw_detections": raw_dets if raw_dets else None,
             "drone_state": ev.get("drone_state"),
+            "ground_projections": g_logged,
+            "raw_ground_projections": g_raw if raw_dets else None,
+            "ground_projection_note": note,
+            "frame_footprint": footprint,
+            "drone_pos": drone_pos,
         })
     return jsonify(results)
 
@@ -1290,7 +2032,13 @@ def mission_sim_compare(mission_id: str):
         abort(404)
 
     data = json.loads(truth_path.read_text(encoding="utf-8"))
-    truth = [{"lat": float(la), "lon": float(lo)} for la, lo in data.get("weed_locations", [])]
+    raw_weeds = data.get("weed_locations", [])
+    truth = []
+    for i, w in enumerate(raw_weeds):
+        if isinstance(w, dict):
+            truth.append({"id": w.get("id", i), "lat": float(w["lat"]), "lon": float(w["lon"])})
+        else:
+            truth.append({"id": i, "lat": float(w[0]), "lon": float(w[1])})
 
     # Use deduplicated predictions for meaningful precision/recall
     pred = json.loads(mission_weeds_pred(mission_id).get_data(as_text=True))
@@ -1393,6 +2141,12 @@ _COMPARE_HTML = """<!doctype html>
       <div class="col-12 col-sm-auto">
         <button id="runBtn" class="btn btn-sm btn-primary">Compare</button>
       </div>
+      <div class="col-12 col-sm-auto">
+        <div class="form-check mt-4">
+          <input class="form-check-input" type="checkbox" id="cmpBboxGround">
+          <label class="form-check-label small" for="cmpBboxGround">Show camera bbox on ground</label>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1405,14 +2159,17 @@ _COMPARE_HTML = """<!doctype html>
     <div class="card p-3 mb-3">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h6 class="mb-0">Weed locations &amp; flight paths</h6>
-        <div class="d-flex gap-3 small">
+        <div class="d-flex gap-3 small flex-wrap">
           <span><span class="col-a">&#9679;</span> Mission A weeds</span>
           <span><span class="col-b">&#9679;</span> Mission B weeds</span>
           <span><span style="color:#4a9eff">—</span> Path A</span>
           <span><span style="color:#ff9a4a">—</span> Path B</span>
+          <span><span style="color:#ffffff">&#9711;</span> Ground truth</span>
+          <span class="d-none" id="cmpBboxLegend"><span style="color:#4a9eff">▢</span> A bbox &nbsp; <span style="color:#ff9a4a">▢</span> B bbox</span>
         </div>
       </div>
       <div id="cmpMap"></div>
+      <div id="cmpBboxNote" class="muted small mt-2 d-none" style="min-height:1.3em"></div>
     </div>
 
     <!-- charts row -->
@@ -1467,18 +2224,86 @@ function fmtDur(s){ const m=Math.floor(s/60),sec=Math.round(s%60); return m?`${m
 function pct(v,t){ return t?((v/t)*100).toFixed(1)+"%" : "—"; }
 
 let cmpMap=null;
+let cmpBboxLayerA=null, cmpBboxLayerB=null;
+
+function escCmp(s){
+  return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function buildCmpFootprintGroup(frames, baseColor, tag){
+  const g = L.layerGroup();
+  (frames||[]).forEach(f=>{
+    (f.ground_projections||[]).forEach(p=>{
+      const c = p.center;
+      if(c && c.lat!=null && c.lon!=null){
+        L.circleMarker([c.lat,c.lon],{
+          radius:4, color:baseColor, fillColor:baseColor, fillOpacity:0.4, weight:1
+        }).bindPopup(`Mission ${tag} · ${escCmp(p.label||"?")}`).addTo(g);
+      }
+      const corners = p.corners||[];
+      if(corners.length >= 3){
+        const pts = corners.map(q=>[q.lat,q.lon]);
+        L.polygon(pts,{
+          color:baseColor, fillColor:baseColor, fillOpacity:0.1, weight:1
+        }).bindPopup(`Mission ${tag} · ${escCmp(p.label||"?")}`).addTo(g);
+      }
+    });
+  });
+  return g;
+}
+
+function countFootprints(frames){
+  let n = 0;
+  (frames||[]).forEach(f=>{ n += (f.ground_projections||[]).length; });
+  return n;
+}
+
+async function applyCmpBboxGround(){
+  const midA = document.getElementById("selA").value;
+  const midB = document.getElementById("selB").value;
+  const on = document.getElementById("cmpBboxGround") && document.getElementById("cmpBboxGround").checked;
+  const leg = document.getElementById("cmpBboxLegend");
+  const note = document.getElementById("cmpBboxNote");
+  if(leg) leg.classList.toggle("d-none", !on);
+  if(!cmpMap) return;
+  if(cmpBboxLayerA){ try{ cmpMap.removeLayer(cmpBboxLayerA); }catch(e){} cmpBboxLayerA=null; }
+  if(cmpBboxLayerB){ try{ cmpMap.removeLayer(cmpBboxLayerB); }catch(e){} cmpBboxLayerB=null; }
+  if(note){ note.classList.add("d-none"); note.textContent=""; }
+  if(!on || !midA || !midB) return;
+  const [fa, fb] = await Promise.all([
+    api(`/missions/${midA}/frame_events`),
+    api(`/missions/${midB}/frame_events`),
+  ]);
+  const na = countFootprints(fa), nb = countFootprints(fb);
+  if(note){
+    note.classList.remove("d-none");
+    if(!fa.length && !fb.length){
+      note.innerHTML = "BBox ground: <b>no frame events</b> in either log. Re-run missions with current FSM (frame snapshots on ticks).";
+    } else if(!na && !nb){
+      const hA = (fa[0] && fa[0].ground_projection_note) ? ` A: ${fa[0].ground_projection_note}` : "";
+      const hB = (fb[0] && fb[0].ground_projection_note) ? ` B: ${fb[0].ground_projection_note}` : "";
+      note.innerHTML = "BBox ground: frames exist but <b>no footprints</b> (GPS + altitude needed)."+hA+hB;
+    } else {
+      note.textContent = `BBox ground: Mission A ${na} footprint(s), Mission B ${nb} footprint(s).`;
+    }
+  }
+  cmpBboxLayerA = buildCmpFootprintGroup(fa, "#4a9eff", "A");
+  cmpBboxLayerB = buildCmpFootprintGroup(fb, "#ff9a4a", "B");
+  cmpBboxLayerA.addTo(cmpMap);
+  cmpBboxLayerB.addTo(cmpMap);
+}
 
 function initMap(){
   if(cmpMap){ cmpMap.remove(); cmpMap=null; }
   cmpMap = L.map("cmpMap");
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {attribution:"© OpenStreetMap",maxZoom:19}).addTo(cmpMap);
+    {attribution:"© OpenStreetMap",maxZoom:22}).addTo(cmpMap);
 }
 
 async function runCompare(){
   const midA  = document.getElementById("selA").value;
   const midB  = document.getElementById("selB").value;
-  const truth = document.getElementById("selTruth").value;
+  let truth = document.getElementById("selTruth").value;
   if(!midA||!midB){ alert("Select both missions first."); return; }
   if(midA===midB){ alert("Select two different missions."); return; }
 
@@ -1494,26 +2319,34 @@ async function runCompare(){
       api(`/missions/${midB}/timeline`),
       api(`/missions/${midA}/weeds/pred?dedup=1`),
       api(`/missions/${midB}/weeds/pred?dedup=1`),
-      api(`/missions/${midA}/path?stride=5`),
-      api(`/missions/${midB}/path?stride=5`),
+      api(`/missions/${midA}/path?stride=1`),
+      api(`/missions/${midB}/path?stride=1`),
     ]);
 
-    // accuracy
-    let accA=null, accB=null;
-    if(truth){
-      [accA,accB] = await Promise.all([
-        api(`/missions/${midA}/sim_compare?truth=${encodeURIComponent(truth)}&thresh_m=0.5`).then(r=>r.stats).catch(()=>null),
-        api(`/missions/${midB}/sim_compare?truth=${encodeURIComponent(truth)}&thresh_m=0.5`).then(r=>r.stats).catch(()=>null),
-      ]);
-    }
+    // Determine truth file per mission: manual selection overrides, else each mission's own
+    const manualTruth = document.getElementById("selTruth").value;
+    const truthA = manualTruth || sumA.sim_truth_file || "";
+    const truthB = manualTruth || sumB.sim_truth_file || "";
+    // Update dropdown if both use the same auto-detected file
+    if(!manualTruth && truthA && truthA === truthB)
+      document.getElementById("selTruth").value = truthA;
+
+    // accuracy — each mission uses its own truth file
+    let accA=null, accB=null, truthPtsA=[], truthPtsB=[];
+    const [cmpResA, cmpResB] = await Promise.all([
+      truthA ? api(`/missions/${midA}/sim_compare?truth=${encodeURIComponent(truthA)}&thresh_m=0.5`).catch(()=>null) : Promise.resolve(null),
+      truthB ? api(`/missions/${midB}/sim_compare?truth=${encodeURIComponent(truthB)}&thresh_m=0.5`).catch(()=>null) : Promise.resolve(null),
+    ]);
+    if(cmpResA){ accA=cmpResA.stats; truthPtsA=cmpResA.truth_points||[]; }
+    if(cmpResB){ accB=cmpResB.stats; truthPtsB=cmpResB.truth_points||[]; }
 
     renderSummaryCards(midA, midB, sumA, sumB);
-    renderMap(pathA, pathB, predsA, predsB);
+    renderMap(pathA, pathB, predsA, predsB, truthPtsA, truthPtsB, truthA===truthB);
     renderFsmChart(midA, midB, tlA.summary, tlB.summary);
     renderEvChart(midA, midB, sumA.event_counts, sumB.event_counts);
     renderStatsTable(midA, midB, sumA, sumB, tlA.summary, tlB.summary);
-    if(truth && accA && accB){
-      renderAccuracy(midA, midB, accA, accB, truth);
+    if(accA || accB){
+      renderAccuracy(midA, midB, accA, accB, truthA, truthB);
       document.getElementById("accuracyCard").classList.remove("d-none");
     } else {
       document.getElementById("accuracyCard").classList.add("d-none");
@@ -1556,7 +2389,7 @@ function renderSummaryCards(midA, midB, sumA, sumB){
 }
 
 // ── map ───────────────────────────────────────────────────────────────────────
-function renderMap(pathA, pathB, predsA, predsB){
+function renderMap(pathA, pathB, predsA, predsB, truthPtsA, truthPtsB, sameTruth){
   initMap();
   const coordsA = pathA.filter(p=>p.lat||p.lon).map(p=>[p.lat,p.lon]);
   const coordsB = pathB.filter(p=>p.lat||p.lon).map(p=>[p.lat,p.lon]);
@@ -1568,9 +2401,26 @@ function renderMap(pathA, pathB, predsA, predsB){
   for(const p of predsB)
     L.circleMarker([p.lat,p.lon],{radius:5,color:"#ff9a4a",fillColor:"#ff9a4a",fillOpacity:0.5,weight:1.5})
      .bindPopup(`B weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`).addTo(cmpMap);
-  const all = [...coordsA,...coordsB,...predsA.map(p=>[p.lat,p.lon]),...predsB.map(p=>[p.lat,p.lon])];
+  // Truth points: white hollow if same file, else A=blue outline, B=orange outline
+  const shownTruth = new Set();
+  for(const p of truthPtsA){
+    const key = `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`;
+    const color = sameTruth ? "#ffffff" : "#4a9eff";
+    L.circleMarker([p.lat,p.lon],{radius:7,color,fillColor:"transparent",fillOpacity:0,weight:2})
+     .bindPopup(`Truth weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`).addTo(cmpMap);
+    shownTruth.add(key);
+  }
+  if(!sameTruth) for(const p of truthPtsB){
+    const key = `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`;
+    if(shownTruth.has(key)) continue;
+    L.circleMarker([p.lat,p.lon],{radius:7,color:"#ff9a4a",fillColor:"transparent",fillOpacity:0,weight:2})
+     .bindPopup(`Truth weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`).addTo(cmpMap);
+  }
+  const all = [...coordsA,...coordsB,...predsA.map(p=>[p.lat,p.lon]),...predsB.map(p=>[p.lat,p.lon]),...truthPtsA.map(p=>[p.lat,p.lon])];
   if(all.length) cmpMap.fitBounds(L.latLngBounds(all),{padding:[30,30]});
   else cmpMap.setView([0,0],2);
+  const cb = document.getElementById("cmpBboxGround");
+  if(cb && cb.checked) applyCmpBboxGround().catch(console.error);
 }
 
 // ── FSM grouped bar ───────────────────────────────────────────────────────────
@@ -1672,34 +2522,40 @@ function renderStatsTable(midA, midB, sumA, sumB, tlA, tlB){
 }
 
 // ── accuracy table ────────────────────────────────────────────────────────────
-function renderAccuracy(midA, midB, accA, accB, truth){
+function renderAccuracy(midA, midB, accA, accB, truthA, truthB){
   function fmtPct(v){ return (v*100).toFixed(1)+"%"; }
-  function f1(s){ return (s.precision+s.recall)>0 ? 2*s.precision*s.recall/(s.precision+s.recall):0; }
-
+  function f1(s){ return (s&&s.precision+s.recall>0) ? 2*s.precision*s.recall/(s.precision+s.recall):0; }
   function diffPct(a,b){
     const d = ((b-a)*100).toFixed(1);
     if(Math.abs(b-a)<0.001) return '<span class="same">→</span>';
     return b>a ? `<span class="better">▲ +${d}%</span>` : `<span class="worse">▼ ${d}%</span>`;
   }
+  const na = "—";
+  function val(s, fn){ return s ? fn(s) : na; }
 
-  let html = `<div class="muted small mb-2">Truth: <code>${truth}</code> &nbsp; match radius: 0.5 m</div>
+  const diffTruth = truthA && truthB && truthA !== truthB;
+  const truthLabel = diffTruth
+    ? `<span class="col-a">${truthA}</span> / <span class="col-b">${truthB}</span>`
+    : `<code>${truthA || truthB}</code>`;
+
+  let html = `<div class="muted small mb-2">Truth: ${truthLabel} &nbsp; match radius: 0.5 m</div>
   <table class="table table-sm stats-tbl mb-0" style="color:#e8edf5">
   <thead><tr>
     <th>Metric</th>
-    <th class="col-a">Mission ${midA}</th>
-    <th class="col-b">Mission ${midB}</th>
+    <th class="col-a">Mission ${midA}${diffTruth?` <span class="muted" style="font-size:10px">(${truthA})</span>`:""}</th>
+    <th class="col-b">Mission ${midB}${diffTruth?` <span class="muted" style="font-size:10px">(${truthB})</span>`:""}</th>
     <th>Δ (B vs A)</th>
   </tr></thead><tbody>`;
 
   const rows = [
-    ["Truth weeds",    accA.truth,          accB.truth,          "—"],
-    ["Predictions",    accA.pred,           accB.pred,           "—"],
-    ["True positives", accA.tp,             accB.tp,             diffPct(accA.tp/accA.truth,accB.tp/accB.truth)],
-    ["False positives",accA.fp,             accB.fp,             diffPct(accA.fp/(accA.pred||1),accB.fp/(accB.pred||1))],
-    ["False negatives",accA.fn,             accB.fn,             "—"],
-    ["Precision",      fmtPct(accA.precision), fmtPct(accB.precision), diffPct(accA.precision,accB.precision)],
-    ["Recall",         fmtPct(accA.recall),    fmtPct(accB.recall),    diffPct(accA.recall,accB.recall)],
-    ["F1 score",       fmtPct(f1(accA)),       fmtPct(f1(accB)),       diffPct(f1(accA),f1(accB))],
+    ["Truth weeds",    val(accA,s=>s.truth),      val(accB,s=>s.truth),      na],
+    ["Predictions",    val(accA,s=>s.pred),        val(accB,s=>s.pred),       na],
+    ["True positives", val(accA,s=>s.tp),          val(accB,s=>s.tp),         (accA&&accB)?diffPct(accA.tp/accA.truth,accB.tp/accB.truth):na],
+    ["False positives",val(accA,s=>s.fp),          val(accB,s=>s.fp),         (accA&&accB)?diffPct(accA.fp/(accA.pred||1),accB.fp/(accB.pred||1)):na],
+    ["False negatives",val(accA,s=>s.fn),          val(accB,s=>s.fn),         na],
+    ["Precision",      val(accA,s=>fmtPct(s.precision)), val(accB,s=>fmtPct(s.precision)), (accA&&accB)?diffPct(accA.precision,accB.precision):na],
+    ["Recall",         val(accA,s=>fmtPct(s.recall)),    val(accB,s=>fmtPct(s.recall)),    (accA&&accB)?diffPct(accA.recall,accB.recall):na],
+    ["F1 score",       val(accA,s=>fmtPct(f1(s))),       val(accB,s=>fmtPct(f1(s))),       (accA&&accB)?diffPct(f1(accA),f1(accB)):na],
   ];
   for(const [l,a,b,d] of rows)
     html += `<tr><td>${l}</td><td>${a}</td><td>${b}</td><td>${d}</td></tr>`;
@@ -1714,6 +2570,11 @@ document.getElementById("runBtn").addEventListener("click", ()=>{
     document.getElementById("errorMsg").classList.remove("d-none");
     document.getElementById("loadingMsg").classList.add("d-none");
   });
+});
+
+const cmpBboxChk = document.getElementById("cmpBboxGround");
+if(cmpBboxChk) cmpBboxChk.addEventListener("change", ()=>{
+  applyCmpBboxGround().catch(console.error);
 });
 
 // Auto-run if both pre-selected via URL
@@ -1762,4 +2623,4 @@ if __name__ == "__main__":
     else:
         print(f"  Mission files : (none found)")
     print()
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=True)

@@ -4,16 +4,6 @@ import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
-from mission_logging import allocate_mission_dir, configure_mission_dir
-
-# Setup missions directory - relative to project, SD-card style numbering
-_project_root = Path(__file__).resolve().parent
-session_dir = allocate_mission_dir(_project_root)
-configure_mission_dir(session_dir)
-frames_dir = session_dir / "frames"
-os.makedirs(session_dir, exist_ok=True)
-os.makedirs(frames_dir, exist_ok=True)
-
 
 @dataclass
 class Detection():
@@ -21,6 +11,7 @@ class Detection():
     confidence: float
     bbox: List[Tuple[float, float]]
     track_id: Optional[int] = None
+    truth_id: Optional[int] = None
     time_detected: int = field(default_factory=lambda: time.time_ns())
 
     def get_center(self):
@@ -42,9 +33,10 @@ class Detection():
                 self.time_detected)
          
 class Frame:
-    def __init__(self,det:list[Detection],photo_path="No photo taken"):
+    def __init__(self, det: list[Detection], photo_path="No photo taken", drone_state=None):
         self.photo_path = photo_path
         self.detection = det
+        self.drone_state = drone_state  # state at generation time, for correct back-projection
 
     def add_detection(self,det:Detection):
         if det.label not in ["sports ball", "frisbee", "person"]: return

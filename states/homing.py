@@ -6,7 +6,7 @@ from ai_class import Frame
 from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
 from constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
 from states.enum import DroneStateEnum
-from states.shared_data import last_goto_time
+import states.shared_data as shared_data
 from DB_abstraction import db_abstraction
 from mission_logging import log_event
 
@@ -42,7 +42,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     if closest_det:
         last_det_time = time.time()
 
-    if (last_goto_time - time.time()) > 10 and (time.time() - last_det_time) > 1:
+    if (time.time() - shared_data.last_goto_time) > 10 and (time.time() - last_det_time) > 1:
         return DroneStateEnum.GOTO
     
     if closest_det is None:

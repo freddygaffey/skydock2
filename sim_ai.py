@@ -7,7 +7,7 @@ from telemetry import telemetry_singlton
 from ai_class import ai_storage_singleton, Detection, Frame
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
-from constants import SIM_SPEED
+from constants import SIM_SPEED, SIM_AI_ENABLE_IMPERFECTIONS
 
 
 # Camera parameters – must match utils.detection_to_ned
@@ -16,12 +16,6 @@ CAMERA_FOV_Y = 21.0  # degrees
 NUM_OF_PIX_X = 640
 NUM_OF_PIX_Y = 640
 SIM_AI_FPS = 30.0
-
-# ---------------------------------------------------------------------------
-# Simulated AI realism knobs (hard-coded config)
-# ---------------------------------------------------------------------------
-# Enable/disable all noise + "sometimes wrong" behavior.
-SIM_AI_ENABLE_IMPERFECTIONS = False
 
 # Pixel jitter (Gaussian std-dev in pixels) applied to bbox center.
 SIM_AI_PIXEL_NOISE_STD_PX = 2.0
@@ -91,7 +85,7 @@ def _vision_params():
 
 def _visible_weed_detections(
     drone_state: DroneStateForHoming,
-    weed_locations: list[list[float]],  # [[lat, lon], ...]
+    weed_locations: list[dict],  # [{"id": int, "lat": float, "lon": float}, ...]
 ) -> list[Detection]:
     """
     Given current drone state and weed GPS locations,
@@ -104,15 +98,19 @@ def _visible_weed_detections(
     lon0 = drone_state.longitude
     alt = drone_state.altitude_rel_home
 
-    # Approx ground footprint radius in meters from vertical FOV
-    max_ground_radius = alt * math.tan(math.radians(CAMERA_FOV_Y / 2))
+    # Bounding circle of the full image footprint: use half-diagonal FOV
+    # so weeds at the corners of the wider X-axis aren't culled early.
+    # The pixel-bounds check below handles precise clipping.
+    half_diag_deg = math.sqrt((CAMERA_FOV_X / 2) ** 2 + (CAMERA_FOV_Y / 2) ** 2)
+    max_ground_radius = alt * math.tan(math.radians(half_diag_deg))
 
     detections: list[Detection] = []
 
     # Hard-code weed physical diameter (meters) for all weeds
     diameter_m = 0.5
 
-    for lat, lon in weed_locations:
+    for w in weed_locations:
+        lat, lon, wid = w["lat"], w["lon"], w["id"]
 
         # GPS delta to local N/E offsets (same idea as utils.detection_to_latlon)
         dlat = lat - lat0
@@ -125,9 +123,16 @@ def _visible_weed_detections(
         if dist > max_ground_radius:
             continue  # not in view on the ground
 
-        # Approximate pinhole projection: x_cam ≈ N/alt, y_cam ≈ E/alt
-        x_cam = N / alt
-        y_cam = E / alt
+        # Rotate NED offset into body/camera frame by drone yaw.
+        # Mirrors the inverse rotation in utils.detection_to_ned so that
+        # sim-generated pixels round-trip correctly through detection_to_latlon.
+        yaw = drone_state.rotaion_z
+        x_body =  N * math.cos(yaw) + E * math.sin(yaw)  # forward (camera +X)
+        y_body = -N * math.sin(yaw) + E * math.cos(yaw)  # right   (camera +Y)
+
+        # Approximate pinhole projection: x_cam ≈ x_body/alt, y_cam ≈ y_body/alt
+        x_cam = x_body / alt
+        y_cam = y_body / alt
 
         u = FX * x_cam + CX
         v = FY * y_cam + CY
@@ -158,13 +163,14 @@ def _visible_weed_detections(
             label="sports ball",  # kept by Frame.add_detection
             confidence=0.9,
             bbox=bbox,
+            truth_id=wid,
         )
         detections.append(det)
 
     return detections
 
 
-def run_sim_ai(weed_locations: list[list[float]]):
+def run_sim_ai(weed_locations: list[dict]):
     """
     Start a background 30 FPS loop:
     - Reads telemetry_singlton.drone_state
@@ -265,12 +271,12 @@ def run_sim_ai(weed_locations: list[list[float]]):
 
                     dets = noisy
 
-                frame = Frame(dets)
+                frame = Frame(dets, drone_state=drone_state)
                 ai_storage_singleton.set_latest_frame(frame)
 
             # Schedule next frame based on absolute time
             frame_idx += 1
-            next_time = (start + frame_idx * dt)/SIM_SPEED
+            next_time = start + frame_idx * dt / SIM_SPEED
 
             now = time.perf_counter()
             sleep_time = next_time - now

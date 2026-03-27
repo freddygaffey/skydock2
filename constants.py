@@ -27,3 +27,12 @@ MIN_ALT = 5  # m
 MIN_SPRAY_ERROR = 2  # m
 
 last_det_time = 0
+
+
+###########################
+###### sim ai #############
+###########################
+
+# False = perfect camera: every weed detected exactly, no false positives
+# True  = realistic camera: pixel jitter, missed detections, false positives, wrong labels
+SIM_AI_ENABLE_IMPERFECTIONS = False

@@ -9,11 +9,11 @@ from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
 from constants import GOTO_ALT, MAX_HOMING_DIST
 from states.enum import DroneStateEnum
-from states.shared_data import last_goto_time
+import states.shared_data as shared_data
 
 
 def goto(drone_state:DroneStateForHoming,frame:Frame):
-    last_time_goto = time.time()
+    shared_data.last_goto_time = time.time()
     weed = db_abstraction.get_closest_weed(drone_state)
     if not weed:
         return DroneStateEnum.RTL

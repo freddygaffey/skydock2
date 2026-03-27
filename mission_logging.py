@@ -173,6 +173,7 @@ def _serialize_frame(frame: Any) -> Optional[dict[str, Any]]:
                     "confidence": getattr(d, "confidence", None),
                     "bbox": _jsonable(getattr(d, "bbox", None)),
                     "track_id": getattr(d, "track_id", None),
+                    "truth_id": getattr(d, "truth_id", None),
                     "time_detected": getattr(d, "time_detected", None),
                 }
             )

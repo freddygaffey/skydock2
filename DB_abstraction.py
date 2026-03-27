@@ -18,6 +18,15 @@ from DB import (
 from drone_state import DroneStateForHoming
 from ai_class import Frame, Detection
 from utils import haversine_distance
+from mission_logging import log_event
+
+
+def _db_mission_log(event: str, **fields) -> None:
+    """Mirror DB mutations into mission.jsonl when a mission log is active."""
+    try:
+        log_event(event, logger="db", level="INFO", **fields)
+    except Exception:
+        pass
 
 
 @dataclass
@@ -125,6 +134,12 @@ class DBAbstraction:
             session.add(model)
             session.flush()  # Get the ID before commit
             waypoint.id = model.id
+            _db_mission_log(
+                "db_waypoint_add",
+                waypoint_id=model.id,
+                lat=float(waypoint.lat),
+                lon=float(waypoint.lon),
+            )
             return model.id
     
     def get_waypoint(self, waypoint_id: int) -> Optional[Waypoint]:
@@ -160,6 +175,7 @@ class DBAbstraction:
             session.query(WaypointModel).filter_by(id=waypoint.id).update(
                 {"traveled_to": True}
             )
+            _db_mission_log("db_waypoint_traveled", waypoint_id=waypoint.id)
     
     # ===== WEED OPERATIONS =====
     
@@ -170,6 +186,13 @@ class DBAbstraction:
             session.add(model)
             session.flush()
             weed.id = model.id
+            _db_mission_log(
+                "db_weed_add",
+                weed_id=model.id,
+                lat=float(weed.lat),
+                lon=float(weed.lon),
+                confidence=float(weed.confidence),
+            )
             return model.id
     
     def get_weed(self, weed_id: int) -> Optional[Weed]:
@@ -198,7 +221,7 @@ class DBAbstraction:
         with self.db_session.get_session() as session:
             query = session.query(WeedModel)
             if only_unsprayed:
-                query = query.filter_by(sprayed=False)
+                query = query.filter_by(sprayed=False, traveled_to=False)
             
             weeds = query.all()
             
@@ -227,6 +250,7 @@ class DBAbstraction:
             session.query(WeedModel).filter_by(id=weed.id).update(
                 {"traveled_to": True}
             )
+            _db_mission_log("db_weed_traveled", weed_id=weed.id)
     
     def mark_weed_sprayed(self, weed: Weed):
         """Mark a weed as sprayed"""
@@ -234,6 +258,7 @@ class DBAbstraction:
             session.query(WeedModel).filter_by(id=weed.id).update(
                 {"sprayed": True}
             )
+            _db_mission_log("db_weed_sprayed", weed_id=weed.id)
     
     # ===== DRONE STATE & DETECTION OPERATIONS =====
     
@@ -295,6 +320,15 @@ class DBAbstraction:
                 )
                 session.add(det_model)
             
+            n_det = len(frame.detection)
+            _db_mission_log(
+                "db_snapshot",
+                drone_state_id=state_model.id,
+                num_detections=n_det,
+                latitude=float(drone_state.latitude),
+                longitude=float(drone_state.longitude),
+                altitude_rel_home=float(drone_state.altitude_rel_home),
+            )
             return state_model.id
     
     def get_all_snapshots(self) -> List[Snapshot]:
@@ -516,6 +550,8 @@ class DBAbstraction:
         with open(backup_path, 'w') as f:
             json.dump(backup_data, f, indent=2)
 
+        _db_mission_log("db_backup", backup_path=backup_path)
+
         # Clear the database
         self.clear_all_data()
 
@@ -523,6 +559,8 @@ class DBAbstraction:
 
     def clear_all_data(self):
         """Clear all data from database (use with caution!)"""
+        st = self.get_stats()
+        _db_mission_log("db_clear_all", **{f"before_{k}": v for k, v in st.items()})
         with self.db_session.get_session() as session:
             session.query(DetectionModel).delete()
             session.query(DroneStateModel).delete()

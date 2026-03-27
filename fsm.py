@@ -3,7 +3,7 @@ import sys
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
-from ai_class import ai_storage_singleton, Frame, session_dir
+from ai_class import ai_storage_singleton, Frame
 from mission_logging import log_event
 
 from states.homing import homing
@@ -35,6 +35,7 @@ class StateMachine:
                 self.current_state = self._update_spray(frame,drone_state)
             case DroneStateEnum.RTL:
                 self.current_state = self._update_rtl(frame,drone_state)
+                return False
             case DroneStateEnum.DONE:
                 print("the mission is done")
                 return False 
@@ -59,6 +60,7 @@ class StateMachine:
                 logger="fsm",
                 level="DEBUG",
                 drone_state=drone_state,
+                frame=frame,
                 time_ns=timestamp_ns,
                 state=str(self.current_state),
             )
@@ -70,7 +72,7 @@ class StateMachine:
         
     def _update_scan(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         if (check := self._overide_and_rtl_checks(drone_state)):return check
-        return scan(drone_state,frame)
+        return scan(getattr(frame, 'drone_state', None) or drone_state, frame)
 
     def _update_goto(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         if (check := self._overide_and_rtl_checks(drone_state)):return check

@@ -50,6 +50,7 @@ class Telemetry(object):
         drone_state_rate = 1/35
         # drone_state_rate = 1
         self.set_a_message_interval("GLOBAL_POSITION_INT",drone_state_rate)
+        self.set_a_message_interval("DISTANCE_SENSOR",drone_state_rate)
         self.set_a_message_interval("SERVO_OUTPUT_RAW",drone_state_rate)
         self.set_a_message_interval("ATTITUDE", 1/100)
         self.set_a_message_interval("HEARTBEAT", 1/2)

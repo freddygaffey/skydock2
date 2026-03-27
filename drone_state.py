@@ -18,9 +18,11 @@ class DroneStateForHoming:
     mode: str = 'STABILIZE'
 
     heading: float = 0
-    rotaion_x: float = 0 # in rad 
-    rotaion_y: float = 0 # in rad 
-    rotaion_z: float = 0 # in rad 
+    rotaion_x: float = 0 # in rad
+    rotaion_y: float = 0 # in rad
+    rotaion_z: float = 0 # in rad
+
+    rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, 0 = no data
 
     def set_pass_message(self,msg):
         if msg is None:
@@ -69,9 +71,12 @@ class DroneStateForHoming:
                 self.enable_homing_and_autonomy = False
 
         if msg._type == "ATTITUDE":
-            self.rotaion_x = msg.roll 
+            self.rotaion_x = msg.roll
             self.rotaion_y = msg.pitch
             self.rotaion_z = msg.yaw
+
+        if msg._type == "DISTANCE_SENSOR":
+            self.rangefinder_m = msg.current_distance / 100.0  # cm to m, co-axial slant range
 
     def to_db_format(self):
         return (self.time_updated_GLOBAL_POSITION_INT,
