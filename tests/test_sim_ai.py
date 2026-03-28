@@ -41,7 +41,7 @@ def _make_stubs():
         confidence: float
         bbox: List[Tuple[float, float]]
         track_id: Optional[int] = None
-        time_detected: int = field(default_factory=lambda: time.time_ns())
+        time_ns: int = field(default_factory=lambda: time.time_ns())
 
         def get_center(self):
             x = (self.bbox[0][0] + self.bbox[1][0]) / 2

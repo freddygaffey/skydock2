@@ -29,8 +29,8 @@ def spraying(drone_state:DroneStateForHoming,frame:Frame):
                 dist_horizontal_m=float(dist),
                 min_spray_error_m=float(MIN_SPRAY_ERROR),
                 within_min_spray_error=True,
-                target_weed={"id": getattr(closest_weed, "id", None), "lat": getattr(closest_weed, "lat", None), "lon": getattr(closest_weed, "lon", None)},
-                triggering_detection={"time_detected": getattr(i, "time_detected", None), "label": getattr(i, "label", None), "confidence": getattr(i, "confidence", None)},
+                target_weed={"id": closest_weed.id, "lat": closest_weed.lat, "lon": closest_weed.lon},
+                triggering_detection={"time_detected": i.time_ns, "label": i.label, "confidence": i.confidence},
             )
             db_abstraction.mark_weed_sprayed(closest_weed)
     if not sprayed:
@@ -42,7 +42,7 @@ def spraying(drone_state:DroneStateForHoming,frame:Frame):
             drone_state=drone_state,
             frame=frame,
             min_spray_error_m=float(MIN_SPRAY_ERROR),
-            target_weed={"id": getattr(closest_weed, "id", None), "lat": getattr(closest_weed, "lat", None), "lon": getattr(closest_weed, "lon", None)},
+            target_weed={"id": closest_weed.id, "lat": closest_weed.lat, "lon": closest_weed.lon},
         )
         db_abstraction.mark_weed_traveled(closest_weed)
 

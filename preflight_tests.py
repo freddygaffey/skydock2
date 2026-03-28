@@ -159,9 +159,9 @@ def test_attitude_data(results: TestResults, state):
         results.fail("No drone state available")
         return
 
-    roll = math.degrees(state.rotaion_x)
-    pitch = math.degrees(state.rotaion_y)
-    yaw = math.degrees(state.rotaion_z)
+    roll = math.degrees(state.rotaion.x)
+    pitch = math.degrees(state.rotaion.y)
+    yaw = math.degrees(state.rotaion.z)
 
     results.ok(f"Roll: {roll:.1f}°, Pitch: {pitch:.1f}°, Yaw: {yaw:.1f}°")
 
@@ -185,9 +185,9 @@ def test_ai_pipeline(results: TestResults):
     results.ok("ai_class imported")
 
     # Start AI using the singleton's start_ai method
-    print("  Starting AI via ai_storage_singleton.start_ai()...")
+    print("  Starting AI via ai_storage_singleton.start_sim_ai()...")
     try:
-        ai_storage_singleton.start_ai()
+        ai_storage_singleton.start_sim_ai()
     except Exception as e:
         results.fail(f"Failed to start AI: {e}")
         return
@@ -293,9 +293,12 @@ def test_coordinate_transform(results: TestResults):
     # Create a mock drone state - level at 15m altitude
     mock_state = DroneStateForHoming()
     mock_state.altitude_rel_home = 15.0
-    mock_state.rotaion_x = 0  # roll
-    mock_state.rotaion_y = 0  # pitch
-    mock_state.rotaion_z = 0  # yaw
+    mock_state.rotaion.x = 0   # roll
+    mock_state.rotaion.y = 0   # pitch
+    mock_state.rotaion.z = 0   # yaw
+    mock_state.rotaion.dx = 0  # roll rate
+    mock_state.rotaion.dy = 0  # pitch rate
+    mock_state.rotaion.dz = 0  # yaw rate
 
     try:
         ned = detection_to_ned(mock_state, fake_det)

@@ -2,6 +2,7 @@ import threading
 import time
 import math
 import random
+import numpy as np
 
 from telemetry import telemetry_singlton
 from ai_class import ai_storage_singleton, Detection, Frame
@@ -41,6 +42,9 @@ SIM_AI_CONFIDENCE_MAX = 0.99
 
 # Deterministic randomness for repeatable sims.
 SIM_AI_RANDOM_SEED = 1337
+
+# Extra pixel noise per rad/s of angular rate (simulates motion blur).
+SIM_AI_ROTATION_NOISE_SCALE_PX_PER_RADS = 30.0
 
 FX = NUM_OF_PIX_X / (2 * math.tan(math.radians(CAMERA_FOV_X / 2)))
 FY = NUM_OF_PIX_Y / (2 * math.tan(math.radians(CAMERA_FOV_Y / 2)))
@@ -123,16 +127,33 @@ def _visible_weed_detections(
         if dist > max_ground_radius:
             continue  # not in view on the ground
 
-        # Rotate NED offset into body/camera frame by drone yaw.
-        # Mirrors the inverse rotation in utils.detection_to_ned so that
-        # sim-generated pixels round-trip correctly through detection_to_latlon.
-        yaw = drone_state.rotaion_z
-        x_body =  N * math.cos(yaw) + E * math.sin(yaw)  # forward (camera +X)
-        y_body = -N * math.sin(yaw) + E * math.cos(yaw)  # right   (camera +Y)
+        # Rotate NED offset into body/camera frame using full attitude.
+        # Mirrors the inverse of utils.detection_to_ned (Rz@Ry@Rx body→NED),
+        # so sim-generated pixels round-trip correctly through detection_to_latlon.
+        roll  = drone_state.rotaion.x
+        pitch = drone_state.rotaion.y
+        yaw   = drone_state.rotaion.z
 
-        # Approximate pinhole projection: x_cam ≈ x_body/alt, y_cam ≈ y_body/alt
-        x_cam = x_body / alt
-        y_cam = y_body / alt
+        Rx = np.array([[1, 0, 0],
+                       [0,  np.cos(roll), -np.sin(roll)],
+                       [0,  np.sin(roll),  np.cos(roll)]])
+        Ry = np.array([[ np.cos(pitch), 0, np.sin(pitch)],
+                       [0, 1, 0],
+                       [-np.sin(pitch), 0, np.cos(pitch)]])
+        Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0],
+                       [np.sin(yaw),  np.cos(yaw), 0],
+                       [0, 0, 1]])
+
+        # NED vector from drone to weed; z is positive-down so weed is +alt below.
+        ned = np.array([N, E, alt])
+        # Inverse of (Rz@Ry@Rx) is (Rz@Ry@Rx).T = Rx.T @ Ry.T @ Rz.T
+        ray_body = (Rx.T @ Ry.T @ Rz.T) @ ned
+
+        if ray_body[2] <= 0:
+            continue  # weed is behind or above the camera
+
+        x_cam = ray_body[0] / ray_body[2]
+        y_cam = ray_body[1] / ray_body[2]
 
         u = FX * x_cam + CX
         v = FY * y_cam + CY
@@ -219,9 +240,18 @@ def run_sim_ai(weed_locations: list[dict]):
                         cx = (x_min + x_max) / 2.0
                         cy = (y_min + y_max) / 2.0
 
-                        # Jitter center and size
-                        cx += rng.gauss(0.0, SIM_AI_PIXEL_NOISE_STD_PX)
-                        cy += rng.gauss(0.0, SIM_AI_PIXEL_NOISE_STD_PX)
+                        # Jitter center and size; scale noise by angular rate magnitude
+                        omega = math.sqrt(
+                            drone_state.rotaion.dx**2 +
+                            drone_state.rotaion.dy**2 +
+                            drone_state.rotaion.dz**2
+                        )
+                        effective_pixel_noise = (
+                            SIM_AI_PIXEL_NOISE_STD_PX
+                            + omega * SIM_AI_ROTATION_NOISE_SCALE_PX_PER_RADS
+                        )
+                        cx += rng.gauss(0.0, effective_pixel_noise)
+                        cy += rng.gauss(0.0, effective_pixel_noise)
 
                         w *= max(0.2, 1.0 + rng.gauss(0.0, SIM_AI_SIZE_NOISE_STD_FRAC))
                         h *= max(0.2, 1.0 + rng.gauss(0.0, SIM_AI_SIZE_NOISE_STD_FRAC))

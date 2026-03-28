@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from DB import (
     db_session, WaypointModel, WeedModel, DroneStateModel, DetectionModel, DatabaseSession
 )
-from drone_state import DroneStateForHoming
+from drone_state import DroneStateForHoming, Rotation
 from ai_class import Frame, Detection
 from utils import haversine_distance
 from mission_logging import log_event
@@ -283,9 +283,12 @@ class DBAbstraction:
                 velocity_z=drone_state.velocity_z,
                 enable_homing_and_autonomy=drone_state.enable_homing_and_autonomy,
                 heading=drone_state.heading,
-                rotation_x=drone_state.rotaion_x,
-                rotation_y=drone_state.rotaion_y,
-                rotation_z=drone_state.rotaion_z,
+                rotation_x=drone_state.rotaion.x,
+                rotation_y=drone_state.rotaion.y,
+                rotation_z=drone_state.rotaion.z,
+                rotation_dx=drone_state.rotaion.dx,
+                rotation_dy=drone_state.rotaion.dy,
+                rotation_dz=drone_state.rotaion.dz,
                 mode=drone_state.mode
             )
             
@@ -315,7 +318,7 @@ class DBAbstraction:
                     center_x=center_x,
                     center_y=center_y,
                     track_id=detection.track_id,
-                    time_detected=detection.time_detected,
+                    time_detected=detection.time_ns,
                     photo_path=frame.photo_path
                 )
                 session.add(det_model)
@@ -354,9 +357,15 @@ class DBAbstraction:
                     velocity_z=state_model.velocity_z,
                     enable_homing_and_autonomy=state_model.enable_homing_and_autonomy,
                     heading=state_model.heading,
-                    rotaion_x=state_model.rotation_x,
-                    rotaion_y=state_model.rotation_y,
-                    rotaion_z=state_model.rotation_z,
+                    rotaion=Rotation(
+                        time_ns=0,
+                        x=state_model.rotation_x,
+                        y=state_model.rotation_y,
+                        z=state_model.rotation_z,
+                        dx=state_model.rotation_dx,
+                        dy=state_model.rotation_dy,
+                        dz=state_model.rotation_dz,
+                    ),
                     mode=state_model.mode
                 )
 
@@ -379,7 +388,7 @@ class DBAbstraction:
                         bbox=bbox,
                         track_id=det_model.track_id
                     )
-                    detection.time_detected = det_model.time_detected
+                    detection.time_ns = det_model.time_detected
                     detections.append(detection)
                     
                     if det_model.photo_path:
@@ -418,9 +427,15 @@ class DBAbstraction:
                 velocity_z=state_model.velocity_z,
                 enable_homing_and_autonomy=state_model.enable_homing_and_autonomy,
                 heading=state_model.heading,
-                rotaion_x=state_model.rotation_x,
-                rotaion_y=state_model.rotation_y,
-                rotaion_z=state_model.rotation_z,
+                rotaion=Rotation(
+                    time_ns=0,
+                    x=state_model.rotation_x,
+                    y=state_model.rotation_y,
+                    z=state_model.rotation_z,
+                    dx=state_model.rotation_dx,
+                    dy=state_model.rotation_dy,
+                    dz=state_model.rotation_dz,
+                ),
                 mode=state_model.mode
             )
 
@@ -442,7 +457,7 @@ class DBAbstraction:
                     bbox=bbox,
                     track_id=det_model.track_id
                 )
-                detection.time_detected = det_model.time_detected
+                detection.time_ns = det_model.time_detected
                 detections.append(detection)
                 
                 if det_model.photo_path:
@@ -530,9 +545,12 @@ class DBAbstraction:
                     "velocity_z": snap.drone_state.velocity_z,
                     "enable_homing_and_autonomy": snap.drone_state.enable_homing_and_autonomy,
                     "heading": snap.drone_state.heading,
-                    "rotation_x": snap.drone_state.rotaion_x,
-                    "rotation_y": snap.drone_state.rotaion_y,
-                    "rotation_z": snap.drone_state.rotaion_z,
+                    "rotation_x": snap.drone_state.rotaion.x,
+                    "rotation_y": snap.drone_state.rotaion.y,
+                    "rotation_z": snap.drone_state.rotaion.z,
+                    "rotation_dx": snap.drone_state.rotaion.dx,
+                    "rotation_dy": snap.drone_state.rotaion.dy,
+                    "rotation_dz": snap.drone_state.rotaion.dz,
                     "mode": snap.drone_state.mode
                 },
                 "detections": []

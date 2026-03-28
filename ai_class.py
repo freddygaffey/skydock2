@@ -12,7 +12,7 @@ class Detection():
     bbox: List[Tuple[float, float]]
     track_id: Optional[int] = None
     truth_id: Optional[int] = None
-    time_detected: int = field(default_factory=lambda: time.time_ns())
+    time_ns: int = field(default_factory=lambda: time.time_ns())
 
     def get_center(self):
         x = (self.bbox[0][0] + self.bbox[1][0]) / 2
@@ -30,7 +30,7 @@ class Detection():
                 center[0],
                 center[1],
                 self.track_id,
-                self.time_detected)
+                self.time_ns)
          
 class Frame:
     def __init__(self, det: list[Detection], photo_path="No photo taken", drone_state=None):
@@ -71,7 +71,7 @@ class _AiStorage:
         with self.current_frame_lock:
             return self.current_frame
 
-    def start_ai(self,sim_weeds: list[list[float]]):
+    def start_sim_ai(self,sim_weeds: list[list[float]]):
         if self.is_ai_running:
             print("ai is already running")
             return

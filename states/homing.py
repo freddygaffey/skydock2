@@ -30,8 +30,8 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                 frame=frame,
                 dist_horizontal_m=float(min_actual),
                 min_spray_error_m=float(MIN_SPRAY_ERROR),
-                target_weed={"id": getattr(weed, "id", None), "lat": getattr(weed, "lat", None), "lon": getattr(weed, "lon", None)},
-                closest_detection={"time_detected": getattr(closest_det, "time_detected", None) if closest_det else None},
+                target_weed={"id": weed.id, "lat": weed.lat, "lon": weed.lon},
+                closest_detection={"time_detected": closest_det.time_ns if closest_det else None},
             )
             db_abstraction.mark_weed_sprayed(weed)
         else: return DroneStateEnum.RTL

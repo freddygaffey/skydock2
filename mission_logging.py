@@ -79,7 +79,7 @@ def init_mission_log(
     *,
     schema_version: int = 1,
     is_sim: bool = False,
-    sim_truth_file: Optional[str] = None,
+    truth_file: Optional[str] = None,
     weed_match_m: Optional[float] = None,
     min_spray_error_m: Optional[float] = None,
     password_protected_ui: bool = True,
@@ -109,8 +109,8 @@ def init_mission_log(
             "mission_id": _mission_dir.name,
             "is_sim": bool(is_sim),
         }
-        if sim_truth_file:
-            header["sim_truth_file"] = sim_truth_file
+        if truth_file:
+            header["sim_truth_file"] = truth_file
         if weed_match_m is not None:
             header["weed_match_m"] = float(weed_match_m)
         if min_spray_error_m is not None:
@@ -169,12 +169,12 @@ def _serialize_frame(frame: Any) -> Optional[dict[str, Any]]:
         for d in dets:
             det_out.append(
                 {
-                    "label": getattr(d, "label", None),
-                    "confidence": getattr(d, "confidence", None),
-                    "bbox": _jsonable(getattr(d, "bbox", None)),
-                    "track_id": getattr(d, "track_id", None),
-                    "truth_id": getattr(d, "truth_id", None),
-                    "time_detected": getattr(d, "time_detected", None),
+                    "label": d.label,
+                    "confidence": d.confidence,
+                    "bbox": _jsonable(d.bbox),
+                    "track_id": d.track_id,
+                    "truth_id": d.truth_id,
+                    "time_detected": d.time_ns,
                 }
             )
         out["detections"] = det_out

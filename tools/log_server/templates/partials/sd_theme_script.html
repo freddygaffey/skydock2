@@ -1,0 +1,55 @@
+<script>
+// Apply saved theme immediately — before first paint — to prevent flash
+(function(){
+  var t=localStorage.getItem('sd-theme')||'dark';
+  document.documentElement.setAttribute('data-theme',t);
+})();
+
+function chartColors(){
+  var light=document.documentElement.getAttribute('data-theme')==='light';
+  return{
+    text: light?'#1a2030':'#e8edf5',
+    grid: light?'#c8d3e0':'#1b2a46',
+    axis: light?'#4a5a70':'#9fb0c7',
+    bg:   'rgba(0,0,0,0)',
+  };
+}
+
+function _applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  localStorage.setItem('sd-theme',t);
+  var lbl=document.getElementById('sd-theme-label');
+  if(lbl) lbl.textContent=t==='dark'?'Light mode':'Dark mode';
+  // Recolour all visible Plotly charts
+  var cc=chartColors();
+  var upd={'font.color':cc.text,'xaxis.gridcolor':cc.grid,'xaxis.color':cc.axis,
+           'yaxis.gridcolor':cc.grid,'yaxis.color':cc.axis};
+  document.querySelectorAll('.js-plotly-plot').forEach(function(el){
+    try{Plotly.relayout(el,upd);}catch(e){}
+  });
+}
+
+document.addEventListener('DOMContentLoaded',function(){
+  // Inject the floating toggle pill once
+  var pill=document.createElement('div');
+  pill.id='sd-theme-toggle';
+  pill.title='Toggle light / dark mode';
+  pill.innerHTML=
+    '<div class="sd-track"><div class="sd-knob"></div></div>'+
+    '<span id="sd-theme-label"></span>';
+  document.body.appendChild(pill);
+
+  var cur=document.documentElement.getAttribute('data-theme')||'dark';
+  document.getElementById('sd-theme-label').textContent=
+    cur==='dark'?'Light mode':'Dark mode';
+
+  pill.addEventListener('click',function(){
+    var c=document.documentElement.getAttribute('data-theme')||'dark';
+    _applyTheme(c==='dark'?'light':'dark');
+  });
+
+  // Also wire up any legacy #themeBtn if present (old buttons in headers)
+  var btn=document.getElementById('themeBtn');
+  if(btn) btn.style.display='none';
+});
+</script>

@@ -105,15 +105,18 @@ def get_sim_files() -> list[str]:
         return [f for f in os.listdir("sim_data") if f.endswith(".json")]
 
 
-def load_sim_file(file: str):
-    """Load one sim file into the DB and start the sim AI. Call configure_mission_dir + init_mission_log before this."""
+def load_mission_file(file: str, base_dir: str = "sim_data", start_sim_ai: bool = True):
+    """Load a mission file into the DB. Call configure_mission_dir + init_mission_log before this."""
     from ai_class import ai_storage_singleton
     from DB_abstraction import db_abstraction, Waypoint
 
-    with open(f"sim_data/{file}", "r") as f:
+    path = file if os.path.exists(file) else f"{base_dir}/{file}"
+    with open(path, "r") as f:
         data = json.load(f)
-    ai_storage_singleton.start_ai(data["weed_locations"])
+    if start_sim_ai:
+        ai_storage_singleton.start_sim_ai(data["weed_locations"])
     wps = [Waypoint(*pt, id=i) for i, pt in enumerate(data["scan_path"])]
     db_abstraction.backup_and_clear()
     for wp in wps:
         db_abstraction.add_waypoint(wp)
+    return data

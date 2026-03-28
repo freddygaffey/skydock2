@@ -60,6 +60,9 @@ class DroneStateModel(Base):
     rotation_x = Column(Float, nullable=False, default=0.0)
     rotation_y = Column(Float, nullable=False, default=0.0)
     rotation_z = Column(Float, nullable=False, default=0.0)
+    rotation_dx = Column(Float, nullable=False, default=0.0)
+    rotation_dy = Column(Float, nullable=False, default=0.0)
+    rotation_dz = Column(Float, nullable=False, default=0.0)
     mode = Column(String, nullable=True)
     
     # Relationship to detections

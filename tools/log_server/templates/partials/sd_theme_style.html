@@ -1,0 +1,86 @@
+<style>
+:root{
+  --sd-bg:#0b1220;--sd-card:#111b2e;--sd-input:#0e1728;
+  --sd-hover:#162040;--sd-border:#1b2a46;
+  --sd-text:#e8edf5;--sd-muted:#8fa8c8;--sd-code:#aed4ff;
+  --sd-accent:#7db3ff;--sd-pill:#0e1728;
+  --sd-better:#4adf86;--sd-worse:#ff6060;--sd-same:#8fa8c8;
+}
+[data-theme="light"]{
+  --sd-bg:#f0f4f8;--sd-card:#ffffff;--sd-input:#ffffff;
+  --sd-hover:#e4eaf6;--sd-border:#c8d3e0;
+  --sd-text:#1a2030;--sd-muted:#4a5a70;--sd-code:#0d4080;
+  --sd-accent:#1a5cbf;--sd-pill:#dce8ff;
+  --sd-better:#1a7a40;--sd-worse:#b01010;--sd-same:#4a5a70;
+}
+body{background:var(--sd-bg);color:var(--sd-text)}
+.card{background:var(--sd-card);border:1px solid var(--sd-border)}
+a{color:var(--sd-accent)}
+.muted{color:var(--sd-muted)}
+code{color:var(--sd-code)}
+pre{background:var(--sd-input);border:1px solid var(--sd-border);
+    padding:10px;border-radius:6px;font-size:12px;color:var(--sd-text)}
+/* Bootstrap table overrides */
+.table{--bs-table-bg:transparent;--bs-table-border-color:var(--sd-border);
+       --bs-table-color:var(--sd-text);color:var(--sd-text)!important}
+.table thead th,.table td,.table th{border-color:var(--sd-border)!important;color:var(--sd-text)!important}
+/* Bootstrap form overrides */
+.form-control,.form-select{background:var(--sd-input)!important;
+  border-color:var(--sd-border)!important;color:var(--sd-text)!important}
+.form-control:focus,.form-select:focus{border-color:var(--sd-accent)!important;
+  box-shadow:none!important;background:var(--sd-input)!important;color:var(--sd-text)!important}
+.form-control option,.form-select option{background:var(--sd-input);color:var(--sd-text)}
+.form-check-label,.form-label{color:var(--sd-muted)}
+/* Bootstrap list-group */
+.list-group-item{background:var(--sd-input);border-color:var(--sd-border);color:var(--sd-text)}
+.list-group-item-action:hover{background:var(--sd-hover);color:var(--sd-text)}
+/* Bootstrap nav-tabs */
+.nav-tabs{border-color:var(--sd-border)}
+.nav-tabs .nav-link{color:var(--sd-muted);border-color:transparent}
+.nav-tabs .nav-link.active{background:var(--sd-card);color:var(--sd-text);
+  border-color:var(--sd-border) var(--sd-border) var(--sd-card)}
+.nav-tabs .nav-link:hover{color:var(--sd-text);border-color:var(--sd-border)}
+.tab-content{background:var(--sd-card);border:1px solid var(--sd-border);
+  border-top:none;border-radius:0 0 8px 8px;padding:16px}
+/* Bootstrap outline-secondary button */
+.btn-outline-secondary{color:var(--sd-muted)!important;border-color:var(--sd-border)!important}
+.btn-outline-secondary:hover{background:var(--sd-hover)!important;
+  color:var(--sd-text)!important;border-color:var(--sd-border)!important}
+/* Bootstrap outline-info button */
+.btn-outline-info{color:var(--sd-accent)!important;border-color:var(--sd-accent)!important}
+.btn-outline-info:hover{background:var(--sd-hover)!important;color:var(--sd-text)!important}
+/* Shared components */
+.stats-tbl td,.stats-tbl th{padding:5px 10px;border-color:var(--sd-border)!important;font-size:13px}
+.badge-state{font-size:11px;padding:2px 7px;border-radius:10px}
+.stat-pill{display:inline-block;background:var(--sd-pill);border:1px solid var(--sd-border);
+  border-radius:20px;padding:3px 12px;font-size:13px;margin:2px}
+.stat-pill .val{font-weight:600;color:var(--sd-accent)}
+.better{color:var(--sd-better);font-weight:600}
+.worse{color:var(--sd-worse);font-weight:600}
+.same{color:var(--sd-same)}
+/* Theme toggle — fixed pill, always visible */
+#sd-theme-toggle{
+  position:fixed;bottom:18px;right:18px;z-index:9999;
+  display:flex;align-items:center;gap:8px;
+  background:var(--sd-card);border:1px solid var(--sd-border);
+  border-radius:999px;padding:6px 14px 6px 10px;
+  font-size:13px;font-weight:500;color:var(--sd-text);
+  cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.35);
+  user-select:none;transition:box-shadow .15s;
+}
+#sd-theme-toggle:hover{box-shadow:0 4px 18px rgba(0,0,0,.45)}
+#sd-theme-toggle .sd-track{
+  width:34px;height:18px;background:#1b2a46;border-radius:9px;
+  position:relative;transition:background .2s;flex-shrink:0;
+}
+[data-theme="light"] #sd-theme-toggle .sd-track{background:#aac4ee}
+#sd-theme-toggle .sd-knob{
+  position:absolute;top:2px;left:2px;width:14px;height:14px;
+  border-radius:50%;background:#7db3ff;transition:transform .2s,background .2s;
+}
+[data-theme="light"] #sd-theme-toggle .sd-knob{
+  transform:translateX(16px);background:#1a5cbf;
+}
+/* Bootstrap img { max-width:100% } breaks Leaflet tile images (blank basemap; vectors still draw) */
+.leaflet-container img{max-width:none!important}
+</style>

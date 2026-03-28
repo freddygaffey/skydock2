@@ -22,8 +22,8 @@ def scan(drone_state:DroneStateForHoming,frame:Frame):
             print("prosess_all_scan_data is compleate")
             _scan_data_processed = True
         return DroneStateEnum.GOTO
-    db_abstraction.log_drone_state_and_frame(drone_state,frame)
 
+    db_abstraction.log_drone_state_and_frame(drone_state,frame)
     telemetry_singlton.fly_to_point(point.lat,point.lon,SCAN_HIGHT)
     if MIN_DIST_FROM_WAYPOINT > (haversine_distance(drone_state.latitude,drone_state.longitude,point.lat,point.lon)):
         db_abstraction.mark_waypoint_traveled(point)

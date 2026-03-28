@@ -1,0 +1,603 @@
+<!doctype html>
+<html><head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Compare Missions – Skydock</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="{{ url_for('static', filename='map_shared.js') }}"></script>
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+  {% include "partials/sd_theme_style.html" %}
+  <style>
+    #cmpMap{height:68vh;min-height:520px;max-height:820px;border-radius:8px}
+    .col-a{color:#4a9eff}
+    .col-b{color:#ff9a4a}
+  </style>
+</head><body>
+<div class="container-fluid py-3" style="max-width:1300px">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h2 class="mb-0">Compare Missions</h2>
+      <div class="muted small">Select two missions to compare side-by-side</div>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      <a href="{{ url_for('log_web.missions_list') }}" class="btn btn-sm btn-outline-secondary">&#9776; All missions</a>
+      <button id="themeBtn"></button>
+    </div>
+  </div>
+
+  <!-- selectors -->
+  <div class="card p-3 mb-3">
+    <div class="row g-3 align-items-end">
+      <div class="col-12 col-sm-auto">
+        <label class="form-label muted small mb-1">
+          <span class="col-a">■</span> Mission A
+        </label>
+        <select id="selA" class="form-select form-select-sm" style="min-width:160px">
+          <option value="">— select —</option>
+          {% for m in missions %}
+            <option value="{{ m.id }}"{% if m.id == sel_a %} selected{% endif %}>
+              Mission {{ m.id }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-sm-auto">
+        <label class="form-label muted small mb-1">
+          <span class="col-b">■</span> Mission B
+        </label>
+        <select id="selB" class="form-select form-select-sm" style="min-width:160px">
+          <option value="">— select —</option>
+          {% for m in missions %}
+            <option value="{{ m.id }}"{% if m.id == sel_b %} selected{% endif %}>
+              Mission {{ m.id }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-sm-auto">
+        <label class="form-label muted small mb-1">Truth file (optional)</label>
+        <select id="selTruth" class="form-select form-select-sm" style="min-width:180px">
+          <option value="">(no truth file)</option>
+          {% for f in sim_files %}
+            <option value="{{ f }}">{{ f }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-sm-auto">
+        <button id="runBtn" class="btn btn-sm btn-primary">Compare</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="results" class="d-none">
+
+    <!-- summary cards -->
+    <div class="row g-3 mb-3" id="summaryRow"></div>
+
+    <!-- map -->
+    <div class="card p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+        <h6 class="mb-0">Weed locations &amp; flight paths</h6>
+        <div class="d-flex flex-wrap gap-3 align-items-center small">
+          <label class="form-check-label mb-0"><input class="form-check-input" type="checkbox" id="cmpLayerPath" checked> Path</label>
+          <label class="form-check-label mb-0"><input class="form-check-input" type="checkbox" id="cmpLayerPred" checked> Predictions</label>
+          <label class="form-check-label mb-0"><input class="form-check-input" type="checkbox" id="cmpLayerTruth"> Truth</label>
+          <label class="form-check-label mb-0"><input class="form-check-input" type="checkbox" id="cmpLayerSpray" checked> Spray</label>
+          <label class="form-check-label mb-0"><input class="form-check-input" type="checkbox" id="cmpBboxGround"> BBox ground</label>
+          <label class="form-check-label mb-0" title="FOV from fsm_tick drone_state (same projection as utils.detection_to_latlon). Stride 1 = every tick."><input class="form-check-input" type="checkbox" id="cmpCameraFrame"> Camera frame overlay</label>
+        </div>
+      </div>
+      <div class="d-flex gap-3 small flex-wrap mb-2">
+        <span><span class="col-a">&#9679;</span> Mission A weeds</span>
+        <span><span class="col-b">&#9679;</span> Mission B weeds</span>
+        <span><span style="color:#4a9eff">—</span> Path A</span>
+        <span><span style="color:#ff9a4a">—</span> Path B</span>
+        <span><span style="color:#ffffff">&#9711;</span> Ground truth</span>
+        <span><span style="color:#4adf86">&#9679;</span> Spray hit / <span style="color:#ff4a4a">&#9679;</span> miss</span>
+        <span class="d-none" id="cmpBboxLegend"><span style="color:#4a9eff">▢</span> A ground &nbsp; <span style="color:#ff9a4a">▢</span> B ground</span>
+        <span class="d-none" id="cmpCameraLegend"><span style="color:#4a9eff">■</span> SCAN <span style="color:#bf4aff">■</span> GOTO <span style="color:#ff9a4a">■</span> HOMING <span style="color:#4adf86">■</span> SPRAY …</span>
+      </div>
+      <div id="cmpMap"></div>
+      <div id="cmpBboxNote" class="muted small mt-2 d-none" style="min-height:1.3em"></div>
+    </div>
+
+    <!-- charts row -->
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-lg-6">
+        <div class="card p-3">
+          <h6>FSM state time (seconds)</h6>
+          <div id="fsmChart" style="height:300px"></div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="card p-3">
+          <h6>Event counts</h6>
+          <div id="evChart" style="height:300px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- detailed stats table -->
+    <div class="card p-3 mb-3">
+      <h6>Side-by-side stats</h6>
+      <div class="table-responsive">
+        <table class="table table-sm stats-tbl mb-0" style="color:#e8edf5" id="statsTable">
+        </table>
+      </div>
+    </div>
+
+    <!-- accuracy (shown only when truth file selected) -->
+    <div class="card p-3 mb-3 d-none" id="accuracyCard">
+      <h6>Accuracy vs ground truth</h6>
+      <div class="table-responsive">
+        <table class="table table-sm stats-tbl mb-0" style="color:#e8edf5" id="accuracyTable">
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /results -->
+
+  <div id="loadingMsg" class="muted small d-none">Loading…</div>
+  <div id="errorMsg"   class="text-danger small d-none"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const STATE_COLORS = {
+  SCAN:"#4a9eff", SPRAY:"#4adf86", HOMING:"#ff9a4a",
+  GOTO:"#bf4aff", OVERRIDE:"#9fb0c7", LAND:"#ff4a4a",
+};
+function stateColor(s){ return STATE_COLORS[s]||"#7db3ff"; }
+async function api(url){ const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+function fmtDur(s){ const m=Math.floor(s/60),sec=Math.round(s%60); return m?`${m}m ${sec}s`:`${sec}s`; }
+function pct(v,t){ return t?((v/t)*100).toFixed(1)+"%" : "—"; }
+
+const CAMERA_FOV_STRIDE = 1;
+const CAMERA_FOV_STATES = "";
+
+let cmpMap=null;
+let cmpLayerPath=null, cmpLayerPred=null, cmpLayerTruth=null, cmpLayerSpray=null;
+let cmpBboxLayerA=null, cmpBboxLayerB=null;
+let cmpCameraFrameA=null, cmpCameraFrameB=null;
+let cmpGroundNoteHtml = "", cmpCameraNoteHtml = "";
+
+function escCmp(s){
+  return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function renderCmpBboxNotes(){
+  const el = document.getElementById("cmpBboxNote");
+  if(!el) return;
+  const onG = document.getElementById("cmpBboxGround")?.checked;
+  const onC = document.getElementById("cmpCameraFrame")?.checked;
+  const parts = [];
+  if(onG && cmpGroundNoteHtml) parts.push(cmpGroundNoteHtml);
+  if(onC && cmpCameraNoteHtml) parts.push(cmpCameraNoteHtml);
+  if(parts.length){
+    el.innerHTML = parts.join("<br>");
+    el.classList.remove("d-none");
+  } else {
+    el.textContent = "";
+    el.classList.add("d-none");
+  }
+}
+
+function updateCmpBboxLegendVisibility(){
+  const g = document.getElementById("cmpBboxGround")?.checked;
+  const c = document.getElementById("cmpCameraFrame")?.checked;
+  const leg = document.getElementById("cmpBboxLegend");
+  const legCam = document.getElementById("cmpCameraLegend");
+  if(leg) leg.classList.toggle("d-none", !g);
+  if(legCam) legCam.classList.toggle("d-none", !c);
+}
+
+function syncCmpLayerVisibility(){
+  if(!cmpMap) return;
+  function set(layer, id){
+    const el = document.getElementById(id);
+    if(!layer) return;
+    if(el && el.checked) layer.addTo(cmpMap); else cmpMap.removeLayer(layer);
+  }
+  set(cmpLayerPath, "cmpLayerPath");
+  set(cmpLayerPred, "cmpLayerPred");
+  set(cmpLayerTruth, "cmpLayerTruth");
+  set(cmpLayerSpray, "cmpLayerSpray");
+}
+
+async function applyCmpBboxGround(){
+  const midA = document.getElementById("selA").value;
+  const midB = document.getElementById("selB").value;
+  const on = document.getElementById("cmpBboxGround")?.checked;
+  if(!cmpMap) return;
+  if(cmpBboxLayerA){ try{ cmpMap.removeLayer(cmpBboxLayerA); }catch(e){} cmpBboxLayerA=null; }
+  if(cmpBboxLayerB){ try{ cmpMap.removeLayer(cmpBboxLayerB); }catch(e){} cmpBboxLayerB=null; }
+  cmpGroundNoteHtml = "";
+  if(!on || !midA || !midB){
+    renderCmpBboxNotes();
+    updateCmpBboxLegendVisibility();
+    return;
+  }
+  const [fa, fb] = await Promise.all([
+    api(`/missions/${midA}/frame_events`),
+    api(`/missions/${midB}/frame_events`),
+  ]);
+  const na = SdMap.countGroundProjectionRows(fa), nb = SdMap.countGroundProjectionRows(fb);
+  if(!fa.length && !fb.length){
+    cmpGroundNoteHtml = "BBox ground: <b>no frame events</b> in either log. Re-run missions with current FSM (frame snapshots on ticks).";
+  } else if(!na && !nb){
+    const hA = (fa[0] && fa[0].ground_projection_note) ? ` A: ${fa[0].ground_projection_note}` : "";
+    const hB = (fb[0] && fb[0].ground_projection_note) ? ` B: ${fb[0].ground_projection_note}` : "";
+    cmpGroundNoteHtml = "BBox ground: frames exist but <b>no footprints</b> (need <code>frame</code> + detections + <code>drone_state</code> with GPS and <code>altitude_rel_home</code> &gt; 0)."+hA+hB;
+  } else {
+    cmpGroundNoteHtml = `BBox ground: Mission A <b>${na}</b> detection footprint(s), Mission B <b>${nb}</b> (filtered projections).`;
+  }
+  cmpBboxLayerA = SdMap.compareFilteredGroup(fa, "#4a9eff", "A", escCmp);
+  cmpBboxLayerB = SdMap.compareFilteredGroup(fb, "#ff9a4a", "B", escCmp);
+  cmpBboxLayerA.addTo(cmpMap);
+  cmpBboxLayerB.addTo(cmpMap);
+  renderCmpBboxNotes();
+  updateCmpBboxLegendVisibility();
+}
+
+async function applyCmpCameraFrame(){
+  const midA = document.getElementById("selA").value;
+  const midB = document.getElementById("selB").value;
+  const on = document.getElementById("cmpCameraFrame")?.checked;
+  if(!cmpMap) return;
+  if(cmpCameraFrameA){ try{ cmpMap.removeLayer(cmpCameraFrameA); }catch(e){} cmpCameraFrameA=null; }
+  if(cmpCameraFrameB){ try{ cmpMap.removeLayer(cmpCameraFrameB); }catch(e){} cmpCameraFrameB=null; }
+  cmpCameraNoteHtml = "";
+  if(!on || !midA || !midB){
+    renderCmpBboxNotes();
+    updateCmpBboxLegendVisibility();
+    return;
+  }
+  const fovQs = () => {
+    const q = new URLSearchParams({ stride: String(CAMERA_FOV_STRIDE) });
+    if (String(CAMERA_FOV_STATES).trim()) q.set("states", String(CAMERA_FOV_STATES).trim());
+    return q.toString();
+  };
+  const [da, db] = await Promise.all([
+    api(`/missions/${midA}/camera_fov_footprints?${fovQs()}`),
+    api(`/missions/${midB}/camera_fov_footprints?${fovQs()}`),
+  ]);
+  const ra = da.polygons || [], rb = db.polygons || [];
+  const na = SdMap.countCameraFovFootprintRows(ra), nb = SdMap.countCameraFovFootprintRows(rb);
+  const stride = da.stride != null ? da.stride : CAMERA_FOV_STRIDE;
+  if(!na && !nb){
+    cmpCameraNoteHtml = "Camera frame overlay: <b>no FOV footprints</b> — need <code>fsm_tick</code> with <code>drone_state</code> and <code>altitude_rel_home</code> &gt; 0.";
+  } else {
+    cmpCameraNoteHtml = `Camera frame overlay: Mission A <b>${na}</b> yellow FOV polygon(s), Mission B <b>${nb}</b> (<code>fsm_tick</code> stride <b>${stride}</b>).`;
+  }
+  cmpCameraFrameA = SdMap.compareCameraFovFootprintGroup(ra, "A", escCmp);
+  cmpCameraFrameB = SdMap.compareCameraFovFootprintGroup(rb, "B", escCmp);
+  cmpCameraFrameA.addTo(cmpMap);
+  cmpCameraFrameB.addTo(cmpMap);
+  renderCmpBboxNotes();
+  updateCmpBboxLegendVisibility();
+}
+
+function initMap(){
+  if(cmpMap){ cmpMap.remove(); cmpMap=null; }
+  cmpMap = L.map("cmpMap", { maxZoom: SdMap.MAP_MAX_ZOOM });
+  SdMap.ensureDetectionUnderlay(cmpMap);
+  L.tileLayer({{ tile_osm_url|tojson }},
+    SdMap.mapTileOpts({ attribution:"© OpenStreetMap", maxNativeZoom: SdMap.OSM_NATIVE_MAX_ZOOM })
+  ).addTo(cmpMap);
+}
+
+async function runCompare(){
+  const midA  = document.getElementById("selA").value;
+  const midB  = document.getElementById("selB").value;
+  let truth = document.getElementById("selTruth").value;
+  if(!midA||!midB){ alert("Select both missions first."); return; }
+  if(midA===midB){ alert("Select two different missions."); return; }
+
+  document.getElementById("loadingMsg").classList.remove("d-none");
+  document.getElementById("errorMsg").classList.add("d-none");
+  document.getElementById("results").classList.add("d-none");
+
+  try {
+    const [sumA,sumB,tlA,tlB,predsA,predsB,pathA,pathB,sprayA,sprayB] = await Promise.all([
+      api(`/missions/${midA}/summary`),
+      api(`/missions/${midB}/summary`),
+      api(`/missions/${midA}/timeline`),
+      api(`/missions/${midB}/timeline`),
+      api(`/missions/${midA}/weeds/pred?dedup=1`),
+      api(`/missions/${midB}/weeds/pred?dedup=1`),
+      api(`/missions/${midA}/path?stride=1`),
+      api(`/missions/${midB}/path?stride=1`),
+      api(`/missions/${midA}/spray`),
+      api(`/missions/${midB}/spray`),
+    ]);
+
+    // Determine truth file per mission: manual selection overrides, else each mission's own
+    const manualTruth = document.getElementById("selTruth").value;
+    const truthA = manualTruth || sumA.sim_truth_file || "";
+    const truthB = manualTruth || sumB.sim_truth_file || "";
+    // Update dropdown if both use the same auto-detected file
+    if(!manualTruth && truthA && truthA === truthB)
+      document.getElementById("selTruth").value = truthA;
+
+    // accuracy — each mission uses its own truth file
+    let accA=null, accB=null, truthPtsA=[], truthPtsB=[];
+    const [cmpResA, cmpResB] = await Promise.all([
+      truthA ? api(`/missions/${midA}/sim_compare?truth=${encodeURIComponent(truthA)}&thresh_m=0.5`).catch(()=>null) : Promise.resolve(null),
+      truthB ? api(`/missions/${midB}/sim_compare?truth=${encodeURIComponent(truthB)}&thresh_m=0.5`).catch(()=>null) : Promise.resolve(null),
+    ]);
+    if(cmpResA){ accA=cmpResA.stats; truthPtsA=cmpResA.truth_points||[]; }
+    if(cmpResB){ accB=cmpResB.stats; truthPtsB=cmpResB.truth_points||[]; }
+
+    renderSummaryCards(midA, midB, sumA, sumB);
+    await renderMap(pathA, pathB, predsA, predsB, truthPtsA, truthPtsB, truthA===truthB, sprayA, sprayB);
+    renderFsmChart(midA, midB, tlA.summary, tlB.summary);
+    renderEvChart(midA, midB, sumA.event_counts, sumB.event_counts);
+    renderStatsTable(midA, midB, sumA, sumB, tlA.summary, tlB.summary);
+    if(accA || accB){
+      renderAccuracy(midA, midB, accA, accB, truthA, truthB);
+      document.getElementById("accuracyCard").classList.remove("d-none");
+    } else {
+      document.getElementById("accuracyCard").classList.add("d-none");
+    }
+
+    document.getElementById("results").classList.remove("d-none");
+    if(cmpMap) cmpMap.invalidateSize();
+  } catch(e){
+    document.getElementById("errorMsg").textContent = "Error: "+e;
+    document.getElementById("errorMsg").classList.remove("d-none");
+  } finally {
+    document.getElementById("loadingMsg").classList.add("d-none");
+  }
+}
+
+// ── summary cards ─────────────────────────────────────────────────────────────
+function renderSummaryCards(midA, midB, sumA, sumB){
+  function card(mid, sum, colorClass){
+    const h = sum.header||{};
+    return `<div class="col-12 col-md-6">
+      <div class="card p-3">
+        <h6 class="${colorClass}">Mission ${mid}
+          <span class="muted" style="font-weight:400;font-size:12px">
+            &nbsp;${h.is_sim?'SIM':'REAL'}</span></h6>
+        <table class="table table-sm stats-tbl mb-0" style="color:#e8edf5">
+          <tr><td>Duration</td>          <td><b>${fmtDur(sum.duration_s)}</b></td></tr>
+          <tr><td>Weed detections</td>   <td><b>${sum.weed_detections}</b></td></tr>
+          <tr><td>Unique weeds</td>      <td><b>${sum.unique_weeds}</b></td></tr>
+          <tr><td>Spray events</td>      <td><b>${sum.spray_events}</b></td></tr>
+          <tr><td>Total events</td>
+              <td><b>${Object.values(sum.event_counts||{}).reduce((a,v)=>a+v,0)}</b></td></tr>
+          ${h.sim_truth_file?`<tr><td>Truth file</td>
+              <td><code style="font-size:11px">${h.sim_truth_file}</code></td></tr>`:""}
+        </table>
+      </div>
+    </div>`;
+  }
+  document.getElementById("summaryRow").innerHTML =
+    card(midA, sumA, "col-a") + card(midB, sumB, "col-b");
+}
+
+// ── map ───────────────────────────────────────────────────────────────────────
+async function renderMap(pathA, pathB, predsA, predsB, truthPtsA, truthPtsB, sameTruth, sprayA, sprayB){
+  initMap();
+  cmpBboxLayerA=null; cmpBboxLayerB=null; cmpCameraFrameA=null; cmpCameraFrameB=null;
+  cmpGroundNoteHtml = ""; cmpCameraNoteHtml = "";
+  const coordsA = pathA.filter(p=>p.lat||p.lon).map(p=>[p.lat,p.lon]);
+  const coordsB = pathB.filter(p=>p.lat||p.lon).map(p=>[p.lat,p.lon]);
+  const pathParts = [];
+  if(coordsA.length) pathParts.push(L.polyline(coordsA,{color:"#4a9eff",weight:2,opacity:0.7}));
+  if(coordsB.length) pathParts.push(L.polyline(coordsB,{color:"#ff9a4a",weight:2,opacity:0.7}));
+  cmpLayerPath = L.layerGroup(pathParts);
+
+  const predMarkers = [];
+  for(const p of predsA)
+    predMarkers.push(L.circleMarker([p.lat,p.lon],{radius:5,color:"#4a9eff",fillColor:"#4a9eff",fillOpacity:0.5,weight:1.5})
+     .bindPopup(`A weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`));
+  for(const p of predsB)
+    predMarkers.push(L.circleMarker([p.lat,p.lon],{radius:5,color:"#ff9a4a",fillColor:"#ff9a4a",fillOpacity:0.5,weight:1.5})
+     .bindPopup(`B weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`));
+  cmpLayerPred = L.layerGroup(predMarkers);
+
+  const truthMarkers = [];
+  const shownTruth = new Set();
+  for(const p of truthPtsA){
+    const key = `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`;
+    const color = sameTruth ? "#ffffff" : "#4a9eff";
+    truthMarkers.push(L.circleMarker([p.lat,p.lon],{radius:7,color,fillColor:"transparent",fillOpacity:0,weight:2})
+     .bindPopup(`Truth weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`));
+    shownTruth.add(key);
+  }
+  if(!sameTruth) for(const p of truthPtsB){
+    const key = `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`;
+    if(shownTruth.has(key)) continue;
+    truthMarkers.push(L.circleMarker([p.lat,p.lon],{radius:7,color:"#ff9a4a",fillColor:"transparent",fillOpacity:0,weight:2})
+     .bindPopup(`Truth weed<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`));
+  }
+  cmpLayerTruth = L.layerGroup(truthMarkers);
+
+  cmpLayerSpray = L.layerGroup([
+    ...SdMap.sprayCircleMarkers(sprayA, "A"),
+    ...SdMap.sprayCircleMarkers(sprayB, "B"),
+  ]);
+
+  syncCmpLayerVisibility();
+
+  let all = [...coordsA,...coordsB,...predsA.map(p=>[p.lat,p.lon]),...predsB.map(p=>[p.lat,p.lon]),...truthPtsA.map(p=>[p.lat,p.lon])];
+  if(!sameTruth) all = all.concat(truthPtsB.map(p=>[p.lat,p.lon]));
+  if(all.length) cmpMap.fitBounds(L.latLngBounds(all),{ padding:[30,30], maxZoom: SdMap.MAP_MAX_ZOOM });
+  else cmpMap.setView([0,0],2);
+  renderCmpBboxNotes();
+  updateCmpBboxLegendVisibility();
+  await Promise.all([
+    document.getElementById("cmpBboxGround")?.checked ? applyCmpBboxGround() : Promise.resolve(),
+    document.getElementById("cmpCameraFrame")?.checked ? applyCmpCameraFrame() : Promise.resolve(),
+  ]);
+}
+
+// ── FSM grouped bar ───────────────────────────────────────────────────────────
+function renderFsmChart(midA, midB, sumA, sumB){
+  const statesA = Object.fromEntries(sumA.map(s=>[s.state,s.total_s]));
+  const statesB = Object.fromEntries(sumB.map(s=>[s.state,s.total_s]));
+  const allStates = [...new Set([...Object.keys(statesA),...Object.keys(statesB)])];
+  allStates.sort();
+  const trA = {
+    name:`Mission ${midA}`, type:"bar",
+    x: allStates, y: allStates.map(s=>statesA[s]||0),
+    marker:{color:"#4a9eff"},
+    hovertemplate:"%{x}<br>%{y:.1f}s<extra>A</extra>",
+  };
+  const trB = {
+    name:`Mission ${midB}`, type:"bar",
+    x: allStates, y: allStates.map(s=>statesB[s]||0),
+    marker:{color:"#ff9a4a"},
+    hovertemplate:"%{x}<br>%{y:.1f}s<extra>B</extra>",
+  };
+  const cc1 = chartColors();
+  Plotly.newPlot("fsmChart",[trA,trB],{
+    paper_bgcolor:cc1.bg, plot_bgcolor:cc1.bg,
+    font:{color:cc1.text}, barmode:"group",
+    xaxis:{gridcolor:cc1.grid,color:cc1.axis},
+    yaxis:{title:"seconds",gridcolor:cc1.grid,color:cc1.axis},
+    legend:{orientation:"h",x:0,y:-0.25},
+    margin:{l:50,r:10,t:10,b:60},
+  },{displayModeBar:false,responsive:true});
+}
+
+// ── event count bar ───────────────────────────────────────────────────────────
+function renderEvChart(midA, midB, evA, evB){
+  const interested = ["telemetry_sample","fsm_tick","fsm_transition",
+                      "move_command","weed_detected","weed_sprayed",
+                      "spray_attempt","spray_miss"];
+  const keys = interested.filter(k=>(evA[k]||0)+(evB[k]||0)>0);
+  const trA={name:`Mission ${midA}`,type:"bar",
+    x:keys,y:keys.map(k=>evA[k]||0),marker:{color:"#4a9eff"},
+    hovertemplate:"%{x}<br>%{y}<extra>A</extra>"};
+  const trB={name:`Mission ${midB}`,type:"bar",
+    x:keys,y:keys.map(k=>evB[k]||0),marker:{color:"#ff9a4a"},
+    hovertemplate:"%{x}<br>%{y}<extra>B</extra>"};
+  const cc2 = chartColors();
+  Plotly.newPlot("evChart",[trA,trB],{
+    paper_bgcolor:cc2.bg, plot_bgcolor:cc2.bg,
+    font:{color:cc2.text}, barmode:"group",
+    xaxis:{gridcolor:cc2.grid,color:cc2.axis,tickangle:-30},
+    yaxis:{gridcolor:cc2.grid,color:cc2.axis},
+    legend:{orientation:"h",x:0,y:-0.35},
+    margin:{l:50,r:10,t:10,b:80},
+  },{displayModeBar:false,responsive:true});
+}
+
+// ── detailed stats table ──────────────────────────────────────────────────────
+function renderStatsTable(midA, midB, sumA, sumB, tlA, tlB){
+  const statesA = Object.fromEntries(tlA.map(s=>[s.state,s]));
+  const statesB = Object.fromEntries(tlB.map(s=>[s.state,s]));
+  const allStates = [...new Set([...Object.keys(statesA),...Object.keys(statesB)])];
+
+  function diff(a,b,higherIsBetter=true){
+    if(a===b) return '<span class="same">→</span>';
+    if((higherIsBetter && b>a)||(!higherIsBetter && b<a))
+      return `<span class="better">▲ ${b>a?"+":""}${typeof a==="number"?(b-a).toFixed(1):""}</span>`;
+    return `<span class="worse">▼ ${typeof a==="number"?(b-a).toFixed(1):""}</span>`;
+  }
+
+  let html = `<thead><tr>
+    <th>Metric</th>
+    <th class="col-a">Mission ${midA}</th>
+    <th class="col-b">Mission ${midB}</th>
+    <th>Δ (B vs A)</th>
+  </tr></thead><tbody>`;
+
+  const rows = [
+    ["Duration",         fmtDur(sumA.duration_s),      fmtDur(sumB.duration_s),      diff(sumA.duration_s,sumB.duration_s,false)],
+    ["Weed detections",  sumA.weed_detections,          sumB.weed_detections,          diff(sumA.weed_detections,sumB.weed_detections,true)],
+    ["Unique weeds",     sumA.unique_weeds,             sumB.unique_weeds,             diff(sumA.unique_weeds,sumB.unique_weeds,true)],
+    ["Spray events",     sumA.spray_events,             sumB.spray_events,             diff(sumA.spray_events,sumB.spray_events,true)],
+  ];
+
+  for(const state of allStates){
+    const sA = statesA[state], sB = statesB[state];
+    const tA = sA?sA.total_s:0, tB = sB?sB.total_s:0;
+    const vA = sA?`${fmtDur(tA)} (${sA.visits} visit${sA.visits!==1?"s":""})`:"—";
+    const vB = sB?`${fmtDur(tB)} (${sB.visits} visit${sB.visits!==1?"s":""})`:"—";
+    const c  = stateColor(state);
+    rows.push([
+      `<span class="badge-state" style="background:${c}22;color:${c};border:1px solid ${c}66">${state}</span>`,
+      vA, vB, sA&&sB ? diff(tA,tB,false) : "—",
+    ]);
+  }
+
+  for(const [label,vA,vB,delta] of rows)
+    html += `<tr><td>${label}</td><td>${vA}</td><td>${vB}</td><td>${delta}</td></tr>`;
+
+  html += "</tbody>";
+  document.getElementById("statsTable").innerHTML = html;
+}
+
+// ── accuracy table ────────────────────────────────────────────────────────────
+function renderAccuracy(midA, midB, accA, accB, truthA, truthB){
+  function fmtPct(v){ return (v*100).toFixed(1)+"%"; }
+  function f1(s){ return (s&&s.precision+s.recall>0) ? 2*s.precision*s.recall/(s.precision+s.recall):0; }
+  function diffPct(a,b){
+    const d = ((b-a)*100).toFixed(1);
+    if(Math.abs(b-a)<0.001) return '<span class="same">→</span>';
+    return b>a ? `<span class="better">▲ +${d}%</span>` : `<span class="worse">▼ ${d}%</span>`;
+  }
+  const na = "—";
+  function val(s, fn){ return s ? fn(s) : na; }
+
+  const diffTruth = truthA && truthB && truthA !== truthB;
+  const truthLabel = diffTruth
+    ? `<span class="col-a">${truthA}</span> / <span class="col-b">${truthB}</span>`
+    : `<code>${truthA || truthB}</code>`;
+
+  let html = `<div class="muted small mb-2">Truth: ${truthLabel} &nbsp; match radius: 0.5 m</div>
+  <table class="table table-sm stats-tbl mb-0" style="color:#e8edf5">
+  <thead><tr>
+    <th>Metric</th>
+    <th class="col-a">Mission ${midA}${diffTruth?` <span class="muted" style="font-size:10px">(${truthA})</span>`:""}</th>
+    <th class="col-b">Mission ${midB}${diffTruth?` <span class="muted" style="font-size:10px">(${truthB})</span>`:""}</th>
+    <th>Δ (B vs A)</th>
+  </tr></thead><tbody>`;
+
+  const rows = [
+    ["Truth weeds",    val(accA,s=>s.truth),      val(accB,s=>s.truth),      na],
+    ["Predictions",    val(accA,s=>s.pred),        val(accB,s=>s.pred),       na],
+    ["True positives", val(accA,s=>s.tp),          val(accB,s=>s.tp),         (accA&&accB)?diffPct(accA.tp/accA.truth,accB.tp/accB.truth):na],
+    ["False positives",val(accA,s=>s.fp),          val(accB,s=>s.fp),         (accA&&accB)?diffPct(accA.fp/(accA.pred||1),accB.fp/(accB.pred||1)):na],
+    ["False negatives",val(accA,s=>s.fn),          val(accB,s=>s.fn),         na],
+    ["Precision",      val(accA,s=>fmtPct(s.precision)), val(accB,s=>fmtPct(s.precision)), (accA&&accB)?diffPct(accA.precision,accB.precision):na],
+    ["Recall",         val(accA,s=>fmtPct(s.recall)),    val(accB,s=>fmtPct(s.recall)),    (accA&&accB)?diffPct(accA.recall,accB.recall):na],
+    ["F1 score",       val(accA,s=>fmtPct(f1(s))),       val(accB,s=>fmtPct(f1(s))),       (accA&&accB)?diffPct(f1(accA),f1(accB)):na],
+  ];
+  for(const [l,a,b,d] of rows)
+    html += `<tr><td>${l}</td><td>${a}</td><td>${b}</td><td>${d}</td></tr>`;
+  html += "</tbody></table>";
+  document.getElementById("accuracyCard").innerHTML = "<h6>Accuracy vs ground truth</h6>" + html;
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+document.getElementById("runBtn").addEventListener("click", ()=>{
+  runCompare().catch(e=>{
+    document.getElementById("errorMsg").textContent="Error: "+e;
+    document.getElementById("errorMsg").classList.remove("d-none");
+    document.getElementById("loadingMsg").classList.add("d-none");
+  });
+});
+
+["cmpLayerPath","cmpLayerPred","cmpLayerTruth","cmpLayerSpray"].forEach(id=>{
+  const el = document.getElementById(id);
+  if(el) el.addEventListener("change", ()=> syncCmpLayerVisibility());
+});
+document.getElementById("cmpBboxGround")?.addEventListener("change", ()=>{
+  applyCmpBboxGround().catch(console.error);
+});
+document.getElementById("cmpCameraFrame")?.addEventListener("change", ()=>{
+  applyCmpCameraFrame().catch(console.error);
+});
+
+// Auto-run if both pre-selected via URL
+const selA = document.getElementById("selA").value;
+const selB = document.getElementById("selB").value;
+if(selA && selB) runCompare();
+</script>
+{% include "partials/sd_theme_script.html" %}
+</body></html>

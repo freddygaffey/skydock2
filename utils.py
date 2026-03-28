@@ -25,7 +25,8 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     R_cam_to_body = np.eye(3)
 
     ray_body = R_cam_to_body @ cam_ray
-    roll,pitch,yaw = drone_state.rotaion_x,drone_state.rotaion_y,drone_state.rotaion_z
+    drone_state.rotaion = drone_state.get_rotation_at_time(detection.time_ns)
+    roll,pitch,yaw = drone_state.rotaion.x,drone_state.rotaion.y,drone_state.rotaion.z
 
     Rx = np.array([
         [1,  0, 0],
