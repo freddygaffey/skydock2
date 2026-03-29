@@ -21,7 +21,7 @@ class Telemetry(object):
         self.drone_state = DroneStateForHoming() 
         # connect to drone
 
-        connection_palths = ["udp:127.0.0.1:14552","/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10",None]
+        connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10",None]
 
         for i in connection_palths:
             try:
