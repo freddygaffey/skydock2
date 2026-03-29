@@ -21,7 +21,7 @@ class Telemetry(object):
         self.drone_state = DroneStateForHoming() 
         # connect to drone
 
-        connection_palths = ["udp:127.0.0.1:14552","/dev/serial/by-id/usb-ArduPilot_MatekH743_3B001C000E51333232383435-if00",None]
+        connection_palths = ["udp:127.0.0.1:14552","/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10",None]
 
         for i in connection_palths:
             try:
@@ -63,7 +63,6 @@ class Telemetry(object):
             if msg is None:
                 time.sleep(0.0003/SIM_SPEED)
                 continue
-            print(msg)
             self.drone_state.set_pass_message(msg)
             # Throttle telemetry logging; high-rate raw logs are noisy.
             now = time.time()
