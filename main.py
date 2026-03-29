@@ -90,7 +90,7 @@ def main():
 
         input("please press enter after takeoff")
 
-        ai_storage_singleton.start_sim_ai()
+        ai_storage_singleton.start_sim_ai(None)
         fsm = StateMachine()
 
         while True:
