@@ -3,7 +3,7 @@ import math
 import os
 
 
-def generate_scan_path(weed_locations, row_spacing_m=25, padding_m=20):
+def generate_scan_path(weed_locations, row_spacing_m=8, padding_m=5):
     """Lawnmower scan path bounding the given weed locations.
 
     weed_locations: list of {"id": int, "lat": float, "lon": float}
