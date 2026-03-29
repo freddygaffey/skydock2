@@ -52,7 +52,7 @@ class Telemetry(object):
         self.set_a_message_interval("GLOBAL_POSITION_INT",drone_state_rate)
         self.set_a_message_interval("DISTANCE_SENSOR",drone_state_rate)
         self.set_a_message_interval("SERVO_OUTPUT_RAW",drone_state_rate)
-        self.set_a_message_interval("ATTITUDE", 1/(200 * SIM_SPEED))
+        self.set_a_message_interval("ATTITUDE", 1/50)
         self.set_a_message_interval("HEARTBEAT", 1/2)
 
         last_log_s = 0.0
