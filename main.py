@@ -61,12 +61,13 @@ def main():
                 while telemetry_singlton.drone_state.latitude == 0 and telemetry_singlton.drone_state.longitude == 0:
                     time.sleep(0.1)
                 print("GPS fix acquired")
-                print("move the drone above each weed and press enter, type 'f' when done")
+                print("move the drone above each weed and press enter, type 'f' when done q to can")
                 weeds = []
                 while True:
                     i = input("> ").strip()
                     if i.lower() == "f":
                         break
+                    if i.lower() == "q": return
                     lat = telemetry_singlton.drone_state.latitude
                     lon = telemetry_singlton.drone_state.longitude
                     weeds.append({"id": len(weeds), "lat": lat, "lon": lon})
