@@ -61,9 +61,9 @@ class Telemetry(object):
                 msg = self.connection.recv_msg()
             except serial.SerialException: pass
             if msg is None:
-                time.sleep(0.003/SIM_SPEED)
+                time.sleep(0.0003/SIM_SPEED)
                 continue
-
+            print(msg)
             self.drone_state.set_pass_message(msg)
             # Throttle telemetry logging; high-rate raw logs are noisy.
             now = time.time()
