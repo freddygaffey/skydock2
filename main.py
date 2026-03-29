@@ -56,6 +56,11 @@ def main():
             else:
                 if input("make a new file? press y: ").lower() != "y":
                     return None
+                import time
+                print("waiting for GPS fix...")
+                while telemetry_singlton.drone_state.latitude == 0 and telemetry_singlton.drone_state.longitude == 0:
+                    time.sleep(0.1)
+                print("GPS fix acquired")
                 print("move the drone above each weed and press enter, type 'f' when done")
                 weeds = []
                 while True:
