@@ -1,5 +1,6 @@
 # from ai_class import ai_storage, Frame, Detection
-from ai_class import ai_storage_singleton, Detection, Frame, frames_dir
+from ai_class import ai_storage_singleton, Detection, Frame
+from mission_logging import get_mission_dir
 
 import threading
 import time
@@ -24,6 +25,11 @@ def frame_saver_thread():
     while True:
         try:
             timestamp_ns, data, width, height = frame_queue.get(timeout=2)
+            mission_dir = get_mission_dir()
+            if mission_dir is None:
+                continue
+            frames_dir = mission_dir / "frames"
+            frames_dir.mkdir(exist_ok=True)
             frame = np.frombuffer(data, dtype=np.uint8).reshape((height, width, 3))
             cv2.imwrite(str(frames_dir / f"{timestamp_ns}.jpg"), frame)
         except queue_module.Empty:
