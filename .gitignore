@@ -1,6 +1,8 @@
 venv_wsl_no_hailo/
 droneDB.db
 backups/
+missions/
+rpi_missions/
 
 # Local map tile caches (optional manual downloads; see tools/download_canberra_osm_tiles.py)
 data/osm_canberra_tiles/
