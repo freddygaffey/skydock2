@@ -38,7 +38,8 @@ class DroneStateForHoming:
     rotaion:Rotation = field(default_factory=lambda: Rotation(0,0,0,0))
     rotaion_history: deque = field(default_factory=lambda: deque(maxlen=10))
 
-    rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, 0 = no data
+    # MAVLink DISTANCE_SENSOR.current_distance is centimeters (common.xml). Convert to metres here.
+    rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, metres; 0 = no data
 
     def set_pass_message(self,msg):
         if msg is None:
@@ -90,7 +91,8 @@ class DroneStateForHoming:
             # self.rotaion_z = 0.0
 
         if msg._type == "DISTANCE_SENSOR":
-            self.rangefinder_m = msg.current_distance / 100.0  # cm to m, co-axial slant range
+            # current_distance is uint16 cm (see MAVLink DISTANCE_SENSOR).
+            self.rangefinder_m = float(msg.current_distance) * 0.01
 
         if msg._type == "ATTITUDE":
             rot = Rotation(
