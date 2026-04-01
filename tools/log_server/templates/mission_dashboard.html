@@ -18,6 +18,10 @@
     #framelist.frame-list-scroll{max-height:min(70vh,560px);overflow-y:auto}
     #frameCanvas{background:var(--sd-input);border:1px solid var(--sd-border);
                  border-radius:6px;max-width:100%;image-rendering:pixelated}
+    #framesDetTimeline{
+      width:100%;height:44px;display:block;border:1px solid var(--sd-border);
+      border-radius:6px;background:var(--sd-input);cursor:pointer
+    }
     .live-badge{display:inline-block;background:#ff4a4a;color:#fff;border-radius:12px;
                 padding:2px 10px;font-size:12px;font-weight:bold;animation:pulse 1s infinite}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
@@ -229,6 +233,13 @@
               </div>
             </div>
             <input type="range" id="framesSlider" class="form-range mt-1" min="0" max="0" value="0" title="Scrub frames">
+            <div class="mt-2">
+              <div class="d-flex justify-content-between">
+                <span class="small muted">Detection timeline (click to jump)</span>
+                <span class="small muted" id="framesDetTimelineHint"></span>
+              </div>
+              <canvas id="framesDetTimeline" width="640" height="44" title="Detection timeline"></canvas>
+            </div>
           </div>
           <div id="framelist" class="card p-0"></div>
         </div>
@@ -982,10 +993,19 @@ async function loadTruth(){
 
 // ═══════════════════════ FSM TIMELINE TAB ═══════════════════════════════════
 let timelineLoaded = false;
+function parseIsoToEpochSeconds(ts){
+  if(!ts) return null;
+  const ms = Date.parse(ts);
+  if(!Number.isFinite(ms)) return null;
+  return ms / 1000;
+}
 async function loadTimeline(){
   if(timelineLoaded) return;
   timelineLoaded = true;
-  const data = await api(`/missions/${MID}/timeline`);
+  const [data, frameEvents] = await Promise.all([
+    api(`/missions/${MID}/timeline`),
+    api(`/missions/${MID}/frame_events`),
+  ]);
   const { segments, summary } = data;
   if(!segments.length){
     document.getElementById("timelineChart").innerHTML =
@@ -1012,6 +1032,35 @@ async function loadTimeline(){
     });
     seen.add(seg.state);
   }
+  const detX = [];
+  const detY = [];
+  const detTxt = [];
+  const detIdx = [];
+  for(let frameIdx=0;frameIdx<(frameEvents||[]).length;frameIdx++){
+    const f = frameEvents[frameIdx];
+    if(!((f.detections||[]).length > 0)) continue;
+    const tsSec = parseIsoToEpochSeconds(f.ts);
+    if(tsSec == null) continue;
+    detX.push(tsSec - t0);
+    detY.push("Detections");
+    detTxt.push(`#${frameIdx} · ${(f.detections||[]).length} detection(s) · ${fmtTs(f.ts)}`);
+    detIdx.push(frameIdx);
+  }
+  if(detX.length){
+    traces.push({
+      type: "scatter",
+      mode: "markers",
+      name: "Detections",
+      legendgroup: "Detections",
+      x: detX,
+      y: detY,
+      text: detTxt,
+      customdata: detIdx,
+      marker: { color: "#ff9a4a", size: 9, symbol: "diamond" },
+      hovertemplate: "%{text}<br>Click to open in Frames tab<extra></extra>",
+      meta: { kind: "detections" },
+    });
+  }
   const cc = chartColors();
   const layout = {
     paper_bgcolor:cc.bg, plot_bgcolor:cc.bg,
@@ -1023,6 +1072,17 @@ async function loadTimeline(){
     margin:{l:140, r:20, t:10, b:70},
   };
   Plotly.newPlot("timelineChart", traces, layout, {displayModeBar:false, responsive:true});
+  const chartEl = document.getElementById("timelineChart");
+  if(chartEl && !chartEl.dataset.detClickBound){
+    chartEl.dataset.detClickBound = "1";
+    chartEl.on("plotly_click", (ev)=>{
+      const p = ev && ev.points && ev.points[0];
+      if(!p || !p.data || !p.data.meta || p.data.meta.kind !== "detections") return;
+      const idx = Number(p.customdata);
+      if(!Number.isFinite(idx)) return;
+      openMissionFrameViewerFromPopup(idx).catch((err)=>console.warn(err));
+    });
+  }
 
   const totalS = summary.reduce((a,s)=>a+s.total_s,0)||1;
   let html = `<table class="table table-sm stats-tbl" style="color:#e8edf5">
@@ -1046,6 +1106,9 @@ async function loadTimeline(){
     </tr>`;
   }
   html += "</tbody></table>";
+  if(detX.length){
+    html += `<div class="muted small mt-2"><span style="color:#ff9a4a">◆</span> Detection markers are clickable and jump to the matching frame.</div>`;
+  }
   document.getElementById("timelineSummary").innerHTML = html;
 }
 
@@ -1058,6 +1121,108 @@ let frameMap = null, frameGroundGrp = null;
 let _activeFrame = null;
 let _frameIndex = 0;
 let _framesNavListenersBound = false;
+let _framesDetTlBound = false;
+let _framesDetThemeObserver = null;
+
+function framesDetTimelineCanvas(){
+  return document.getElementById("framesDetTimeline");
+}
+
+function drawFramesDetTimeline(hoverIdx){
+  const cv = framesDetTimelineCanvas();
+  if(!cv) return;
+  const rootStyle = getComputedStyle(document.documentElement);
+  const bodyStyle = document.body ? getComputedStyle(document.body) : null;
+  const bgCol = (rootStyle.getPropertyValue("--sd-input") || (bodyStyle && bodyStyle.getPropertyValue("--sd-input")) || "#0e1728").trim();
+  const borderCol = (rootStyle.getPropertyValue("--sd-border") || (bodyStyle && bodyStyle.getPropertyValue("--sd-border")) || "#1b2a46").trim();
+  const txtMuted = (rootStyle.getPropertyValue("--sd-muted") || (bodyStyle && bodyStyle.getPropertyValue("--sd-muted")) || "#8fa8c8").trim();
+  const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+  const cssW = cv.clientWidth || 640;
+  const cssH = cv.clientHeight || 44;
+  const w = Math.max(10, Math.floor(cssW * dpr));
+  const h = Math.max(10, Math.floor(cssH * dpr));
+  if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  const ctx = cv.getContext("2d");
+  if(!ctx) return;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle = bgCol;
+  ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle = borderCol;
+  ctx.lineWidth = Math.max(1, dpr);
+  ctx.strokeRect(0.5*dpr, 0.5*dpr, w-dpr, h-dpr);
+  const frames = _frameEvents || [];
+  const n = frames.length;
+  const padX = Math.max(8*dpr, 1);
+  const y0 = Math.floor(h*0.2), y1 = Math.floor(h*0.82);
+  const baseY = Math.floor(h*0.88);
+  ctx.strokeStyle = txtMuted;
+  ctx.lineWidth = Math.max(1, dpr);
+  ctx.beginPath();
+  ctx.moveTo(padX, baseY);
+  ctx.lineTo(w - padX, baseY);
+  ctx.stroke();
+  if(!n) return;
+
+  const maxDet = frames.reduce((m,f)=>Math.max(m, (f.detections||[]).length), 1);
+  const span = Math.max(1, n - 1);
+  for(let i=0;i<n;i++){
+    const detN = (frames[i].detections||[]).length;
+    const x = Math.round(padX + ((w - 2*padX) * (i / span)));
+    const frac = Math.max(0.15, detN / maxDet);
+    const top = Math.round(y1 - (y1 - y0) * frac);
+    const active = i === _frameIndex;
+    const hover = i === hoverIdx;
+    ctx.strokeStyle = active ? "#4adf86" : hover ? "#ffe74a" : "#ff9a4a";
+    ctx.lineWidth = active ? Math.max(2, 2*dpr) : Math.max(1, dpr);
+    ctx.beginPath();
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x, top);
+    ctx.stroke();
+  }
+}
+
+function frameIndexFromTimelineOffset(offsetX){
+  const cv = framesDetTimelineCanvas();
+  if(!cv || !_frameEvents || !_frameEvents.length) return null;
+  const rect = cv.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, offsetX));
+  const n = _frameEvents.length;
+  if(n === 1) return 0;
+  const idx = Math.round((x / Math.max(1, rect.width)) * (n - 1));
+  return Math.max(0, Math.min(n - 1, idx));
+}
+
+function bindFramesDetectionTimelineOnce(){
+  if(_framesDetTlBound) return;
+  _framesDetTlBound = true;
+  const cv = framesDetTimelineCanvas();
+  if(!cv) return;
+  const hint = document.getElementById("framesDetTimelineHint");
+  cv.addEventListener("mousemove", (e)=>{
+    const idx = frameIndexFromTimelineOffset(e.offsetX);
+    if(idx == null) return;
+    const f = _frameEvents[idx];
+    if(hint){
+      hint.textContent = `#${idx} · ${(f.detections||[]).length} det · ${fmtTs(f.ts)}`;
+    }
+    drawFramesDetTimeline(idx);
+  });
+  cv.addEventListener("mouseleave", ()=>{
+    if(hint) hint.textContent = "";
+    drawFramesDetTimeline(null);
+  });
+  cv.addEventListener("click", (e)=>{
+    const idx = frameIndexFromTimelineOffset(e.offsetX);
+    if(idx == null) return;
+    selectFrameIndex(idx);
+  });
+  window.addEventListener("resize", ()=> drawFramesDetTimeline(null));
+  // Redraw immediately when dark/light mode switches.
+  if(!_framesDetThemeObserver){
+    _framesDetThemeObserver = new MutationObserver(()=> drawFramesDetTimeline(null));
+    _framesDetThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  }
+}
 
 function renderFrameGround(f){
   const noteEl = document.getElementById("frameGroundNote");
@@ -1158,6 +1323,7 @@ function framesNavUpdateUi(){
   const next = document.getElementById("framesNext");
   if(prev) prev.disabled = n === 0 || _frameIndex <= 0;
   if(next) next.disabled = n === 0 || _frameIndex >= max;
+  drawFramesDetTimeline(null);
 }
 
 function selectFrameIndex(i){
@@ -1258,6 +1424,7 @@ async function loadFrames(){
       }
       if(nav) nav.classList.remove("d-none");
       bindFramesNavOnce();
+      bindFramesDetectionTimelineOnce();
       frames.forEach((f,i)=>{
         const div = document.createElement("div");
         div.className = "frame-item";
