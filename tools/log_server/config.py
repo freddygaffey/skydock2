@@ -47,8 +47,6 @@ def data_paths() -> tuple[Path, Path]:
     return sim, missions
 
 
-def tile_cache_dir() -> Path:
-    """Disk cache for OSM/Esri tiles (see routes_web tile_cache_*)."""
+def rpi_missions_root() -> Path:
     root = project_root()
-    p = Path(os.environ.get("SKYDOCK_TILE_CACHE_DIR", str(root / "data" / "tile_cache")))
-    return p
+    return Path(os.environ.get("SKYDOCK_RPI_MISSIONS_DIR", str(root / "rpi_missions")))

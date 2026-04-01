@@ -21,7 +21,11 @@
       <div class="muted small">Select two missions to compare side-by-side</div>
     </div>
     <div class="d-flex gap-2 align-items-center">
-      <a href="{{ url_for('log_web.missions_list') }}" class="btn btn-sm btn-outline-secondary">&#9776; All missions</a>
+      <select id="cmpSrcSelect" class="form-select form-select-sm" style="width:auto" title="Mission source">
+        <option value="sim" {% if src == 'sim' %}selected{% endif %}>Sim</option>
+        <option value="rpi" {% if src == 'rpi' %}selected{% endif %}>Real (RPi)</option>
+      </select>
+      <a href="{{ url_for('log_web.missions_list', src=src) }}" class="btn btn-sm btn-outline-secondary">&#9776; All missions</a>
       <button id="themeBtn"></button>
     </div>
   </div>
@@ -98,6 +102,20 @@
         <span class="d-none" id="cmpBboxLegend"><span style="color:#4a9eff">▢</span> A ground &nbsp; <span style="color:#ff9a4a">▢</span> B ground</span>
         <span class="d-none" id="cmpCameraLegend"><span style="color:#4a9eff">■</span> SCAN <span style="color:#bf4aff">■</span> GOTO <span style="color:#ff9a4a">■</span> HOMING <span style="color:#4adf86">■</span> SPRAY …</span>
       </div>
+      <div class="small mb-2 text-muted" id="cmpCamFovStateWrap">
+        <span class="me-1">Camera FOV — FSM states:</span>
+        <span class="d-inline-flex flex-wrap gap-2 gap-sm-3 align-items-center">
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="SCAN" checked><span style="color:#4a9eff">SCAN</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="GOTO" checked><span style="color:#bf4aff">GOTO</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="HOMING" checked><span style="color:#ff9a4a">HOMING</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="SPRAY" checked><span style="color:#4adf86">SPRAY</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="RTL" checked><span style="color:#ff4a4a">RTL</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="OVERRIDE" checked><span style="color:#9fb0c7">OVERRIDE</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="DONE" checked><span style="color:#6b8899">DONE</span></label>
+          <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cmp-cam-fov-state-cb" value="LAND" checked><span style="color:#ff6b6b">LAND</span></label>
+        </span>
+        <span class="d-block mt-1" style="font-size:10px;opacity:0.9">Uncheck to hide a mode. All checked = every mode. None checked = no FOV.</span>
+      </div>
       <div id="cmpMap"></div>
       <div id="cmpBboxNote" class="muted small mt-2 d-none" style="min-height:1.3em"></div>
     </div>
@@ -144,17 +162,52 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+const SRC = {{ src_json | safe }};
 const STATE_COLORS = {
   SCAN:"#4a9eff", SPRAY:"#4adf86", HOMING:"#ff9a4a",
   GOTO:"#bf4aff", OVERRIDE:"#9fb0c7", LAND:"#ff4a4a",
 };
 function stateColor(s){ return STATE_COLORS[s]||"#7db3ff"; }
-async function api(url){ const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function api(url){
+  const sep = url.includes("?") ? "&" : "?";
+  const u = url.startsWith("/missions/") ? url + sep + "src=" + encodeURIComponent(SRC) : url;
+  const r = await fetch(u);
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
 function fmtDur(s){ const m=Math.floor(s/60),sec=Math.round(s%60); return m?`${m}m ${sec}s`:`${sec}s`; }
 function pct(v,t){ return t?((v/t)*100).toFixed(1)+"%" : "—"; }
 
-const CAMERA_FOV_STRIDE = 1;
-const CAMERA_FOV_STATES = "";
+const CAMERA_FOV_STRIDE = 8;
+let _cmpFovFilterDebounce = null;
+/** Full FOV API payloads for current pair; FSM toggles filter client-side only. */
+let _cmpFovCamCache = null;
+
+function getCmpCamFovStatesParam(){
+  const all = document.querySelectorAll(".cmp-cam-fov-state-cb");
+  const checked = document.querySelectorAll(".cmp-cam-fov-state-cb:checked");
+  if(!all.length) return null;
+  if(checked.length === 0) return "__NONE__";
+  if(checked.length === all.length) return null;
+  return Array.from(checked).map(cb=>cb.value).join(",");
+}
+function cmpCamFovDisplayStatesFilter(){
+  const p = getCmpCamFovStatesParam();
+  if(p === null) return null;
+  if(p === "__NONE__") return [];
+  return p.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean).sort();
+}
+function filterCmpCamFovPolygonsByStatesParam(rows, param){
+  if(!rows || !rows.length) return [];
+  if(param === null) return rows.slice();
+  if(param === "__NONE__") return [];
+  const set = new Set(param.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean));
+  return rows.filter(r=>{
+    const st = (r.state && String(r.state).toUpperCase()) || "";
+    if(!st) return false;
+    return set.has(st);
+  });
+}
 
 let cmpMap=null;
 let cmpLayerPath=null, cmpLayerPred=null, cmpLayerTruth=null, cmpLayerSpray=null;
@@ -232,8 +285,8 @@ async function applyCmpBboxGround(){
   } else {
     cmpGroundNoteHtml = `BBox ground: Mission A <b>${na}</b> detection footprint(s), Mission B <b>${nb}</b> (filtered projections).`;
   }
-  cmpBboxLayerA = SdMap.compareFilteredGroup(fa, "#4a9eff", "A", escCmp);
-  cmpBboxLayerB = SdMap.compareFilteredGroup(fb, "#ff9a4a", "B", escCmp);
+  cmpBboxLayerA = SdMap.compareFilteredGroup(fa, "#4a9eff", "A", escCmp, { missionId: midA, src: SRC });
+  cmpBboxLayerB = SdMap.compareFilteredGroup(fb, "#ff9a4a", "B", escCmp, { missionId: midB, src: SRC });
   cmpBboxLayerA.addTo(cmpMap);
   cmpBboxLayerB.addTo(cmpMap);
   renderCmpBboxNotes();
@@ -245,43 +298,62 @@ async function applyCmpCameraFrame(){
   const midB = document.getElementById("selB").value;
   const on = document.getElementById("cmpCameraFrame")?.checked;
   if(!cmpMap) return;
-  if(cmpCameraFrameA){ try{ cmpMap.removeLayer(cmpCameraFrameA); }catch(e){} cmpCameraFrameA=null; }
-  if(cmpCameraFrameB){ try{ cmpMap.removeLayer(cmpCameraFrameB); }catch(e){} cmpCameraFrameB=null; }
   cmpCameraNoteHtml = "";
   if(!on || !midA || !midB){
+    if(cmpCameraFrameA){ try{ cmpMap.removeLayer(cmpCameraFrameA); }catch(e){} cmpCameraFrameA=null; }
+    if(cmpCameraFrameB){ try{ cmpMap.removeLayer(cmpCameraFrameB); }catch(e){} cmpCameraFrameB=null; }
+    _cmpFovCamCache = null;
     renderCmpBboxNotes();
     updateCmpBboxLegendVisibility();
     return;
   }
-  const fovQs = () => {
-    const q = new URLSearchParams({ stride: String(CAMERA_FOV_STRIDE) });
-    if (String(CAMERA_FOV_STATES).trim()) q.set("states", String(CAMERA_FOV_STATES).trim());
-    return q.toString();
-  };
-  const [da, db] = await Promise.all([
-    api(`/missions/${midA}/camera_fov_footprints?${fovQs()}`),
-    api(`/missions/${midB}/camera_fov_footprints?${fovQs()}`),
-  ]);
-  const ra = da.polygons || [], rb = db.polygons || [];
+  const needFetch = !_cmpFovCamCache || _cmpFovCamCache.midA !== midA || _cmpFovCamCache.midB !== midB || _cmpFovCamCache.src !== SRC;
+  const fovQs = new URLSearchParams({ stride: String(CAMERA_FOV_STRIDE) }).toString();
+  if(needFetch){
+    const [da, db] = await Promise.all([
+      api(`/missions/${midA}/camera_fov_footprints?${fovQs}`),
+      api(`/missions/${midB}/camera_fov_footprints?${fovQs}`),
+    ]);
+    _cmpFovCamCache = { midA, midB, src: SRC, da, db };
+  }
+  const { da, db } = _cmpFovCamCache;
+  const param = getCmpCamFovStatesParam();
+  const ra = filterCmpCamFovPolygonsByStatesParam(da.polygons || [], param);
+  const rb = filterCmpCamFovPolygonsByStatesParam(db.polygons || [], param);
+  const rawA = (da.polygons || []).length, rawB = (db.polygons || []).length;
   const na = SdMap.countCameraFovFootprintRows(ra), nb = SdMap.countCameraFovFootprintRows(rb);
   const stride = da.stride != null ? da.stride : CAMERA_FOV_STRIDE;
+  const sf = cmpCamFovDisplayStatesFilter();
+  const filtNote = sf && sf.length
+    ? ` · FSM filter <code>${sf.join(",")}</code>`
+    : "";
   if(!na && !nb){
-    cmpCameraNoteHtml = "Camera frame overlay: <b>no FOV footprints</b> — need <code>fsm_tick</code> with <code>drone_state</code> and <code>altitude_rel_home</code> &gt; 0.";
+    if(sf && sf.length === 0 && (rawA || rawB)){
+      cmpCameraNoteHtml = "Camera frame overlay: <b>no FOV</b> — select at least one FSM mode.";
+    } else {
+      cmpCameraNoteHtml = "Camera frame overlay: <b>no FOV footprints</b> — need <code>fsm_tick</code> with <code>drone_state</code> and <code>altitude_rel_home</code> &gt; 0.";
+    }
   } else {
-    cmpCameraNoteHtml = `Camera frame overlay: Mission A <b>${na}</b> yellow FOV polygon(s), Mission B <b>${nb}</b> (<code>fsm_tick</code> stride <b>${stride}</b>).`;
+    cmpCameraNoteHtml = `Camera frame overlay: Mission A <b>${na}</b> yellow FOV polygon(s), Mission B <b>${nb}</b> (<code>fsm_tick</code> stride <b>${stride}</b>)${filtNote}.`;
   }
-  cmpCameraFrameA = SdMap.compareCameraFovFootprintGroup(ra, "A", escCmp);
-  cmpCameraFrameB = SdMap.compareCameraFovFootprintGroup(rb, "B", escCmp);
+  const nextA = SdMap.compareCameraFovFootprintGroup(ra, "A", escCmp);
+  const nextB = SdMap.compareCameraFovFootprintGroup(rb, "B", escCmp);
+  const prevA = cmpCameraFrameA, prevB = cmpCameraFrameB;
+  cmpCameraFrameA = nextA;
+  cmpCameraFrameB = nextB;
   cmpCameraFrameA.addTo(cmpMap);
   cmpCameraFrameB.addTo(cmpMap);
+  if(prevA) try{ cmpMap.removeLayer(prevA); }catch(e){}
+  if(prevB) try{ cmpMap.removeLayer(prevB); }catch(e){}
   renderCmpBboxNotes();
   updateCmpBboxLegendVisibility();
 }
 
 function initMap(){
   if(cmpMap){ cmpMap.remove(); cmpMap=null; }
-  cmpMap = L.map("cmpMap", { maxZoom: SdMap.MAP_MAX_ZOOM });
+  cmpMap = L.map("cmpMap", { maxZoom: SdMap.MAP_MAX_ZOOM, preferCanvas: true });
   SdMap.ensureDetectionUnderlay(cmpMap);
+  SdMap.attachMapDetectionPopupPainter(cmpMap);
   L.tileLayer({{ tile_osm_url|tojson }},
     SdMap.mapTileOpts({ attribution:"© OpenStreetMap", maxNativeZoom: SdMap.OSM_NATIVE_MAX_ZOOM })
   ).addTo(cmpMap);
@@ -306,8 +378,8 @@ async function runCompare(){
       api(`/missions/${midB}/timeline`),
       api(`/missions/${midA}/weeds/pred?dedup=1`),
       api(`/missions/${midB}/weeds/pred?dedup=1`),
-      api(`/missions/${midA}/path?stride=1`),
-      api(`/missions/${midB}/path?stride=1`),
+      api(`/missions/${midA}/path?stride=1&source=fsm`),
+      api(`/missions/${midB}/path?stride=1&source=fsm`),
       api(`/missions/${midA}/spray`),
       api(`/missions/${midB}/spray`),
     ]);
@@ -592,6 +664,25 @@ document.getElementById("cmpBboxGround")?.addEventListener("change", ()=>{
 });
 document.getElementById("cmpCameraFrame")?.addEventListener("change", ()=>{
   applyCmpCameraFrame().catch(console.error);
+});
+document.querySelectorAll(".cmp-cam-fov-state-cb").forEach(cb=>{
+  cb.addEventListener("change", ()=>{
+    if(!document.getElementById("cmpCameraFrame")?.checked) return;
+    if(_cmpFovFilterDebounce) clearTimeout(_cmpFovFilterDebounce);
+    _cmpFovFilterDebounce = setTimeout(()=>{
+      applyCmpCameraFrame().catch(console.error);
+    }, 0);
+  });
+});
+
+// Switch Sim / Real (RPi): keep selected missions in query when possible
+document.getElementById("cmpSrcSelect")?.addEventListener("change", function(){
+  const a = document.getElementById("selA").value;
+  const b = document.getElementById("selB").value;
+  const q = new URLSearchParams({ src: this.value });
+  if(a) q.set("a", a);
+  if(b) q.set("b", b);
+  window.location.search = q.toString();
 });
 
 // Auto-run if both pre-selected via URL

@@ -5,10 +5,7 @@ missions/
 rpi_missions/
 
 # Local map tile caches (optional manual downloads; see tools/download_canberra_osm_tiles.py)
-data/osm_canberra_tiles/
-data/esri_canberra_tiles/
-# Log server fetch-through tile cache (see tools/log_server/services/tile_cache.py)
-data/tile_cache/
+data/
 
 
 # Byte-compiled / optimized / DLL files

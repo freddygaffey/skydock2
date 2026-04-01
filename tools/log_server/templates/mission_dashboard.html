@@ -9,7 +9,8 @@
   <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
   {% include "partials/sd_theme_style.html" %}
   <style>
-    #map{height:72vh;min-height:560px;max-height:860px;border-radius:8px}
+    /* Tall map; wheel over map zooms map instead of scrolling the page (see initMap) */
+    #map{height:min(86vh,calc(100vh - 200px));min-height:620px;border-radius:8px}
     #framelist{height:480px;overflow-y:auto}
     .frame-item{cursor:pointer;padding:8px 10px;border-bottom:1px solid var(--sd-border);font-size:12px}
     .frame-item:hover{background:var(--sd-input)}
@@ -26,20 +27,22 @@
     }
   </style>
 </head><body>
-<div class="container-fluid py-3" style="max-width:1400px">
+<div class="container-fluid py-3 px-2 px-md-3" style="max-width:min(1800px,100%)">
 
   <!-- header -->
   <div class="d-flex align-items-start justify-content-between mb-3 flex-wrap gap-2">
     <div>
       <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
         {% if prev_mission_id %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.mission_dashboard', mission_id=prev_mission_id) }}" title="Previous mission">&#8592;</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.mission_dashboard', mission_id=prev_mission_id, src=src) }}" title="Previous mission">&#8592;</a>
         {% else %}
         <span class="btn btn-sm btn-outline-secondary disabled" style="pointer-events:none;opacity:0.45" aria-disabled="true" title="No previous mission">&#8592;</span>
         {% endif %}
-        <h2 class="mb-0">Mission {{ mission_id }}</h2>
+        <h2 class="mb-0">Mission {{ mission_id }}
+          <span class="badge {% if src == 'rpi' %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-1" style="font-size:0.5em;vertical-align:middle">{{ 'Real' if src == 'rpi' else 'Sim' }}</span>
+        </h2>
         {% if next_mission_id %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.mission_dashboard', mission_id=next_mission_id) }}" title="Next mission">&#8594;</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.mission_dashboard', mission_id=next_mission_id, src=src) }}" title="Next mission">&#8594;</a>
         {% else %}
         <span class="btn btn-sm btn-outline-secondary disabled" style="pointer-events:none;opacity:0.45" aria-disabled="true" title="No next mission">&#8594;</span>
         {% endif %}
@@ -49,7 +52,7 @@
     </div>
     <div class="d-flex gap-2 align-items-center">
       <button id="liveBtn" class="btn btn-sm btn-outline-danger">&#9679; Live</button>
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.compare_page') }}">← Home</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.missions_list', src=src) }}">← Home</a>
       <button id="themeBtn"></button>
     </div>
   </div>
@@ -84,6 +87,9 @@
     </li>
     <li class="nav-item">
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabFrameReview">Frame Review</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabVideo" id="videoTabBtn">Video</button>
     </li>
   </ul>
 
@@ -130,11 +136,56 @@
             <input class="form-check-input" type="checkbox" id="layerBboxGround">
             <label class="form-check-label small" for="layerBboxGround" title="Projected bbox outline + red center per detection">BBox ground</label>
           </div>
-          <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="checkbox" id="layerCameraFrame">
-            <label class="form-check-label small" for="layerCameraFrame" title="Camera FOV on the ground (yellow dashed): one polygon per fsm_tick’s drone_state (~control-loop rate), same projection as utils.detection_to_latlon. Use stride in the page script if the map is slow.">Camera frame overlay</label>
+          <div class="form-check form-switch form-check-inline mb-0 align-items-center">
+            <input class="form-check-input" type="checkbox" id="layerCameraFrame" role="switch">
+            <label class="form-check-label small" for="layerCameraFrame" title="Off by default. Turn on to load FOV footprints (same projection as utils.detection_to_latlon).">Camera FOV</label>
           </div>
           <button id="tileToggle" class="btn btn-sm btn-outline-secondary">Satellite</button>
+        </div>
+      </div>
+      <div class="mb-2">
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#cameraFovSettings" role="button" aria-expanded="true" aria-controls="cameraFovSettings" id="cameraFovSettingsLink">Camera FOV options…</a>
+        <div class="collapse show mt-2" id="cameraFovSettings">
+          <div class="card card-body py-2 px-3 small border">
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-sm-6 col-lg-3">
+                <label class="form-label muted mb-0" for="camFovStride" title="Each FSM tick can contribute a footprint; stride N keeps every Nth tick (1 = all ticks).">Stride (every Nth tick)</label>
+                <input type="range" id="camFovStride" class="form-range" min="1" max="32" value="8" title="1 = every tick; higher = fewer footprints and less load">
+                <div class="text-muted" style="font-size:11px"><span id="camFovStrideVal">8</span> — FOV data refetched when you change this</div>
+              </div>
+              <div class="col-12 col-sm-6 col-lg-3">
+                <label class="form-label muted mb-0" for="camFovFill">Fill opacity</label>
+                <input type="range" id="camFovFill" class="form-range" min="0" max="100" value="12">
+                <div class="text-muted" style="font-size:11px"><span id="camFovFillVal">12</span>%</div>
+              </div>
+              <div class="col-12 col-sm-6 col-lg-3">
+                <label class="form-label muted mb-0" for="camFovStroke" title="Optional quad edges; leave at 0 for fill-only (avoids clutter when many footprints overlap).">Stroke opacity</label>
+                <input type="range" id="camFovStroke" class="form-range" min="0" max="100" value="0">
+                <div class="text-muted" style="font-size:11px"><span id="camFovStrokeVal">0</span>%</div>
+              </div>
+              <div class="col-12 col-sm-6 col-lg-3 d-flex align-items-center">
+                <div class="form-check mb-0">
+                  <input class="form-check-input" type="checkbox" id="camFovOuterHull">
+                  <label class="form-check-label" for="camFovOuterHull" title="One convex outline around all camera corners instead of each frame quad">Outer hull only</label>
+                </div>
+              </div>
+              <div class="col-12 mt-2 pt-2 border-top border-secondary border-opacity-25">
+                <div class="muted small mb-1">FSM states (camera FOV)</div>
+                <div class="d-flex flex-wrap gap-2 gap-sm-3 align-items-center small" id="camFovStateFilters">
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="SCAN" checked><span style="color:#4a9eff">SCAN</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="GOTO" checked><span style="color:#bf4aff">GOTO</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="HOMING" checked><span style="color:#ff9a4a">HOMING</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="SPRAY" checked><span style="color:#4adf86">SPRAY</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="RTL" checked><span style="color:#ff4a4a">RTL</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="OVERRIDE" checked><span style="color:#9fb0c7">OVERRIDE</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="DONE" checked><span style="color:#6b8899">DONE</span></label>
+                  <label class="form-check form-check-inline mb-0"><input type="checkbox" class="form-check-input cam-fov-state-cb" value="LAND" checked><span style="color:#ff6b6b">LAND</span></label>
+                </div>
+                <p class="text-muted mb-0 mt-1" style="font-size:10px;max-width:52rem">Uncheck a mode to hide it. All checked = show every FSM mode. None checked = hide all FOV footprints.</p>
+              </div>
+            </div>
+            <p class="text-muted mb-0 mt-1" style="font-size:11px;max-width:52rem">Increase stride if the FOV overlay makes the map sluggish.</p>
+          </div>
         </div>
       </div>
       <div id="mapInfoLine" class="muted small mb-2" style="min-height:1.3em"></div>
@@ -149,7 +200,8 @@
         <span style="color:#4adf86">■</span> SPRAY
         <span style="color:#ff4a4a">■</span> RTL
         <span style="color:#9fb0c7">■</span> OVERRIDE
-        <span class="small">· set <code>CAMERA_FOV_STATES</code> (e.g. <code>SCAN</code>) to filter</span>
+        <span style="color:#6b8899">■</span> DONE
+        <span style="color:#ff6b6b">■</span> LAND
       </div>
       <div id="mapStats" class="muted small mt-2" style="min-height:1.4em"></div>
     </div>
@@ -278,6 +330,34 @@
       </div>
     </div>
 
+    <!-- ── VIDEO ─────────────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tabVideo">
+      <div class="row justify-content-center mt-3">
+        <div class="col-12 col-lg-10">
+          <div id="videoGenerating" class="alert alert-info d-none">
+            <div class="d-flex align-items-center gap-2">
+              <div class="spinner-border spinner-border-sm"></div>
+              <span class="video-gen-msg">Generating video… this may take a minute. Checking every 3s.</span>
+            </div>
+          </div>
+          <div id="videoNotFound" class="alert alert-secondary d-none">
+            <span id="videoNotFoundMsg">Video not found.</span>
+            <button type="button" id="generateVideoBtn" class="btn btn-sm btn-primary ms-2">Generate video</button>
+            <div id="videoGenError" class="text-danger small mt-2 d-none" role="alert"></div>
+          </div>
+          <video id="missionVideo" class="d-none" controls style="width:100%;border-radius:8px;background:#000;max-height:min(80vh,720px)" preload="metadata">
+            Your browser does not support the video tag.
+          </video>
+          <div id="videoPlaybackControls" class="mt-2 d-none align-items-center gap-2 flex-wrap">
+            <span class="muted small">Speed:</span>
+            <input id="speedSlider" type="range" min="-2" max="2" step="1" value="0"
+                   style="width:140px;accent-color:var(--sd-accent)">
+            <span id="speedLabel" class="small" style="min-width:3em">1×</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div><!-- /tab-content -->
 </div><!-- /container -->
 
@@ -287,6 +367,7 @@
 const MID       = {{ mission_id_json | safe }};
 const SIM_FILES = {{ sim_files_json | safe }};
 const AUTO_TRUTH = {{ auto_truth_json | safe }};
+const SRC       = {{ src_json | safe }};
 
 // ── colour helpers ───────────────────────────────────────────────────────────
 const STATE_COLORS = {
@@ -305,7 +386,9 @@ function escHtml(s){
 
 // ── fetch / format helpers ───────────────────────────────────────────────────
 async function api(path){
-  const r = await fetch(path);
+  const sep = path.includes('?') ? '&' : '?';
+  const url = path.startsWith('/missions/') ? path + sep + 'src=' + encodeURIComponent(SRC) : path;
+  const r = await fetch(url);
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -361,7 +444,7 @@ function updateMapInfoLine(){
   const alt = (i.altitude_rel_m_min!=null)
     ? `${i.altitude_rel_m_min}–${i.altitude_rel_m_max} m`
     : "—";
-  el.innerHTML = `Telemetry <b>${i.telemetry_samples||0}</b> samples · path ~<b>${(i.path_length_m||0).toFixed(1)}</b> m · alt ${alt}`;
+  el.innerHTML = `Telemetry <b>${i.telemetry_samples||0}</b> samples · path length (from log) ~<b>${(i.path_length_m||0).toFixed(1)}</b> m · map line uses FSM GPS · alt ${alt}`;
 }
 
 // ── summary bar ─────────────────────────────────────────────────────────────
@@ -396,16 +479,146 @@ async function loadSummary(){
 let map, layerPath=null, layerPred=null, layerTruth=null, layerSpray=null, layerBboxGround=null, layerCameraFrame=null;
 let osmTile, satTile, usingSat=false;
 const MAP_MAX_ZOOM = SdMap.MAP_MAX_ZOOM;
-const TILE_NATIVE_MAX_ZOOM = SdMap.TILE_NATIVE_MAX_ZOOM;
 const OSM_NATIVE_MAX_ZOOM = SdMap.OSM_NATIVE_MAX_ZOOM;
 const MAP_FIT_OPTS = { padding: [22, 22], maxZoom: MAP_MAX_ZOOM };
-/** Stride for GET /missions/&lt;id&gt;/camera_fov_footprints (one FOV per Nth fsm_tick). Raise (e.g. 3–5) if the browser lags with thousands of polygons. */
-const CAMERA_FOV_STRIDE = 1;
-/** Comma-separated FSM modes to include, or empty string for all. Example: <code>SCAN</code> or <code>SCAN,GOTO</code>. */
-const CAMERA_FOV_STATES = "";
+let _camFovRowsCache = null;
+let _lastCamFovApiResponse = null;
+let _camFovStrideDebounce = null;
+/** Pre-built Leaflet groups per FSM state — instant checkbox toggles (not used with outer hull). */
+let _camFovStateLayerCache = null;
+function getCamFovStatesParam(){
+  const all = document.querySelectorAll(".cam-fov-state-cb");
+  const checked = document.querySelectorAll(".cam-fov-state-cb:checked");
+  if(!all.length) return null;
+  if(checked.length === 0) return "__NONE__";
+  if(checked.length === all.length) return null;
+  return Array.from(checked).map(cb=>cb.value).join(",");
+}
+/** Matches server FSM filter semantics for display notes. */
+function camFovDisplayStatesFilter(){
+  const p = getCamFovStatesParam();
+  if(p === null) return null;
+  if(p === "__NONE__") return [];
+  return p.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean).sort();
+}
+/** Client-side filter; param from <code>getCamFovStatesParam()</code> (same rules as API). */
+function filterCamFovPolygonsByStatesParam(rows, param){
+  if(!rows || !rows.length) return [];
+  if(param === null) return rows.slice();
+  if(param === "__NONE__") return [];
+  const set = new Set(param.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean));
+  return rows.filter(r=>{
+    const st = (r.state && String(r.state).toUpperCase()) || "";
+    if(!st) return false;
+    return set.has(st);
+  });
+}
+function fovSessionCacheKey(){
+  return `fov:${MID}:${SRC}:${getCamFovStride()}:uncapped`;
+}
+function clearCamFovStateLayerCache(){
+  _camFovStateLayerCache = null;
+}
+function camFovStateLayerCacheKey(full){
+  const vis = cameraFovVisualCfg();
+  const rev = (full && full.source_log_rev) || "";
+  return `${rev}|s${getCamFovStride()}|f${vis.fillOpacity}|t${vis.strokeOpacity}`;
+}
+function splitCamFovRowsByState(rows){
+  const out = {};
+  for(const r of rows || []){
+    const st = (r.state && String(r.state).toUpperCase()) || "";
+    if(!st){
+      if(!out.__UNKNOWN__) out.__UNKNOWN__ = [];
+      out.__UNKNOWN__.push(r);
+    } else {
+      if(!out[st]) out[st] = [];
+      out[st].push(r);
+    }
+  }
+  return out;
+}
+async function ensureCamFovStateLayerGroups(full){
+  const vis = cameraFovVisualCfg();
+  const key = camFovStateLayerCacheKey(full);
+  if(_camFovStateLayerCache && _camFovStateLayerCache.key === key) return _camFovStateLayerCache;
+  const rows = full.polygons || [];
+  const byState = splitCamFovRowsByState(rows);
+  const states = Object.keys(byState).filter(k => (byState[k] || []).length);
+  const cfg = {
+    mode: "mission",
+    escHtml,
+    fillOpacity: vis.fillOpacity,
+    strokeOpacity: vis.strokeOpacity,
+    weight: 1,
+    outerHullOnly: false,
+  };
+  const pairs = await Promise.all(states.map(async st => {
+    const { group } = await SdMap.cameraFrameOverlayFromFootprintRowsAsync(byState[st], cfg);
+    return [st, group];
+  }));
+  const groups = {};
+  pairs.forEach(([st, g])=>{ groups[st] = g; });
+  _camFovStateLayerCache = { key, groups, byState };
+  return _camFovStateLayerCache;
+}
+function composeCamFovParentFromStateCache(cache, param, full){
+  const parent = L.layerGroup();
+  const groups = cache.groups;
+  const rowsAll = full.polygons || [];
+  let rowsVisible = [];
+  function addState(st){
+    const g = groups[st];
+    if(!g) return;
+    parent.addLayer(g);
+    rowsVisible = rowsVisible.concat(cache.byState[st] || []);
+  }
+  if(param === null){
+    Object.keys(groups).forEach(addState);
+  } else if(param === "__NONE__"){
+    /* empty */
+  } else {
+    const set = new Set(param.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean));
+    set.forEach(st => addState(st));
+  }
+  const polyCount = SdMap.countCameraFovFootprintRows(rowsVisible);
+  const hasDrawable = parent.getLayers().length > 0;
+  const boundsPts = [];
+  rowsVisible.forEach(r=>{
+    (r.footprint||[]).forEach(q=>{ if(q.lat!=null&&q.lon!=null) boundsPts.push([q.lat,q.lon]); });
+  });
+  return { parent, hasDrawable, polyCount, boundsPts, rowsForNote: rowsVisible };
+}
+
+function getCamFovStride(){
+  const el = document.getElementById("camFovStride");
+  return el ? Math.max(1, parseInt(el.value, 10) || 8) : 8;
+}
+function cameraFovVisualCfg(){
+  const fill = document.getElementById("camFovFill");
+  const stroke = document.getElementById("camFovStroke");
+  const hull = document.getElementById("camFovOuterHull");
+  return {
+    fillOpacity: (fill ? parseInt(fill.value, 10) : 12) / 100,
+    strokeOpacity: (stroke ? parseInt(stroke.value, 10) : 0) / 100,
+    outerHullOnly: !!(hull && hull.checked),
+  };
+}
+function refreshCamFovSliderLabels(){
+  const s = document.getElementById("camFovStride"), sv = document.getElementById("camFovStrideVal");
+  const f = document.getElementById("camFovFill"), fv = document.getElementById("camFovFillVal");
+  const t = document.getElementById("camFovStroke"), tv = document.getElementById("camFovStrokeVal");
+  if(s && sv) sv.textContent = s.value;
+  if(f && fv) fv.textContent = f.value;
+  if(t && tv) tv.textContent = t.value;
+}
 function mapTileOpts(extra){ return SdMap.mapTileOpts(extra); }
 function buildFootprintLayerFromFrames(frames){
-  return SdMap.filteredGroundLayerFromFrames(frames, { mode: "mission", escHtml });
+  return SdMap.filteredGroundLayerFromFrames(frames, {
+    mode: "mission",
+    escHtml,
+    annotatePopups: { missionId: MID, src: SRC },
+  });
 }
 
 async function refreshMissionBboxGroundLayer(){
@@ -443,42 +656,145 @@ async function refreshMissionBboxGroundLayer(){
   return { bounds, hasDrawable };
 }
 
-async function refreshMissionCameraFrameLayer(){
-  if(!map) return { bounds: null, hasDrawable: false };
-  if(layerCameraFrame){ try{ map.removeLayer(layerCameraFrame); }catch(e){} layerCameraFrame=null; }
-  const fovQs = new URLSearchParams({ stride: String(CAMERA_FOV_STRIDE) });
-  if (String(CAMERA_FOV_STATES).trim())
-    fovQs.set("states", String(CAMERA_FOV_STATES).trim());
-  const data = await api(`/missions/${MID}/camera_fov_footprints?${fovQs.toString()}`);
-  const rows = data.polygons || [];
-  const strideUsed = data.stride != null ? data.stride : CAMERA_FOV_STRIDE;
-  const camCount = SdMap.countCameraFovFootprintRows(rows);
-  const { group, bounds } = SdMap.cameraFrameOverlayFromFootprintRows(rows, { mode: "mission", escHtml });
-  layerCameraFrame = group;
-  const hasDrawable = (bounds && bounds.length > 0);
-
+function applyMissionCameraFovNotesAndLegend(data, rows, polyCount, hasDrawable){
+  const vis = cameraFovVisualCfg();
+  const strideUsed = data && data.stride != null ? data.stride : getCamFovStride();
   const noteEl = document.getElementById("cameraFrameNote");
   if(noteEl){
     noteEl.classList.remove("d-none");
     noteEl.classList.toggle("bbox-ground-note--warn", !hasDrawable);
-    if(!camCount){
-      noteEl.innerHTML = "Camera frame overlay: <b>no FOV footprints</b> — need <code>fsm_tick</code> events with <code>drone_state</code> and <code>altitude_rel_home</code> &gt; 0 (same camera model as <code>utils.detection_to_latlon</code>, 640×640 corners).";
-    } else if(camCount && !hasDrawable){
-      noteEl.innerHTML = "Camera frame overlay: API returned footprints but coordinates were invalid for the map.";
+    if(!polyCount){
+      const emptyFilt = data && data.states_filter && data.states_filter.length === 0;
+      noteEl.innerHTML = emptyFilt
+        ? "Camera FOV: <b>no footprints</b> — tick at least one FSM mode above, or turn the camera overlay off."
+        : "Camera FOV: <b>no footprints</b> — need <code>fsm_tick</code> with <code>drone_state</code> and <code>altitude_rel_home</code> &gt; 0.";
+    } else if(!hasDrawable){
+      noteEl.innerHTML = "Camera FOV: coordinates were invalid for the map.";
     } else {
-      const filt = data.states_filter && data.states_filter.length
-        ? ` · filter <code>${data.states_filter.join(",")}</code>`
+      const filt = data && data.states_filter && data.states_filter.length
+        ? ` · FSM filter <code>${data.states_filter.join(",")}</code>`
         : "";
-      noteEl.innerHTML = `Camera frame overlay: <b>${camCount}</b> FOV polygon(s) (<code>fsm_tick</code> stride <b>${strideUsed}</b>${filt}). Colors = FSM mode. If the map is slow, increase <code>CAMERA_FOV_STRIDE</code>.`;
+      const hullNote = vis.outerHullOnly ? " · <b>outer hull</b> (one outline)" : "";
+      const cornerN = rows.reduce((n,r)=>n+(r.footprint||[]).length,0);
+      const capNote = (data && data.polygons_capped && data.polygons_total_before_cap != null && data.polygon_cap != null)
+        ? ` <span class="muted">Showing <b>${polyCount}</b> of <b>${data.polygons_total_before_cap}</b> (limit <b>${data.polygon_cap}</b>).</span>`
+        : "";
+      if(vis.outerHullOnly){
+        noteEl.innerHTML = `Camera FOV: convex hull from <b>${cornerN}</b> corner samples · stride <b>${strideUsed}</b>${filt}${hullNote}.${capNote}`;
+      } else {
+        noteEl.innerHTML = `Camera FOV: <b>${polyCount}</b> quad(s) · stride <b>${strideUsed}</b>${filt}. Stroke/fill in options.${capNote}`;
+      }
     }
   }
   const leg = document.getElementById("cameraFovLegend");
-  if(leg) leg.classList.toggle("d-none", !camCount);
-  return { bounds, hasDrawable };
+  if(leg) leg.classList.toggle("d-none", !polyCount || vis.outerHullOnly);
+}
+
+async function applyMissionCameraFovLayerBuildAsync(data){
+  const rows = _camFovRowsCache || [];
+  const vis = cameraFovVisualCfg();
+  const polyCount = SdMap.countCameraFovFootprintRows(rows);
+  const { group, bounds } = await SdMap.cameraFrameOverlayFromFootprintRowsAsync(rows, {
+    mode: "mission",
+    escHtml,
+    fillOpacity: vis.fillOpacity,
+    strokeOpacity: vis.strokeOpacity,
+    weight: 1,
+    outerHullOnly: vis.outerHullOnly,
+  });
+  const hasDrawable = (bounds && bounds.length > 0);
+  applyMissionCameraFovNotesAndLegend(data, rows, polyCount, hasDrawable);
+  return { bounds, hasDrawable, group };
+}
+
+function cameraFovSwitchOn(){
+  return !!document.getElementById("layerCameraFrame")?.checked;
+}
+/** Add new FOV parent and remove previous, unless the user turned the overlay off mid-flight. */
+function finalizeCamFovLayerSwap(out, prev){
+  if(!out || !out.group){
+    if(prev) try{ map.removeLayer(prev); }catch(e){}
+    layerCameraFrame = null;
+    return out;
+  }
+  if(!cameraFovSwitchOn()){
+    if(prev) try{ map.removeLayer(prev); }catch(e){}
+    try{ map.removeLayer(out.group); }catch(e){}
+    layerCameraFrame = null;
+    return out;
+  }
+  layerCameraFrame = out.group;
+  if(layerCameraFrame && out.hasDrawable) layerCameraFrame.addTo(map);
+  if(prev && prev !== layerCameraFrame) try{ map.removeLayer(prev); }catch(e){}
+  return out;
+}
+
+async function rebuildMissionCameraFovFromFullFilter(){
+  const full = _lastCamFovApiResponse;
+  if(!full) return { bounds: null, hasDrawable: false, group: null };
+  const vis = cameraFovVisualCfg();
+  const displayData = Object.assign({}, full, { states_filter: camFovDisplayStatesFilter() });
+  const prev = layerCameraFrame;
+
+  if(vis.outerHullOnly){
+    clearCamFovStateLayerCache();
+    _camFovRowsCache = filterCamFovPolygonsByStatesParam(full.polygons || [], getCamFovStatesParam());
+    const out = await applyMissionCameraFovLayerBuildAsync(displayData);
+    return finalizeCamFovLayerSwap(out, prev);
+  }
+
+  const cache = await ensureCamFovStateLayerGroups(full);
+
+  const param = getCamFovStatesParam();
+  const composed = composeCamFovParentFromStateCache(cache, param, full);
+  _camFovRowsCache = composed.rowsForNote;
+  applyMissionCameraFovNotesAndLegend(displayData, composed.rowsForNote, composed.polyCount, composed.hasDrawable);
+  const out = { group: composed.parent, hasDrawable: composed.hasDrawable, bounds: composed.boundsPts };
+  return finalizeCamFovLayerSwap(out, prev);
+}
+
+async function refreshMissionCameraFrameLayer(){
+  if(!map) return { bounds: null, hasDrawable: false };
+  const ck = fovSessionCacheKey();
+  const cachedRaw = sessionStorage.getItem(ck);
+  if(cachedRaw){
+    try{
+      const cdata = JSON.parse(cachedRaw);
+      if(!cameraFovSwitchOn()) return { bounds: null, hasDrawable: false };
+      _lastCamFovApiResponse = cdata;
+      return await rebuildMissionCameraFovFromFullFilter();
+    }catch(e){
+      try{ sessionStorage.removeItem(ck); }catch(x){}
+    }
+  }
+  const noteEl = document.getElementById("cameraFrameNote");
+  if(noteEl){
+    noteEl.classList.remove("d-none");
+    noteEl.innerHTML = "Camera FOV: <span class=\"text-muted\">Loading…</span>";
+  }
+  const fovQs = new URLSearchParams({ stride: String(getCamFovStride()) });
+  const data = await api(`/missions/${MID}/camera_fov_footprints?${fovQs.toString()}`);
+  if(!cameraFovSwitchOn()){
+    const n = document.getElementById("cameraFrameNote");
+    if(n){ n.classList.add("d-none"); n.textContent=""; n.classList.remove("bbox-ground-note--warn"); }
+    return { bounds: null, hasDrawable: false };
+  }
+  try{ sessionStorage.setItem(ck, JSON.stringify(data)); }catch(e){}
+  _lastCamFovApiResponse = data;
+  return await rebuildMissionCameraFovFromFullFilter();
+}
+
+async function rebuildMissionCameraFovLayerOnly(){
+  if(!document.getElementById("layerCameraFrame")?.checked) return;
+  if(!_lastCamFovApiResponse) return;
+  await rebuildMissionCameraFovFromFullFilter();
 }
 
 function initMap(){
-  map = L.map("map", { maxZoom: MAP_MAX_ZOOM });
+  map = L.map("map", { maxZoom: MAP_MAX_ZOOM, preferCanvas: true });
+  if(typeof L.DomEvent !== "undefined" && L.DomEvent.disableScrollPropagation){
+    L.DomEvent.disableScrollPropagation(map.getContainer());
+  }
   SdMap.ensureDetectionUnderlay(map);
   osmTile = L.tileLayer(
     {{ tile_osm_url|tojson }},
@@ -541,8 +857,7 @@ function initMap(){
     if(lg && !e.target.checked) lg.classList.add("d-none");
     if(e.target.checked){
       try{
-        const { bounds: bnds, hasDrawable } = await refreshMissionCameraFrameLayer();
-        if(layerCameraFrame && hasDrawable) layerCameraFrame.addTo(map);
+        const { bounds: bnds } = await refreshMissionCameraFrameLayer();
         if(bnds && bnds.length){
           let bbnds = map.getBounds();
           bnds.forEach(c=>bbnds.extend(c));
@@ -551,16 +866,50 @@ function initMap(){
       }catch(err){ alert(err); e.target.checked=false; }
     } else {
       if(layerCameraFrame){ try{ map.removeLayer(layerCameraFrame); }catch(x){} }
+      layerCameraFrame = null;
+      _camFovRowsCache = null;
+      _lastCamFovApiResponse = null;
+      clearCamFovStateLayerCache();
     }
   });
+  ["camFovStride","camFovFill","camFovStroke"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("input", ()=>{
+      refreshCamFovSliderLabels();
+      if(id === "camFovStride"){
+        if(_camFovStrideDebounce) clearTimeout(_camFovStrideDebounce);
+        _camFovStrideDebounce = setTimeout(()=>{
+          if(!document.getElementById("layerCameraFrame")?.checked) return;
+          refreshMissionCameraFrameLayer().catch(err=>alert(err));
+        }, 400);
+      } else {
+        rebuildMissionCameraFovLayerOnly().catch(e=>console.warn(e));
+      }
+    });
+  });
+  const hullCb = document.getElementById("camFovOuterHull");
+  if(hullCb) hullCb.addEventListener("change", ()=> rebuildMissionCameraFovLayerOnly().catch(e=>console.warn(e)));
+  document.querySelectorAll(".cam-fov-state-cb").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      if(!document.getElementById("layerCameraFrame")?.checked) return;
+      if(!_lastCamFovApiResponse){
+        refreshMissionCameraFrameLayer().catch(err=>alert(err));
+        return;
+      }
+      rebuildMissionCameraFovFromFullFilter().catch(err=>alert(err));
+    });
+  });
+  refreshCamFovSliderLabels();
   document.getElementById("runCompare").addEventListener("click", ()=>{
     loadTruth().catch(err=>alert(err));
   });
+  SdMap.attachMapDetectionPopupPainter(map);
 }
 
 async function loadMap(){
   const [pathPts, predPts, sprayEvs] = await Promise.all([
-    api(`/missions/${MID}/path?stride=1`),
+    api(`/missions/${MID}/path?stride=1&source=fsm`),
     api(`/missions/${MID}/weeds/pred?dedup=1`),
     api(`/missions/${MID}/spray`),
   ]);
@@ -605,6 +954,19 @@ async function loadTruth(){
   ));
   document.getElementById("layerTruth").checked = true;
   layerTruth.addTo(map);
+
+  // Fit map to include truth points
+  if(res.truth_points && res.truth_points.length){
+    const lats = res.truth_points.map(p=>p.lat);
+    const lons = res.truth_points.map(p=>p.lon);
+    const truthBounds = [[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]];
+    try{
+      const cur = map.getBounds();
+      const merged = L.latLngBounds(truthBounds);
+      if(cur && cur.isValid()) merged.extend(cur);
+      map.fitBounds(merged, MAP_FIT_OPTS);
+    }catch(e){ map.fitBounds(truthBounds, MAP_FIT_OPTS); }
+  }
 
   const s = res.stats;
   const f1 = (s.precision+s.recall)>0 ? 2*s.precision*s.recall/(s.precision+s.recall) : 0;
@@ -690,6 +1052,8 @@ async function loadTimeline(){
 // ═══════════════════════ FRAMES TAB ═════════════════════════════════════════
 let _frameEvents = [];
 let framesLoaded = false;
+/** Single in-flight load so concurrent callers (popup vs tab) await the same fetch — avoids finishing with selectFrameIndex(0) after a chosen index. */
+let _loadFramesPromise = null;
 let frameMap = null, frameGroundGrp = null;
 let _activeFrame = null;
 let _frameIndex = 0;
@@ -701,7 +1065,7 @@ function renderFrameGround(f){
   const el = document.getElementById("frameGroundMap");
   if(!el) return;
   if(!frameMap){
-    frameMap = L.map("frameGroundMap", { maxZoom: MAP_MAX_ZOOM });
+    frameMap = L.map("frameGroundMap", { maxZoom: MAP_MAX_ZOOM, preferCanvas: true });
     SdMap.ensureDetectionUnderlay(frameMap);
     L.tileLayer(
       {{ tile_osm_url|tojson }},
@@ -814,6 +1178,40 @@ function selectFrameIndex(i){
   framesNavUpdateUi();
 }
 
+/** Detection popup "Open in frame viewer" → Frames tab + 640× canvas; idx is 0-based index in frame_events (not mission frame_index). */
+async function openMissionFrameViewerFromPopup(idx){
+  await loadFrames();
+  if(!_frameEvents || !_frameEvents.length) return;
+  selectFrameIndex(idx);
+  const tabBtn = document.querySelector('#mainTabs button[data-bs-target="#tabFrames"]');
+  if(tabBtn){
+    if(typeof bootstrap !== "undefined" && bootstrap.Tab){
+      try{ bootstrap.Tab.getOrCreateInstance(tabBtn).show(); }
+      catch(e){ tabBtn.click(); }
+    } else {
+      tabBtn.click();
+    }
+  }
+  setTimeout(()=>{
+    const c = document.getElementById("frameCanvas");
+    if(c){
+      try{ c.scrollIntoView({ block: "nearest", behavior: "smooth" }); }catch(e){}
+    }
+  }, 120);
+}
+
+document.addEventListener("click", (e)=>{
+  const a = e.target.closest("a.sd-det-open-full");
+  if(!a || !a.hasAttribute("data-sd-frame-index")) return;
+  /* Allow ctrl/meta/shift/middle-click to open the image URL in a new tab. */
+  if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const idx = parseInt(a.getAttribute("data-sd-frame-index"), 10);
+  if(!Number.isFinite(idx)) return;
+  openMissionFrameViewerFromPopup(idx).catch((err)=> console.warn(err));
+}, true);
+
 function bindFramesNavOnce(){
   if(_framesNavListenersBound) return;
   _framesNavListenersBound = true;
@@ -841,28 +1239,31 @@ function bindFramesNavOnce(){
 
 async function loadFrames(){
   if(framesLoaded) return;
-  framesLoaded = true;
-  const frames = await api(`/missions/${MID}/frame_events`);
-  _frameEvents = frames;
-  document.getElementById("frameCount").textContent =
-    `${frames.length} frame${frames.length===1?"":"s"} with detections`;
-  const list = document.getElementById("framelist");
-  const nav = document.getElementById("framesNavWrap");
-  list.innerHTML = "";
-  list.classList.toggle("frame-list-scroll", !!frames.length);
-  if(!frames.length){
-    if(nav) nav.classList.add("d-none");
-    list.innerHTML = '<div class="muted p-3">No frames with detections in this log.</div>';
-    return;
-  }
-  if(nav) nav.classList.remove("d-none");
-  bindFramesNavOnce();
-  frames.forEach((f,i)=>{
-    const div = document.createElement("div");
-    div.className = "frame-item";
-    div.dataset.frameIndex = String(i);
-    const state = f.state_to || f.state_from || f.event || "";
-    div.innerHTML = `
+  if(_loadFramesPromise) return _loadFramesPromise;
+  _loadFramesPromise = (async ()=>{
+    try{
+      const frames = await api(`/missions/${MID}/frame_events`);
+      _frameEvents = frames;
+      framesLoaded = true;
+      document.getElementById("frameCount").textContent =
+        `${frames.length} frame${frames.length===1?"":"s"} with detections`;
+      const list = document.getElementById("framelist");
+      const nav = document.getElementById("framesNavWrap");
+      list.innerHTML = "";
+      list.classList.toggle("frame-list-scroll", !!frames.length);
+      if(!frames.length){
+        if(nav) nav.classList.add("d-none");
+        list.innerHTML = '<div class="muted p-3">No frames with detections in this log.</div>';
+        return;
+      }
+      if(nav) nav.classList.remove("d-none");
+      bindFramesNavOnce();
+      frames.forEach((f,i)=>{
+        const div = document.createElement("div");
+        div.className = "frame-item";
+        div.dataset.frameIndex = String(i);
+        const state = f.state_to || f.state_from || f.event || "";
+        div.innerHTML = `
       <div class="d-flex justify-content-between align-items-baseline gap-2">
         <span><span class="muted small">#${i}</span> <span style="color:${stateColor(state)}">${state}</span></span>
         <span class="muted" style="white-space:nowrap">${fmtTs(f.ts)}</span>
@@ -871,15 +1272,19 @@ async function loadFrames(){
         &nbsp;${f.photo_path && f.photo_path!=="No photo taken"
           ? '<span style="color:#4adf86">📷 photo</span>'
           : '<span style="color:#9fb0c7">synthetic</span>'}</div>`;
-    div.addEventListener("click", ()=> selectFrameIndex(i));
-    list.appendChild(div);
-  });
-  const slider = document.getElementById("framesSlider");
-  if(slider){
-    slider.max = String(frames.length - 1);
-    slider.value = "0";
-  }
-  selectFrameIndex(0);
+        div.addEventListener("click", ()=> selectFrameIndex(i));
+        list.appendChild(div);
+      });
+      const slider = document.getElementById("framesSlider");
+      if(slider){
+        slider.max = String(frames.length - 1);
+        slider.value = "0";
+      }
+    } finally {
+      _loadFramesPromise = null;
+    }
+  })();
+  return _loadFramesPromise;
 }
 
 function renderFrame(f){
@@ -938,7 +1343,7 @@ function renderFrame(f){
     const img=new Image();
     img.onload=()=>{ ctx.drawImage(img,0,0,W,H); drawBoxes(); };
     img.onerror=()=>{ drawSyntheticBg(ctx,W,H); drawBoxes(); };
-    img.src=`/missions/${MID}/image?path=${encodeURIComponent(f.photo_path)}`;
+    img.src=`/missions/${MID}/image?path=${encodeURIComponent(f.photo_path)}&src=${encodeURIComponent(SRC)}`;
   } else {
     drawSyntheticBg(ctx,W,H);
     drawBoxes();
@@ -1181,7 +1586,10 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     const t = e.target.getAttribute("data-bs-target");
     if(t==="#tabTimeline") loadTimeline().catch(console.error);
     if(t==="#tabFrames"){
-      loadFrames().catch(console.error);
+      loadFrames().then(()=>{
+        if(_frameEvents && _frameEvents.length && !_activeFrame)
+          selectFrameIndex(0);
+      }).catch(console.error);
       setTimeout(()=>{
         try{
           const tg = document.getElementById("toggleFrameGround");
@@ -1219,17 +1627,6 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     }
   }catch(e){ console.warn("BBox ground auto-load:", e); }
   try{
-    const { bounds: camBounds, hasDrawable: camDraw } = await refreshMissionCameraFrameLayer();
-    const cfEl = document.getElementById("layerCameraFrame");
-    if(layerCameraFrame && cfEl && camDraw && camBounds && camBounds.length){
-      cfEl.checked = true;
-      layerCameraFrame.addTo(map);
-      let bb = map.getBounds();
-      camBounds.forEach(c=>bb.extend(c));
-      map.fitBounds(bb, MAP_FIT_OPTS);
-    }
-  }catch(e){ console.warn("Camera FOV auto-load:", e); }
-  try{
     await loadSummary();
   }catch(e){
     const sb = document.getElementById("summaryBar");
@@ -1266,20 +1663,44 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
   let frGrpTruth = null, frGrpPred = null, frGrpPath = null, frGrpDetTrail = null;
   let frGrpFootprint = null, frGrpDetections = null;
   let frResizeTimer = null;
+  let frVisObs = null;
 
   const frTab = document.querySelector('[data-bs-target="#tabFrameReview"]');
+  const frPane = document.getElementById('tabFrameReview');
   if(!frTab) return;
 
   frTab.addEventListener('shown.bs.tab', initFR);
+
+  /** Leaflet often gets 0×0 if the map was created while the tab was hidden; tiles never load until invalidateSize + view nudge. */
+  function frSyncMapSize(){
+    if(!frMap) return;
+    try{
+      frMap.invalidateSize({animate:false});
+      const c = frMap.getCenter(), z = frMap.getZoom();
+      if(Number.isFinite(c.lat) && Number.isFinite(c.lng) && Number.isFinite(z))
+        frMap.setView(c, z, {animate:false});
+    }catch(e){}
+  }
 
   function frInvalidate(){
     if(!frMap) return;
     setTimeout(()=>{
       try{
-        frMap.invalidateSize();
+        frSyncMapSize();
         if(frFrames && frFrames.length) frRenderFrame(frCurrentIdx);
       }catch(e){}
     }, 80);
+  }
+
+  function frAttachVisibilitySync(){
+    if(!frPane || typeof IntersectionObserver === 'undefined') return;
+    if(frVisObs) try{ frVisObs.disconnect(); }catch(e){}
+    frVisObs = new IntersectionObserver((entries)=>{
+      entries.forEach((en)=>{
+        if(en.isIntersecting && frMap) frSyncMapSize();
+      });
+    }, { threshold: 0.01 });
+    frVisObs.observe(frPane);
   }
 
   async function initFR(){
@@ -1309,8 +1730,9 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     // Let Bootstrap reflow the row (slider column appears) before Leaflet measures #frMap
     await new Promise((r)=> requestAnimationFrame(()=> requestAnimationFrame(r)));
 
-    frMap = L.map('frMap', { zoomSnap: 0.25, maxZoom: MAP_MAX_ZOOM });
+    frMap = L.map('frMap', { zoomSnap: 0.25, maxZoom: MAP_MAX_ZOOM, preferCanvas: true });
     SdMap.ensureDetectionUnderlay(frMap);
+    SdMap.attachMapDetectionPopupPainter(frMap);
     frOsmTile = L.tileLayer({{ tile_osm_url|tojson }},
       mapTileOpts({ maxNativeZoom: OSM_NATIVE_MAX_ZOOM, attribution:'&copy; OpenStreetMap contributors' }));
     frSatTile = L.tileLayer(
@@ -1319,6 +1741,9 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     frSatTile.addTo(frMap);
     frUsingSat = true;
     document.getElementById('frTileToggle').textContent = 'Street';
+    frAttachVisibilitySync();
+    frMap.whenReady(frSyncMapSize);
+    [0, 100, 350].forEach((ms)=> setTimeout(frSyncMapSize, ms));
 
     document.getElementById('frTileToggle').addEventListener('click', ()=>{
       frUsingSat = !frUsingSat;
@@ -1374,12 +1799,27 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     });
 
     frRenderFrame(0);
+    // Auto-fit: try detection trail → drone positions from frames → world default
     try{
-      if(frGrpDetTrail && frGrpDetTrail.getLayers().length){
-        const lyr = frGrpDetTrail.getLayers()[0];
-        const b = lyr.getBounds && lyr.getBounds();
-        if(b && b.isValid()) frMap.fitBounds(b, MAP_FIT_OPTS);
+      let fitted = false;
+      if(frGrpDetTrail){
+        const layers = frGrpDetTrail.getLayers();
+        if(layers.length){
+          const b = layers[0].getBounds && layers[0].getBounds();
+          if(b && b.isValid()){ frMap.fitBounds(b, MAP_FIT_OPTS); fitted = true; }
+        }
       }
+      if(!fitted){
+        // Fall back: collect drone positions from all frames
+        const dronePts = [];
+        frFrames.forEach(f => {
+          const ll = frDroneLatLon(f);
+          if(ll) dronePts.push(ll);
+        });
+        if(dronePts.length === 1){ frMap.setView(dronePts[0], 20); fitted = true; }
+        else if(dronePts.length > 1){ frMap.fitBounds(L.latLngBounds(dronePts), MAP_FIT_OPTS); fitted = true; }
+      }
+      if(!fitted){ frMap.setView([0,0], 2); }
     }catch(e){}
     frInvalidate();
   }
@@ -1433,7 +1873,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
   async function frLoadPath(){
     try{
-      const pts = await api(`/missions/${MID}/path`);
+      const pts = await api(`/missions/${MID}/path?stride=1&source=fsm`);
       if(!pts||!pts.length) return;
       const lls = pts.map(p=>[p.lat,p.lon]);
       frGrpPath = L.layerGroup([L.polyline(lls,{color:"#4a9eff",weight:2,opacity:0.6})]);
@@ -1493,30 +1933,36 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     if(fp.length >= 3){
       const ring = fp.map(p=>[p.lat,p.lon]);
       items.push(L.polygon(ring,{
-        pane: SdMap.DETECTION_PANE, color:"#ffe74a", fillColor:"#ffe74a", fillOpacity:0.08, weight:2, dashArray:"6 4"
+        pane: SdMap.FOV_GROUND_PANE, color:"#ffe74a", fillColor:"#ffe74a", fillOpacity:0.08, weight:2, dashArray:"6 4"
       }).bindPopup(`Frame ${idx} footprint`));
     }
     frGrpFootprint = L.layerGroup(items);
     if(document.getElementById('frCkFootprint').checked) frGrpFootprint.addTo(frMap);
 
-    // Detection markers
+    // Detection markers (popup: annotated frame image when photo + bbox_px exist)
     const detItems = [];
+    const fPop = Object.assign({}, f, { frame_index: f.frame_index != null ? f.frame_index : idx });
     (f.ground_projections||[]).forEach(gp=>{
       if(!gp.center) return;
       const c = gp.center;
       const truthTag = gp.truth_id != null ? `truth #${gp.truth_id}` : `false positive`;
-      const popFull = `${escHtml(gp.label||'?')} (${((gp.confidence||0)*100).toFixed(0)}%) — ${truthTag}<br>${c.lat.toFixed(6)}, ${c.lon.toFixed(6)}`;
+      const popHtml = SdMap.detectionPopupHtmlWithImage(escHtml, gp, fPop, {
+        missionId: MID, src: SRC, strokeColor: "#ff9a4a", tagPrefix: "", tTag: ` — ${truthTag}`,
+        frameListIndex: idx,
+      }) + `<div class="small muted mt-1">${c.lat.toFixed(6)}, ${c.lon.toFixed(6)} · ground</div>`;
       const hasPoly = gp.corners && gp.corners.length >= 3;
       if(hasPoly){
         const ring = gp.corners.map(p=>[p.lat,p.lon]);
-        detItems.push(L.polygon(ring,{
+        const poly = L.polygon(ring,{
           pane: SdMap.DETECTION_PANE, color:"#ff9a4a", fillColor:"#ff9a4a", fillOpacity:0.06, weight:2, dashArray:"6 5"
-        }).bindPopup(popFull + "<br>ground bbox"));
+        }).bindPopup(popHtml, { maxWidth: 420, className: "sd-det-leaflet-popup" });
+        detItems.push(poly);
       } else {
-        detItems.push(L.circleMarker([c.lat,c.lon],{
+        const cm = L.circleMarker([c.lat,c.lon],{
           pane: SdMap.DETECTION_PANE, radius:SdMap.CENTER_ONLY_RADIUS, color:"#ff9a4a", fillColor:"#ff9a4a",
           fillOpacity:SdMap.CENTER_ONLY_OPACITY, weight:1
-        }).bindPopup(popFull));
+        }).bindPopup(popHtml, { maxWidth: 420, className: "sd-det-leaflet-popup" });
+        detItems.push(cm);
       }
     });
     frGrpDetections = L.layerGroup(detItems);
@@ -1544,6 +1990,133 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     }
     setTimeout(()=>{ try{ frMap.invalidateSize(); }catch(e){} }, 0);
   }
+})();
+
+// ── Video tab ────────────────────────────────────────────────────────────────
+(function(){
+  const videoTabBtn   = document.getElementById('videoTabBtn');
+  const video         = document.getElementById('missionVideo');
+  const notFound      = document.getElementById('videoNotFound');
+  const generating    = document.getElementById('videoGenerating');
+  const genBtn        = document.getElementById('generateVideoBtn');
+  const videoGenError = document.getElementById('videoGenError');
+  const playbackCtl   = document.getElementById('videoPlaybackControls');
+  const genMsgEl      = generating && generating.querySelector('.video-gen-msg');
+  const speedSlider   = document.getElementById('speedSlider');
+  const speedLabel    = document.getElementById('speedLabel');
+
+  // Slider values map to playback rates: -2=0.25, -1=0.5, 0=1, 1=2, 2=4
+  const RATES = { '-2': 0.25, '-1': 0.5, '0': 1, '1': 2, '2': 4 };
+  speedSlider.addEventListener('input', function(){
+    const rate = RATES[this.value] || 1;
+    video.playbackRate = rate;
+    speedLabel.textContent = rate + '×';
+  });
+
+  const videoUrl = `/missions/${MID}/video?src=${encodeURIComponent(SRC)}`;
+  let pollInterval = null;
+
+  function resetGenMessage(){
+    if(genMsgEl) genMsgEl.textContent = 'Generating video… this may take a minute. Checking every 3s.';
+  }
+
+  function setGenError(msg){
+    if(!videoGenError) return;
+    if(msg){
+      videoGenError.textContent = msg;
+      videoGenError.classList.remove('d-none');
+    } else {
+      videoGenError.textContent = '';
+      videoGenError.classList.add('d-none');
+    }
+  }
+
+  function showVideo(opts){
+    opts = opts || {};
+    resetGenMessage();
+    setGenError('');
+    var url = videoUrl;
+    if(opts.cacheBust) url += (url.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+    video.src = url;
+    video.classList.remove('d-none');
+    if(playbackCtl){
+      playbackCtl.classList.remove('d-none');
+      playbackCtl.classList.add('d-flex');
+    }
+    notFound.classList.add('d-none');
+    generating.classList.add('d-none');
+    if(pollInterval){ clearInterval(pollInterval); pollInterval = null; }
+  }
+
+  function hideVideoPlayer(){
+    video.classList.add('d-none');
+    if(playbackCtl){
+      playbackCtl.classList.add('d-none');
+      playbackCtl.classList.remove('d-flex');
+    }
+    try{ video.removeAttribute('src'); }catch(e){}
+    try{ video.load(); }catch(e){}
+  }
+
+  function checkVideo(){
+    return fetch(videoUrl, {method:'HEAD'}).then(r => r.ok);
+  }
+
+  function startPolling(pendingDecode){
+    if(pollInterval) clearInterval(pollInterval);
+    hideVideoPlayer();
+    generating.classList.remove('d-none');
+    notFound.classList.add('d-none');
+    if(pendingDecode && genMsgEl){
+      genMsgEl.textContent = 'Video file exists but is not playable yet (still encoding or incomplete). Checking every 3s…';
+    } else resetGenMessage();
+    pollInterval = setInterval(function(){
+      checkVideo().then(function(ok){
+        if(ok) showVideo({ cacheBust: true });
+      });
+    }, 3000);
+  }
+
+  video.addEventListener('error', function(){
+    if(!video.getAttribute('src')) return;
+    startPolling(true);
+  });
+
+  genBtn.addEventListener('click', function(){
+    setGenError('');
+    genBtn.disabled = true;
+    genBtn.textContent = 'Starting…';
+    fetch(`/missions/${MID}/generate_video?src=${encodeURIComponent(SRC)}`, {method:'POST'})
+      .then(r => r.json())
+      .then(d => {
+        if(d.ok){
+          startPolling(false);
+        } else {
+          setGenError(d.error || 'Request failed');
+          genBtn.disabled = false;
+          genBtn.textContent = 'Generate video';
+        }
+      })
+      .catch(function(){
+        setGenError('Network error');
+        genBtn.disabled = false;
+        genBtn.textContent = 'Generate video';
+      });
+  });
+
+  let tabClicked = false;
+  videoTabBtn.addEventListener('click', function(){
+    if(tabClicked) return;
+    tabClicked = true;
+    checkVideo().then(function(ok){
+      if(ok){
+        showVideo({ cacheBust: false });
+      } else {
+        notFound.classList.remove('d-none');
+        hideVideoPlayer();
+      }
+    });
+  });
 })();
 </script>
 {% include "partials/sd_theme_script.html" %}

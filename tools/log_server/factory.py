@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from config import data_paths, tile_cache_dir
+from config import data_paths, rpi_missions_root
 
 _LOG_SERVER_DIR = Path(__file__).resolve().parent
 
@@ -20,8 +20,8 @@ def create_app() -> Flask:
         static_url_path="/static",
     )
     app.config["MISSIONS_ROOT"] = missions_root
+    app.config["RPI_MISSIONS_ROOT"] = rpi_missions_root()
     app.config["SIM_DATA_ROOT"] = sim_root
-    app.config["TILE_CACHE_DIR"] = tile_cache_dir()
 
     from routes_api import bp as api_bp
     from routes_web import bp as web_bp

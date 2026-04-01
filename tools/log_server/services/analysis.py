@@ -10,7 +10,7 @@ from ai_class import Detection
 from utils import detection_to_latlon
 
 from services.geometry import grid_dedup, haversine_m, parse_ts
-from services.mission_store import iter_events
+from services.mission_store import iter_events, iter_events_of_kind
 from services.projection import (
     camera_fov_footprint_from_drone_dict,
     drone_state_from_dict,
@@ -44,23 +44,39 @@ def _normalize_fsm_state_name(raw: str | None) -> str | None:
     return u if u else None
 
 
+def _subsample_polygon_rows(rows: list[dict[str, Any]], max_n: int) -> list[dict[str, Any]]:
+    """Evenly subsample rows so at most ``max_n`` polygons (keeps spread across the mission)."""
+    n = len(rows)
+    if n <= max_n or max_n <= 0:
+        return rows
+    if max_n == 1:
+        return [rows[n // 2]]
+    out: list[dict[str, Any]] = []
+    for j in range(max_n):
+        idx = min(n - 1, int(j * (n - 1) // (max_n - 1)))
+        out.append(rows[idx])
+    return out
+
+
 def camera_fov_polygons_from_fsm_ticks(
     path: Path,
     stride: int,
     states_filter: frozenset[str] | None = None,
-) -> list[dict[str, Any]]:
+    max_polygons: int | None = None,
+) -> tuple[list[dict[str, Any]], bool, int]:
     """One camera FOV quadrilateral per ``fsm_tick`` (``drone_state`` at control-loop rate, often ~30–50 Hz).
 
     ``telemetry_sample`` is logged ~1 Hz in the vehicle logger, so it is **not** used here — that made the map
     look far too sparse. Same projection as ``frame_footprint`` / ``utils.detection_to_latlon``.
     Each row includes ``state`` (normalized, e.g. ``SCAN``) for map coloring. Optional ``states_filter`` keeps
     only those modes (uppercase names, comma-separated in the API).
+
+    If ``max_polygons`` is a positive integer and more rows match, they are evenly subsampled.
+    ``None`` or ``<= 0`` means no cap. Returns ``(polygons, was_capped, count_before_cap)``.
     """
     out: list[dict[str, Any]] = []
     count = 0
-    for ev in iter_events(path):
-        if ev.get("event") != "fsm_tick":
-            continue
+    for ev in iter_events_of_kind(path, "fsm_tick"):
         count += 1
         if stride > 1 and (count % stride) != 0:
             continue
@@ -81,7 +97,11 @@ def camera_fov_polygons_from_fsm_ticks(
         if st:
             row["state"] = st
         out.append(row)
-    return out
+    raw_n = len(out)
+    if max_polygons is None or max_polygons <= 0 or raw_n <= max_polygons:
+        return out, False, raw_n
+    capped = _subsample_polygon_rows(out, max_polygons)
+    return capped, True, raw_n
 
 
 def telemetry_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
@@ -98,6 +118,28 @@ def telemetry_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
         if lat == 0 and lon == 0:
             continue
         pts.append({"lat": lat, "lon": lon, "alt": ds.get("altitude_rel_home", 0), "ts": ev.get("ts", "")})
+    return pts
+
+
+def fsm_tick_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
+    """GPS path from ``fsm_tick`` drone_state — same state stream as camera / bbox projection (aligns with overlays)."""
+    pts: list[dict[str, Any]] = []
+    count = 0
+    for ev in iter_events_of_kind(path, "fsm_tick"):
+        count += 1
+        if stride > 1 and (count % stride) != 0:
+            continue
+        ds = ev.get("drone_state", {})
+        if not isinstance(ds, dict):
+            continue
+        lat, lon = ds.get("latitude", 0), ds.get("longitude", 0)
+        try:
+            la, lo = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
+        if la == 0.0 and lo == 0.0:
+            continue
+        pts.append({"lat": la, "lon": lo, "alt": ds.get("altitude_rel_home", 0), "ts": ev.get("ts", "")})
     return pts
 
 
@@ -260,16 +302,142 @@ def tail_json_events(path: Path, since_byte: int) -> dict[str, Any]:
     return {"events": events, "next_byte": next_byte, "file_size": file_size}
 
 
-def build_frame_events(path: Path) -> list[dict[str, Any]]:
-    """Build frame rows for ``GET .../frame_events`` (Map tab BBox ground layer).
+def _nearest_by_ts(sorted_entries: list[tuple[int, Any]], ts_ns: int) -> Any | None:
+    """Binary-search for the entry with the closest timestamp to ``ts_ns``."""
+    from bisect import bisect_right
+    if not sorted_entries:
+        return None
+    keys = [e[0] for e in sorted_entries]
+    idx = bisect_right(keys, ts_ns) - 1
+    if idx < 0:
+        idx = 0
+    # Also check idx+1 in case it's closer
+    if idx + 1 < len(sorted_entries):
+        if abs(sorted_entries[idx + 1][0] - ts_ns) < abs(sorted_entries[idx][0] - ts_ns):
+            idx += 1
+    return sorted_entries[idx][1]
 
-    Emits one object per log line that has ``frame`` with a non-empty ``detections``
-    list. Each row includes ``ground_projections``, ``frame_footprint`` (camera corners),
-    and ``ground_projection_note`` when projection was skipped — see
-    ``services.projection.ground_project_list`` (needs ``drone_state`` and
-    ``altitude_rel_home`` > 0 on the same line as the frame).
+
+def _make_frame_row(
+    frame_index: int,
+    photo_path: str,
+    dets: list,
+    raw_dets: list | None,
+    drone_state_dict: dict | None,
+    ts_str: str | None,
+    event_name: str,
+    state_from: str,
+    state_to: str,
+) -> dict[str, Any]:
+    ds_obj = drone_state_from_dict(drone_state_dict)
+    g_logged, g_note = ground_project_list(dets, ds_obj)
+    g_raw: list[dict] | None = None
+    g_raw_note: str | None = None
+    if raw_dets:
+        g_raw, g_raw_note = ground_project_list(raw_dets, ds_obj)
+    note = g_note or g_raw_note
+
+    footprint: list[dict[str, float]] = []
+    if ds_obj and ds_obj.altitude_rel_home > 0:
+        w, h = 640, 640
+        for u, v in [(0, 0), (w, 0), (w, h), (0, h)]:
+            try:
+                pt = Detection(label="", confidence=0.0, bbox=[(u, v), (u, v)])
+                la, lo = detection_to_latlon(ds_obj, pt)
+                footprint.append({"lat": float(la), "lon": float(lo)})
+            except Exception:
+                pass
+
+    drone_pos = None
+    if ds_obj:
+        drone_pos = {"lat": ds_obj.latitude, "lon": ds_obj.longitude}
+
+    return {
+        "frame_index": frame_index,
+        "ts": ts_str,
+        "event": event_name,
+        "state_from": state_from.replace("DroneStateEnum.", ""),
+        "state_to": state_to.replace("DroneStateEnum.", ""),
+        "photo_path": photo_path,
+        "detections": dets,
+        "raw_detections": raw_dets if raw_dets else None,
+        "drone_state": drone_state_dict,
+        "ground_projections": g_logged,
+        "raw_ground_projections": g_raw if raw_dets else None,
+        "ground_projection_note": note,
+        "frame_footprint": footprint,
+        "drone_pos": drone_pos,
+    }
+
+
+def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Build frame rows for ``GET .../frame_events``.
+
+    For sim missions the data lives in the JSONL (``frame`` sub-object with
+    ``photo_path`` and ``detections``).
+
+    For real missions ``photo_path`` is ``"No photo taken"`` but JPEG files
+    exist under ``mission_dir/frames/{timestamp_ns}.jpg``.  When that
+    directory has files we scan it, match each JPEG to the nearest
+    ``fsm_tick`` by ``time_ns``, and emit one row per frame image — including
+    frames with no detections so the full flight is browsable.
     """
-    results: list[dict[str, Any]] = []
+    # Check whether to use timestamp-based matching from frames/ directory
+    frames_dir = (mission_dir / "frames") if mission_dir else None
+    use_frames_dir = False
+    frame_files: list[tuple[int, str]] = []  # (ts_ns, relative_path)
+
+    if frames_dir and frames_dir.is_dir():
+        for f in frames_dir.iterdir():
+            if f.suffix.lower() in (".jpg", ".jpeg") and f.stem.isdigit():
+                frame_files.append((int(f.stem), f"frames/{f.name}"))
+        if frame_files:
+            frame_files.sort()
+            use_frames_dir = True
+
+    if use_frames_dir:
+        # Build sorted lookup of fsm_tick events by time_ns
+        ticks: list[tuple[int, dict[str, Any]]] = []
+        for ev in iter_events(path):
+            if ev.get("event") != "fsm_tick":
+                continue
+            time_ns = ev.get("time_ns")
+            if time_ns is None:
+                continue
+            ticks.append((int(time_ns), ev))
+        ticks.sort(key=lambda x: x[0])
+
+        results: list[dict[str, Any]] = []
+        for ts_ns, rel_path in frame_files:
+            ev = _nearest_by_ts(ticks, ts_ns)
+            if ev is None:
+                drone_state_dict = None
+                dets = []
+                ts_str = None
+                state_from = ""
+                state_to = ev.get("state_from", "") if ev else ""
+            else:
+                drone_state_dict = ev.get("drone_state")
+                fr = ev.get("frame") or {}
+                dets = fr.get("detections") or []
+                ts_str = ev.get("ts")
+                state_from = ev.get("state_from", "")
+                state_to = ev.get("state_to", "") or ev.get("state", "")
+            results.append(_make_frame_row(
+                frame_index=len(results),
+                photo_path=rel_path,
+                dets=dets,
+                raw_dets=None,
+                drone_state_dict=drone_state_dict,
+                ts_str=ts_str,
+                event_name="fsm_tick",
+                state_from=state_from,
+                state_to=state_to,
+            ))
+        return results
+
+    # Existing path: JSONL frames with embedded photo_path and detections (sim missions)
+    results = []
     for ev in iter_events(path):
         frame = ev.get("frame")
         if not frame:
@@ -278,45 +446,17 @@ def build_frame_events(path: Path) -> list[dict[str, Any]]:
         if not dets:
             continue
         raw_dets = frame.get("raw_detections")
-        ds_obj = drone_state_from_dict(ev.get("drone_state"))
-        g_logged, g_note = ground_project_list(dets, ds_obj)
-        g_raw: list[dict] | None = None
-        g_raw_note: str | None = None
-        if raw_dets:
-            g_raw, g_raw_note = ground_project_list(raw_dets, ds_obj)
-        note = g_note or g_raw_note
-
-        footprint: list[dict[str, float]] = []
-        if ds_obj and ds_obj.altitude_rel_home > 0:
-            w, h = 640, 640
-            for u, v in [(0, 0), (w, 0), (w, h), (0, h)]:
-                try:
-                    pt = Detection(label="", confidence=0.0, bbox=[(u, v), (u, v)])
-                    la, lo = detection_to_latlon(ds_obj, pt)
-                    footprint.append({"lat": float(la), "lon": float(lo)})
-                except Exception:
-                    pass
-
-        drone_pos = None
-        if ds_obj:
-            drone_pos = {"lat": ds_obj.latitude, "lon": ds_obj.longitude}
-
-        results.append({
-            "frame_index": len(results),
-            "ts": ev.get("ts"),
-            "event": ev.get("event"),
-            "state_from": (ev.get("state_from") or "").replace("DroneStateEnum.", ""),
-            "state_to": (ev.get("state_to") or "").replace("DroneStateEnum.", ""),
-            "photo_path": frame.get("photo_path", ""),
-            "detections": dets,
-            "raw_detections": raw_dets if raw_dets else None,
-            "drone_state": ev.get("drone_state"),
-            "ground_projections": g_logged,
-            "raw_ground_projections": g_raw if raw_dets else None,
-            "ground_projection_note": note,
-            "frame_footprint": footprint,
-            "drone_pos": drone_pos,
-        })
+        results.append(_make_frame_row(
+            frame_index=len(results),
+            photo_path=frame.get("photo_path", ""),
+            dets=dets,
+            raw_dets=raw_dets,
+            drone_state_dict=ev.get("drone_state"),
+            ts_str=ev.get("ts"),
+            event_name=ev.get("event", ""),
+            state_from=ev.get("state_from", ""),
+            state_to=ev.get("state_to", ""),
+        ))
     return results
 
 
@@ -328,13 +468,25 @@ def latest_sim_vision_event(path: Path) -> dict[str, Any] | None:
     return latest
 
 
+def resolve_truth_json_path(sim_data_root: Path, truth_name: str) -> Path | None:
+    """Ground-truth JSON: prefer ``sim_data/<name>``, else ``<repo>/real_missions/<name>``."""
+    safe = Path(truth_name).name
+    if not safe or safe != truth_name:
+        return None
+    p = sim_data_root / safe
+    if p.is_file():
+        return p
+    p2 = Path(__file__).resolve().parents[3] / "real_missions" / safe
+    if p2.is_file():
+        return p2
+    return None
+
+
 def sim_compare_payload(
     mission_log: Path,
-    sim_data_root: Path,
-    truth_name: str,
+    truth_path: Path,
     thresh_m: float,
 ) -> dict[str, Any]:
-    truth_path = sim_data_root / truth_name
     data = json.loads(truth_path.read_text(encoding="utf-8"))
     raw_weeds = data.get("weed_locations", [])
     truth: list[dict[str, Any]] = []

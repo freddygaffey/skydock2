@@ -2,8 +2,8 @@
 """
 Download map raster tiles for the Canberra (ACT) region for offline / local Leaflet use.
 
-The log server caches OSM/Esri tiles on demand under ``data/tile_cache/`` — prefer using
-that over this script. This file is optional **bulk** raster download for offline folders.
+The log viewer loads OSM/Esri tiles **directly in the browser**; this script is optional
+**bulk** raster download for offline folders or static hosting.
 
 Sources:
   osm  — OpenStreetMap standard map (PNG). Policy:
@@ -173,8 +173,9 @@ def main() -> int:
         return 2
     west, south, east, north = parts
 
-    if args.min_zoom < 0 or max_z > 22 or args.min_zoom > max_z:
-        print("invalid zoom range (use 0–22, min<=max)", file=sys.stderr)
+    z_cap = 22 if src == "esri" else 19
+    if args.min_zoom < 0 or max_z > z_cap or args.min_zoom > max_z:
+        print(f"invalid zoom range (use 0–{z_cap} for {src}, min<=max)", file=sys.stderr)
         return 2
 
     total = count_tiles(west, south, east, north, args.min_zoom, max_z)

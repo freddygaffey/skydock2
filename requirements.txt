@@ -4,5 +4,5 @@ pymavlink
 pyserial
 sqlalchemy
 flask
-numpy
-sklearn
+imageio-ffmpeg
+scikit-learn

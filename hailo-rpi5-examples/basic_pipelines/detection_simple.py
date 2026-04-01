@@ -45,7 +45,7 @@ class user_app_callback_class(app_callback_class):
 
 # User-defined callback function: This is the callback function that will be called when data is available from the pipeline
 def app_callback(pad, info, user_data):
-
+    save_frames_per_frame = 2 # save x frames out of y frames
     buffer = info.get_buffer()  # Get the GstBuffer from the probe info
     if buffer is None:  # Check if the buffer is valid
         return Gst.PadProbeReturn.OK
@@ -76,7 +76,7 @@ def app_callback(pad, info, user_data):
         app_callback.count = 0
     app_callback.count += 1
 
-    if app_callback.count % 5 == 0:
+    if app_callback.count % save_frames_per_frame == 0:
         success, map_info = buffer.map(Gst.MapFlags.READ)
         if success:
             try:

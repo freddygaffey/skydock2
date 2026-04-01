@@ -14,19 +14,35 @@
         <span class="muted">({{ 'found' if missions_root_exists else 'missing' }})</span></div>
     </div>
     <div class="d-flex gap-2 align-items-center">
-      <a href="{{ url_for('log_web.compare_page') }}" class="btn btn-sm btn-outline-info">&hArr; Compare missions</a>
+      <select id="srcSelect" class="form-select form-select-sm" style="width:auto">
+        <option value="sim" {% if src == 'sim' %}selected{% endif %}>Sim</option>
+        <option value="rpi" {% if src == 'rpi' %}selected{% endif %}>Real (RPi)</option>
+      </select>
+      {% if src == 'rpi' %}
+      <button id="syncBtn" class="btn btn-sm btn-outline-warning">Sync RPi</button>
+      {% endif %}
+      <a href="{{ url_for('log_web.compare_page', src=src) }}" class="btn btn-sm btn-outline-info">&hArr; Compare missions</a>
       <button id="themeBtn"></button>
     </div>
   </div>
+
+  {% if src == 'rpi' %}
+  <div id="syncStatus" class="alert alert-secondary d-none mb-3" role="alert"></div>
+  {% endif %}
+
   <div class="row g-3">
     <div class="col-12 col-lg-8">
       <div class="card p-3">
-        <h5 class="mb-3">Missions</h5>
+        <h5 class="mb-3">Missions
+          <span class="badge {% if src == 'rpi' %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-1">
+            {{ 'Real (RPi)' if src == 'rpi' else 'Sim' }}
+          </span>
+        </h5>
         <div class="list-group">
           {% for m in missions %}
             {% if m.exists %}
               <a class="list-group-item list-group-item-action"
-                 href="{{ url_for('log_web.mission_dashboard', mission_id=m.id) }}">
+                 href="{{ url_for('log_web.mission_dashboard', mission_id=m.id, src=src) }}">
                 <div class="d-flex justify-content-between align-items-center">
                   <span><b>Mission {{ m.id }}</b></span>
                   <span class="small better">{{ m.path }}</span>
@@ -47,9 +63,9 @@
     </div>
     <div class="col-12 col-lg-4">
       <div class="card p-3">
-        <h5 class="mb-2">SIM ground truth</h5>
-        <div class="small mb-2">Files in <code class="{{ 'better' if sim_root_exists else 'worse' }}">{{ sim_data_path }}</code>
-          <span class="muted">({{ 'found' if sim_root_exists else 'missing' }})</span></div>
+        <h5 class="mb-2">{% if src == 'rpi' %}Ground truth JSON{% else %}SIM ground truth{% endif %}</h5>
+        <div class="small mb-2">{% if src == 'rpi' %}<span class="muted">Names from <code>sim_data</code> and <code>real_missions</code> (for accuracy / compare).</span>{% else %}Files in <code class="{{ 'better' if sim_root_exists else 'worse' }}">{{ sim_data_path }}</code>
+          <span class="muted">({{ 'found' if sim_root_exists else 'missing' }})</span>{% endif %}</div>
         <ul>
           {% for f in sim_files %}<li><code>{{ f }}</code></li>{% endfor %}
           {% if sim_files|length == 0 %}<li class="muted">(none found)</li>{% endif %}
@@ -58,5 +74,41 @@
     </div>
   </div>
 </div>
+<script>
+  document.getElementById('srcSelect').addEventListener('change', function() {
+    window.location.href = '/missions?src=' + this.value;
+  });
+
+  {% if src == 'rpi' %}
+  const syncBtn = document.getElementById('syncBtn');
+  const syncStatus = document.getElementById('syncStatus');
+  syncBtn.addEventListener('click', function() {
+    syncBtn.disabled = true;
+    syncBtn.textContent = 'Syncing…';
+    syncStatus.className = 'alert alert-secondary mb-3';
+    syncStatus.textContent = 'Running rsync…';
+    fetch('/api/sync/rpi', {method: 'POST'})
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          syncStatus.className = 'alert alert-success mb-3';
+          syncStatus.textContent = data.output || 'Sync complete.';
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          syncStatus.className = 'alert alert-danger mb-3';
+          syncStatus.textContent = data.error || 'Sync failed.';
+        }
+        syncBtn.disabled = false;
+        syncBtn.textContent = 'Sync RPi';
+      })
+      .catch(err => {
+        syncStatus.className = 'alert alert-danger mb-3';
+        syncStatus.textContent = String(err);
+        syncBtn.disabled = false;
+        syncBtn.textContent = 'Sync RPi';
+      });
+  });
+  {% endif %}
+</script>
 {% include "partials/sd_theme_script.html" %}
 </body></html>

@@ -83,4 +83,20 @@ pre{background:var(--sd-input);border:1px solid var(--sd-border);
 }
 /* Bootstrap img { max-width:100% } breaks Leaflet tile images (blank basemap; vectors still draw) */
 .leaflet-container img{max-width:none!important}
+/* BBox detection image popup — width matches bindPopup maxWidth */
+.leaflet-container .leaflet-popup.sd-det-leaflet-popup .leaflet-popup-content{
+  max-width:min(420px,92vw)!important;
+  overflow:visible;
+}
+.leaflet-container .leaflet-popup.sd-det-leaflet-popup a.sd-det-open-full{
+  color:var(--sd-accent);
+}
+.leaflet-container .leaflet-popup.sd-det-leaflet-popup .sd-det-wrap .sd-det-img{
+  position:relative;
+  z-index:0;
+  vertical-align:top;
+}
+.leaflet-container .leaflet-popup.sd-det-leaflet-popup .sd-det-wrap .sd-det-cv{
+  z-index:2;
+}
 </style>

@@ -84,7 +84,13 @@ def main():
 
         from sitl import load_mission_file
         configure_mission_dir(allocate_mission_dir(Path(__file__).resolve().parent))
-        init_mission_log(is_sim=False, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
+        truth_basename = os.path.basename(mission_path)
+        init_mission_log(
+            is_sim=False,
+            truth_file=truth_basename,
+            weed_match_m=0.5,
+            min_spray_error_m=float(MIN_SPRAY_ERROR),
+        )
         mission = load_mission_file(mission_path, start_sim_ai=False)
         log_event("mission_plan", logger="main", level="INFO", mission=mission)
 
