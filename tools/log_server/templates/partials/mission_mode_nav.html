@@ -1,0 +1,8 @@
+<div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+  <a class="btn btn-sm {% if nav_active == 'log' %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+     href="{{ log_url }}">Log analysis</a>
+  <a class="btn btn-sm {% if nav_active == 'weed' %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+     href="{{ weed_url }}">Weed marking</a>
+  <a class="btn btn-sm {% if nav_active == 'gc' %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+     href="{{ gc_url }}">GC</a>
+</div>

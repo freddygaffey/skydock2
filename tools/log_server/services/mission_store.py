@@ -71,3 +71,80 @@ def resolve_mission_log(missions_root: Path, mission_id: str) -> Path | None:
         return None
     p = missions_root / mission_id / "mission.jsonl"
     return p if p.exists() else None
+
+
+def real_missions_root() -> Path:
+    return _repo_root() / "real_missions"
+
+
+def setup_root_for_target(target: str, sim_data_root: Path | None = None) -> Path:
+    t = (target or "real").strip().lower()
+    if t == "sim":
+        if sim_data_root is None:
+            raise ValueError("sim_data_root is required for target=sim")
+        return Path(sim_data_root)
+    return real_missions_root()
+
+
+def list_setups(target: str, sim_data_root: Path | None = None) -> list[str]:
+    root = setup_root_for_target(target, sim_data_root)
+    if not root.exists():
+        return []
+    return sorted(p.name for p in root.iterdir() if p.is_file() and p.suffix == ".json")
+
+
+def list_real_mission_setups() -> list[str]:
+    return list_setups("real")
+
+
+def _safe_setup_name(name: str) -> str:
+    safe = Path(name or "").name
+    if not safe or safe != name or not safe.endswith(".json"):
+        raise ValueError("Invalid setup filename")
+    return safe
+
+
+def load_real_mission_setup(name: str) -> dict[str, Any]:
+    safe = _safe_setup_name(name)
+    p = real_missions_root() / safe
+    if not p.is_file():
+        raise FileNotFoundError(safe)
+    with open(p, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Setup must be a JSON object")
+    return data
+
+
+def save_real_mission_setup(name: str, payload: dict[str, Any]) -> Path:
+    safe = _safe_setup_name(name)
+    rm = real_missions_root()
+    rm.mkdir(parents=True, exist_ok=True)
+    p = rm / safe
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\n")
+    return p
+
+
+def load_setup(name: str, target: str, sim_data_root: Path | None = None) -> dict[str, Any]:
+    safe = _safe_setup_name(name)
+    p = setup_root_for_target(target, sim_data_root) / safe
+    if not p.is_file():
+        raise FileNotFoundError(safe)
+    with open(p, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Setup must be a JSON object")
+    return data
+
+
+def save_setup(name: str, payload: dict[str, Any], target: str, sim_data_root: Path | None = None) -> Path:
+    safe = _safe_setup_name(name)
+    root = setup_root_for_target(target, sim_data_root)
+    root.mkdir(parents=True, exist_ok=True)
+    p = root / safe
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\n")
+    return p

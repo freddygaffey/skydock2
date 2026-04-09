@@ -23,14 +23,59 @@ from services.analysis import (
     fsm_tick_path_points,
     telemetry_path_points,
     weed_prediction_points,
+    weed_prediction_points_from_detections,
+    build_setup_scan_path,
 )
-from services.mission_store import iter_events, resolve_mission_log
+from services.mission_store import (
+    iter_events,
+    resolve_mission_log,
+    list_real_mission_setups,
+    load_real_mission_setup,
+    save_real_mission_setup,
+    list_setups,
+    load_setup,
+    save_setup,
+)
+from services.geometry import grid_dedup
 
 bp = Blueprint("log_api", __name__)
 
 # In-memory cache for expensive FOV scans (invalidated when mission.jsonl mtime/size changes).
 _FOV_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _FOV_CACHE_MAX = 16
+
+
+def _setup_payload_from_json(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("Payload must be a JSON object")
+    fc = data.get("field_center")
+    weeds = data.get("weed_locations")
+    scan = data.get("scan_path")
+    if not isinstance(fc, list) or len(fc) != 2:
+        raise ValueError("field_center must be [lat, lon]")
+    if not isinstance(weeds, list):
+        raise ValueError("weed_locations must be a list")
+    if not isinstance(scan, list):
+        raise ValueError("scan_path must be a list")
+    field_center = [float(fc[0]), float(fc[1])]
+    weed_locations: list[dict[str, Any]] = []
+    for i, w in enumerate(weeds):
+        if not isinstance(w, dict):
+            raise ValueError("Each weed location must be an object")
+        lat = float(w["lat"])
+        lon = float(w["lon"])
+        wid = int(w.get("id", i))
+        weed_locations.append({"id": wid, "lat": lat, "lon": lon})
+    scan_path: list[list[float]] = []
+    for p in scan:
+        if not isinstance(p, list) or len(p) != 2:
+            raise ValueError("Each scan_path point must be [lat, lon]")
+        scan_path.append([float(p[0]), float(p[1])])
+    return {
+        "field_center": field_center,
+        "weed_locations": weed_locations,
+        "scan_path": scan_path,
+    }
 
 
 def _fov_cache_key(path: Path, stride: int, states_filter: frozenset[str] | None, max_polygons: int) -> tuple[Any, ...]:
@@ -100,7 +145,19 @@ def mission_weeds_pred(mission_id: str):
     p = _mission_log(mission_id, src)
     do_dedup = request.args.get("dedup", "0") == "1"
     thresh_m = float(request.args.get("thresh_m", "0.5"))
-    pts = weed_prediction_points(p, dedup=do_dedup, thresh_m=thresh_m)
+
+    spacing_raw = request.args.get("spacing_m")
+    min_num_det_raw = request.args.get("min_num_det")
+    if spacing_raw is not None and min_num_det_raw is not None:
+        spacing_m = float(spacing_raw)
+        min_num_det = int(min_num_det_raw)
+        pts = weed_prediction_points_from_detections(
+            p, spacing_m=spacing_m, min_num_det=min_num_det
+        )
+        if do_dedup:
+            pts = grid_dedup(pts, thresh_m)
+    else:
+        pts = weed_prediction_points(p, dedup=do_dedup, thresh_m=thresh_m)
     return jsonify(pts)
 
 
@@ -275,7 +332,20 @@ def mission_sim_compare(mission_id: str):
 
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
-    return jsonify(sim_compare_payload(p, truth_path, thresh_m))
+    spacing_m_raw = request.args.get("spacing_m")
+    min_num_det_raw = request.args.get("min_num_det")
+    spacing_m = float(spacing_m_raw) if spacing_m_raw is not None else None
+    min_num_det = int(min_num_det_raw) if min_num_det_raw is not None else None
+
+    return jsonify(
+        sim_compare_payload(
+            p,
+            truth_path,
+            thresh_m,
+            spacing_m=spacing_m,
+            min_num_det=min_num_det,
+        )
+    )
 
 
 @bp.post("/missions/<mission_id>/generate_video")
@@ -304,6 +374,100 @@ def mission_generate_video(mission_id: str):
         return jsonify({"ok": True, "mission_dir": str(mission_dir)})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
+
+
+@bp.get("/missions/<mission_id>/setup_files")
+def mission_setup_files(mission_id: str):
+    if not mission_id.isdigit():
+        abort(400)
+    return jsonify({"files": list_real_mission_setups()})
+
+
+@bp.get("/setup_files")
+def setup_files():
+    target = request.args.get("target", "real")
+    sim_root: Path = current_app.config["SIM_DATA_ROOT"]
+    return jsonify({"files": list_setups(target, sim_root), "target": target})
+
+
+@bp.get("/missions/<mission_id>/setup_file")
+def mission_setup_file_get(mission_id: str):
+    if not mission_id.isdigit():
+        abort(400)
+    name = request.args.get("name", "")
+    try:
+        payload = load_real_mission_setup(name)
+    except FileNotFoundError:
+        abort(404)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"name": name, "payload": payload})
+
+
+@bp.get("/setup_file")
+def setup_file_get():
+    name = request.args.get("name", "")
+    target = request.args.get("target", "real")
+    sim_root: Path = current_app.config["SIM_DATA_ROOT"]
+    try:
+        payload = load_setup(name, target, sim_root)
+    except FileNotFoundError:
+        abort(404)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"name": name, "payload": payload, "target": target})
+
+
+@bp.post("/missions/<mission_id>/setup_file")
+def mission_setup_file_save(mission_id: str):
+    if not mission_id.isdigit():
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    payload_raw = body.get("payload")
+    try:
+        payload = _setup_payload_from_json(payload_raw)
+        p = save_real_mission_setup(name, payload)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "name": p.name, "path": str(p)})
+
+
+@bp.post("/setup_file")
+def setup_file_save():
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    target = str(body.get("target", "real")).strip().lower()
+    payload_raw = body.get("payload")
+    sim_root: Path = current_app.config["SIM_DATA_ROOT"]
+    try:
+        payload = _setup_payload_from_json(payload_raw)
+        p = save_setup(name, payload, target, sim_root)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "name": p.name, "path": str(p), "target": target})
+
+
+@bp.post("/missions/<mission_id>/setup_scan_path")
+def mission_setup_scan_path(mission_id: str):
+    if not mission_id.isdigit():
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    weeds = body.get("weed_locations") or []
+    lane_step_m = float(body.get("lane_step_m", 8.0))
+    pad_m = float(body.get("pad_m", 3.0))
+    scan_path = build_setup_scan_path(weeds, lane_step_m=lane_step_m, pad_m=pad_m)
+    return jsonify({"scan_path": scan_path, "count": len(scan_path)})
+
+
+@bp.post("/setup_scan_path")
+def setup_scan_path():
+    body = request.get_json(silent=True) or {}
+    weeds = body.get("weed_locations") or []
+    lane_step_m = float(body.get("lane_step_m", 8.0))
+    pad_m = float(body.get("pad_m", 3.0))
+    scan_path = build_setup_scan_path(weeds, lane_step_m=lane_step_m, pad_m=pad_m)
+    return jsonify({"scan_path": scan_path, "count": len(scan_path)})
 
 
 @bp.post("/api/sync/rpi")

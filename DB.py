@@ -14,6 +14,14 @@ from contextlib import contextmanager
 
 Base = declarative_base()
 
+_db_path = "droneDB.db"
+
+
+def set_db_path(path: str) -> None:
+    """Set the DB file path before the singleton is first instantiated."""
+    global _db_path
+    _db_path = path
+
 
 class WaypointModel(Base):
     """Waypoint model for scan pattern navigation"""
@@ -116,10 +124,10 @@ class DatabaseSession:
     _engine = None
     _session_factory = None
     
-    def __new__(cls, db_path: str = "droneDB.db"):
+    def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._initialize(db_path)
+            cls._instance._initialize(_db_path)
         return cls._instance
     
     def _initialize(self, db_path: str):
@@ -162,8 +170,7 @@ class DatabaseSession:
         return self._engine
 
 
-# Global database session singleton
-db_session = DatabaseSession()
+# Note: DatabaseSession is instantiated lazily by DBAbstraction after set_db_path() is called.
 
 
 ######################### 

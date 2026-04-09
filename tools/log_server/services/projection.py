@@ -53,6 +53,9 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
         def get_rotation_at_time(self, _time_ns: Any) -> Any:
             return SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)
 
+        def get_position_at_time(self, _time_ns: Any) -> Any:
+            return SimpleNamespace(lat=self.latitude, lon=self.longitude)
+
     return _LogDroneState()
 
 

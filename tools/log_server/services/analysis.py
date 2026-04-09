@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,7 @@ from services.projection import (
     drone_state_from_dict,
     ground_project_list,
 )
+from constants import MIN_NUM_DET, MIN_WEED_SPACING
 
 
 def weed_prediction_points(path: Path, dedup: bool, thresh_m: float) -> list[dict[str, float]]:
@@ -31,6 +34,175 @@ def weed_prediction_points(path: Path, dedup: bool, thresh_m: float) -> list[dic
     if dedup:
         pts = grid_dedup(pts, thresh_m)
     return pts
+
+
+_WEED_DETECTION_CLUSTER_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, float]]] = OrderedDict()
+_WEED_DETECTION_CLUSTER_CACHE_MAX = 16
+
+
+def _weed_detection_cluster_cache_get(key: tuple[Any, ...]) -> list[dict[str, float]] | None:
+    if key not in _WEED_DETECTION_CLUSTER_CACHE:
+        return None
+    _WEED_DETECTION_CLUSTER_CACHE.move_to_end(key)
+    return _WEED_DETECTION_CLUSTER_CACHE[key]
+
+
+def _weed_detection_cluster_cache_set(key: tuple[Any, ...], value: list[dict[str, float]]) -> None:
+    _WEED_DETECTION_CLUSTER_CACHE[key] = value
+    _WEED_DETECTION_CLUSTER_CACHE.move_to_end(key)
+    while len(_WEED_DETECTION_CLUSTER_CACHE) > _WEED_DETECTION_CLUSTER_CACHE_MAX:
+        _WEED_DETECTION_CLUSTER_CACHE.popitem(last=False)
+
+
+def weed_prediction_points_from_detections(
+    path: Path,
+    *,
+    spacing_m: float,
+    min_num_det: int,
+) -> list[dict[str, float]]:
+    """
+    Recompute predicted weed points by reclustering projected detection centers.
+
+    This reclustering mirrors the intent of `states/scan.py::prosess_all_scan_data()`:
+    - project `frame.detections[]` bbox centers to (lat, lon)
+    - add a detection to the nearest cluster if distance < `spacing_m`
+    - otherwise create a new cluster
+    - keep only clusters with `count >= min_num_det`
+
+    Returns: `[{lat, lon}, ...]` (no grid-dedup applied here).
+    """
+    st = path.stat()
+    cache_key = (str(path.resolve()), st.st_mtime_ns, st.st_size, float(spacing_m), int(min_num_det))
+    cached = _weed_detection_cluster_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    spacing_m = float(spacing_m)
+    min_num_det = int(min_num_det)
+    if min_num_det <= 0:
+        min_num_det = 1
+
+    # Each cluster stores running sums to output avg location.
+    clusters: list[dict[str, float]] = []  # {"lat_sum":..., "lon_sum":..., "n":...}
+
+    for ev in iter_events_of_kind(path, "fsm_tick"):
+        frame = ev.get("frame")
+        if not isinstance(frame, dict):
+            continue
+        dets = frame.get("detections") or []
+        if not isinstance(dets, list) or not dets:
+            continue
+
+        ds_dict = ev.get("drone_state")
+        if not isinstance(ds_dict, dict):
+            continue
+        ds_obj = drone_state_from_dict(ds_dict)
+        if ds_obj is None:
+            continue
+
+        for det in dets:
+            if not isinstance(det, dict):
+                continue
+            bbox = det.get("bbox")
+            if not bbox or not isinstance(bbox, list) or len(bbox) < 2:
+                continue
+            try:
+                p0, p1 = bbox[0], bbox[1]
+                x0, y0 = float(p0[0]), float(p0[1])
+                x1, y1 = float(p1[0]), float(p1[1])
+            except Exception:
+                continue
+
+            # Project bbox center to ground lat/lon via the repo geometry helpers.
+            label = str(det.get("label") or "")
+            conf = det.get("confidence")
+            try:
+                conf_f = float(conf) if conf is not None else 0.0
+            except Exception:
+                conf_f = 0.0
+
+            d_obj = Detection(label=label, confidence=conf_f, bbox=[(x0, y0), (x1, y1)])
+            try:
+                la, lo = detection_to_latlon(ds_obj, d_obj)
+                la = float(la)
+                lo = float(lo)
+            except Exception:
+                continue
+
+            if not clusters:
+                clusters.append({"lat_sum": la, "lon_sum": lo, "n": 1.0})
+                continue
+
+            best_i = 0
+            best_d = float("inf")
+            for i, c in enumerate(clusters):
+                ca_lat = c["lat_sum"] / c["n"]
+                ca_lon = c["lon_sum"] / c["n"]
+                d = haversine_m(ca_lat, ca_lon, la, lo)
+                if d < best_d:
+                    best_d = d
+                    best_i = i
+
+            if best_d < spacing_m:
+                c = clusters[best_i]
+                c["lat_sum"] += la
+                c["lon_sum"] += lo
+                c["n"] += 1.0
+            else:
+                clusters.append({"lat_sum": la, "lon_sum": lo, "n": 1.0})
+
+    out: list[dict[str, float]] = []
+    for c in clusters:
+        if int(c["n"]) >= min_num_det:
+            out.append(
+                {"lat": float(c["lat_sum"] / c["n"]), "lon": float(c["lon_sum"] / c["n"])}
+            )
+
+    _weed_detection_cluster_cache_set(cache_key, out)
+    return out
+
+
+def build_setup_scan_path(
+    weed_locations: list[dict[str, Any]],
+    lane_step_m: float = 8.0,
+    pad_m: float = 3.0,
+) -> list[list[float]]:
+    """Build a simple boustrophedon scan path around weeds: [[lat, lon], ...]."""
+    pts: list[tuple[float, float]] = []
+    for w in weed_locations or []:
+        try:
+            pts.append((float(w["lat"]), float(w["lon"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not pts:
+        return []
+    lats = [p[0] for p in pts]
+    lons = [p[1] for p in pts]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    center_lat = (min_lat + max_lat) * 0.5
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = max(1.0, 111_320.0 * abs(math.cos(math.radians(center_lat))))
+    pad_lat = pad_m / m_per_deg_lat
+    pad_lon = pad_m / m_per_deg_lon
+    min_lat -= pad_lat
+    max_lat += pad_lat
+    min_lon -= pad_lon
+    max_lon += pad_lon
+    lat_step = max(0.5, lane_step_m) / m_per_deg_lat
+    n_lanes = max(2, int((max_lat - min_lat) / lat_step) + 1)
+    out: list[list[float]] = []
+    for i in range(n_lanes):
+        la = min_lat + i * lat_step
+        if la > max_lat:
+            la = max_lat
+        if i % 2 == 0:
+            out.append([la, min_lon])
+            out.append([la, max_lon])
+        else:
+            out.append([la, max_lon])
+            out.append([la, min_lon])
+    return out
 
 
 def _normalize_fsm_state_name(raw: str | None) -> str | None:
@@ -75,11 +247,13 @@ def camera_fov_polygons_from_fsm_ticks(
     ``None`` or ``<= 0`` means no cap. Returns ``(polygons, was_capped, count_before_cap)``.
     """
     out: list[dict[str, Any]] = []
+    first_added = False
+    last_row: dict[str, Any] | None = None
+    last_tick_index: int | None = None
+    last_added_tick_index: int | None = None
     count = 0
     for ev in iter_events_of_kind(path, "fsm_tick"):
         count += 1
-        if stride > 1 and (count % stride) != 0:
-            continue
         st = _normalize_fsm_state_name(ev.get("state"))
         if states_filter is not None and (st is None or st not in states_filter):
             continue
@@ -88,16 +262,41 @@ def camera_fov_polygons_from_fsm_ticks(
         if not fp:
             continue
         d = ds if isinstance(ds, dict) else {}
+
+        # Save last valid row regardless of sampling, then append it at the end
+        # so "every Nth tick" still shows the very first and very last footprints.
         row: dict[str, Any] = {
             "ts": ev.get("ts"),
             "footprint": fp,
             "lat": float(d.get("latitude") or 0.0),
             "lon": float(d.get("longitude") or 0.0),
         }
+        row["_tick_index"] = count  # internal: used to de-dup first/last sampling endpoints
         if st:
             row["state"] = st
-        out.append(row)
+
+        # Sampling: include the first valid match, then every Nth tick thereafter.
+        # The last valid match is appended after the loop (so it is always included).
+        if stride <= 1:
+            out.append(row)
+            first_added = True
+            last_added_tick_index = count
+        else:
+            if not first_added:
+                out.append(row)
+                first_added = True
+                last_added_tick_index = count
+            elif (count % stride) == 0:
+                out.append(row)
+                last_added_tick_index = count
+
+        last_row = row
+        last_tick_index = count
     raw_n = len(out)
+    # Ensure the final valid tick is present even if it doesn't land on an "every Nth" boundary.
+    if last_row is not None and (last_added_tick_index != last_tick_index):
+        out.append(last_row)
+        raw_n = len(out)
     if max_polygons is None or max_polygons <= 0 or raw_n <= max_polygons:
         return out, False, raw_n
     capped = _subsample_polygon_rows(out, max_polygons)
@@ -124,11 +323,13 @@ def telemetry_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
 def fsm_tick_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
     """GPS path from ``fsm_tick`` drone_state — same state stream as camera / bbox projection (aligns with overlays)."""
     pts: list[dict[str, Any]] = []
+    first_added = False
+    last_point: dict[str, Any] | None = None
+    last_tick_index: int | None = None
+    last_added_tick_index: int | None = None
     count = 0
     for ev in iter_events_of_kind(path, "fsm_tick"):
         count += 1
-        if stride > 1 and (count % stride) != 0:
-            continue
         ds = ev.get("drone_state", {})
         if not isinstance(ds, dict):
             continue
@@ -139,7 +340,36 @@ def fsm_tick_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
             continue
         if la == 0.0 and lo == 0.0:
             continue
-        pts.append({"lat": la, "lon": lo, "alt": ds.get("altitude_rel_home", 0), "ts": ev.get("ts", "")})
+
+        # Build and save last valid point regardless of sampling; append it after the loop
+        # so "every Nth tick" sampling always includes the last point.
+        row = {
+            "lat": la,
+            "lon": lo,
+            "alt": ds.get("altitude_rel_home", 0),
+            "ts": ev.get("ts", ""),
+            "state": ev.get("state", ""),
+            "_tick_index": count,  # internal: used to de-dup endpoints
+        }
+
+        if stride <= 1:
+            pts.append(row)
+            first_added = True
+            last_added_tick_index = count
+        else:
+            if not first_added:
+                pts.append(row)
+                first_added = True
+                last_added_tick_index = count
+            elif (count % stride) == 0:
+                pts.append(row)
+                last_added_tick_index = count
+
+        last_point = row
+        last_tick_index = count
+
+    if last_point is not None and (last_added_tick_index != last_tick_index):
+        pts.append(last_point)
     return pts
 
 
@@ -240,6 +470,13 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
 
     sim_truth_raw = header.get("sim_truth_file")
     sim_truth_file = Path(str(sim_truth_raw)).name if sim_truth_raw else None
+
+    # Defaults used by the in-run `prosess_all_scan_data()` clustering in `states/scan.py`.
+    # Mission logs currently store `weed_match_m`, but not the clustering constants; we expose
+    # these code defaults so the UI can show an "Actual (default)" marker next to sliders.
+    if header is not None and isinstance(header, dict):
+        header.setdefault("min_weed_spacing_m_default", float(MIN_WEED_SPACING))
+        header.setdefault("min_num_det_default", int(MIN_NUM_DET))
 
     alt_min = min(alts) if alts else None
     alt_max = max(alts) if alts else None
@@ -486,6 +723,9 @@ def sim_compare_payload(
     mission_log: Path,
     truth_path: Path,
     thresh_m: float,
+    *,
+    spacing_m: float | None = None,
+    min_num_det: int | None = None,
 ) -> dict[str, Any]:
     data = json.loads(truth_path.read_text(encoding="utf-8"))
     raw_weeds = data.get("weed_locations", [])
@@ -496,7 +736,15 @@ def sim_compare_payload(
         else:
             truth.append({"id": i, "lat": float(w[0]), "lon": float(w[1])})
 
-    pred = weed_prediction_points(mission_log, dedup=True, thresh_m=thresh_m)
+    if spacing_m is not None and min_num_det is not None:
+        # Recluster from raw detections, then apply the same match-radius grid dedup
+        # used by the legacy "weed_detected" path.
+        pred = weed_prediction_points_from_detections(
+            mission_log, spacing_m=spacing_m, min_num_det=min_num_det
+        )
+        pred = grid_dedup(pred, thresh_m)
+    else:
+        pred = weed_prediction_points(mission_log, dedup=True, thresh_m=thresh_m)
 
     used: set[int] = set()
     tp = fp = 0

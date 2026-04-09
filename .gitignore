@@ -1,5 +1,8 @@
+CLAUDE.md
 venv_wsl_no_hailo/
 droneDB.db
+mav.tlog
+mav.tlog.raw
 backups/
 missions/
 rpi_missions/

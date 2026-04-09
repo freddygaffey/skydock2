@@ -69,6 +69,63 @@
       return this.FOV_STATE_COLORS[k] || this.CAMERA_FRAME_COLOR;
     },
 
+    /** Drone path polyline stroke: FSM segment colors; default blue when state missing (older logs). */
+    pathStrokeForFsmState: function (state) {
+      var k = this.normalizeFsmStateKey(state);
+      if (!k) return "#4a9eff";
+      return this.FOV_STATE_COLORS[k] || "#4a9eff";
+    },
+
+    /**
+     * Path as a LayerGroup of polylines, colored by <code>state</code> per segment (matches FOV / timeline).
+     * @param {Array<{lat:number,lon:number,state?:string}>} pathPts — from <code>/path?source=fsm</code>
+     * @param {{pane?:string,weight?:number,opacity?:number}} [opts]
+     * @returns {L.LayerGroup}
+     */
+    pathLayerFsmColored: function (pathPts, opts) {
+      opts = opts || {};
+      var pane = opts.pane;
+      var w = opts.weight != null ? opts.weight : 2;
+      var op = opts.opacity != null ? opts.opacity : 0.65;
+      var pts = (pathPts || []).filter(function (p) {
+        return p && (p.lat || p.lon);
+      });
+      if (!pts.length) return L.layerGroup([]);
+      var layers = [];
+      var seg = [[pts[0].lat, pts[0].lon]];
+      var segState = pts[0].state;
+      for (var i = 1; i < pts.length; i++) {
+        var k = this.normalizeFsmStateKey(pts[i].state);
+        var kSeg = this.normalizeFsmStateKey(segState);
+        if (k !== kSeg) {
+          layers.push(
+            L.polyline(seg, {
+              color: this.pathStrokeForFsmState(segState),
+              weight: w,
+              opacity: op,
+              pane: pane,
+            })
+          );
+          seg = [
+            [pts[i - 1].lat, pts[i - 1].lon],
+            [pts[i].lat, pts[i].lon],
+          ];
+          segState = pts[i].state;
+        } else {
+          seg.push([pts[i].lat, pts[i].lon]);
+        }
+      }
+      layers.push(
+        L.polyline(seg, {
+          color: this.pathStrokeForFsmState(segState),
+          weight: w,
+          opacity: op,
+          pane: pane,
+        })
+      );
+      return L.layerGroup(layers);
+    },
+
     /**
      * Convex hull of lat/lon points (small-field approximation: local equirectangular plane).
      * @param {Array<[number,number]>} latLonPts — [lat, lon]
@@ -121,7 +178,7 @@
       return hull.map(toLL);
     },
 
-    BBOX_GROUND_STROKE: "#e53935",
+    BBOX_GROUND_STROKE: "#ff9800",
 
     /** [[x,y],[x,y]] or [x0,y0,x1,y1] from JSON; null if unusable. */
     normalizeBboxPx: function (bx) {
@@ -155,7 +212,12 @@
       var ih = img.naturalHeight || 640;
       var cw = img.clientWidth;
       var ch = img.clientHeight;
-      if (cw < 2 || ch < 2) return false;
+      // Some “No photo in log” cases use placeholder images that may not have a layout size
+      // at the instant the popup painter runs. Fall back to natural sizes so we still draw.
+      if (cw < 2 || ch < 2) {
+        cw = iw;
+        ch = ih;
+      }
       canvas.width = cw;
       canvas.height = ch;
       canvas.style.width = cw + "px";
@@ -310,16 +372,17 @@
       var headline =
         (o.tagPrefix || "") + "<b>" + label + "</b>" + (conf ? " · " + conf : "") + " · frame #" + fi + tTag;
       var photo = frame.photo_path && frame.photo_path !== "No photo taken";
-      if (!photo) {
-        return headline + '<br><span class="muted small">No image in log</span>';
-      }
-      var imgUrl =
-        "/missions/" +
-        o.missionId +
-        "/image?path=" +
-        encodeURIComponent(frame.photo_path) +
-        "&src=" +
-        encodeURIComponent(o.src || "sim");
+      // Even when the real photo is missing, still return popup markup that includes an <img> + <canvas>
+      // so the bbox overlay painter can run and show the detection geometry.
+      var imgUrl = photo
+        ? "/missions/" +
+          o.missionId +
+          "/image?path=" +
+          encodeURIComponent(frame.photo_path) +
+          "&src=" +
+          encodeURIComponent(o.src || "sim")
+        : this.TILE_ERROR_URL;
+      var noPhotoNote = photo ? "" : '<div class="muted small mt-1">No image in log</div>';
       var navIdx =
         o.frameListIndex != null && o.frameListIndex !== ""
           ? Number(o.frameListIndex)
@@ -329,6 +392,9 @@
       var fiOk = Number.isFinite(navIdx);
       /* Mission dashboard: data-sd-frame-index → Frames tab selectFrameIndex (frame_events list index). */
       var openFullLink =
+        !photo
+          ? ""
+          :
         '<div class="mt-1" style="font-size:11px">' +
         '<a class="sd-det-open-full" href="' +
         imgUrl +
@@ -351,7 +417,9 @@
         var altNb = [rawLabelNb, conf, "frame " + fi, annotationPlain, "no pixel bbox"].filter(Boolean).join(", ");
         return (
           headline +
-          '<br><span class="muted small">No pixel bbox</span><br><img src="' +
+          '<br><span class="muted small">No pixel bbox</span>' +
+          (photo ? "" : '<br><span class="muted small">No image in log</span>') +
+          '<br><img src="' +
           imgUrl +
           '" alt="' +
           escAttr(altNb) +
@@ -382,6 +450,7 @@
         '<div class="small mb-1">' +
         headline +
         "</div>" +
+        noPhotoNote +
         '<div class="position-relative sd-det-wrap" data-sd-det-payload="' +
         detPayload +
         '" style="line-height:0">' +
@@ -469,8 +538,25 @@
         var ev = sprayEvs[i];
         var ll = this.sprayEventLatLon(ev);
         if (!ll) continue;
-        var col =
-          ev.event === "weed_sprayed" || ev.event === "spray_attempt" ? "#4adf86" : "#ff4a4a";
+        var w = ev && (ev.weed || ev.target_weed) ? (ev.weed || ev.target_weed) : {};
+        var weedKey = null;
+        if (w && w.id != null) weedKey = String(w.id);
+        // Fallback: stable-ish key based on coordinates (rounded).
+        if (weedKey == null) {
+          var la0 = ll[0],
+            lo0 = ll[1];
+          weedKey = String(Math.round(la0 * 1e6)) + "," + String(Math.round(lo0 * 1e6));
+        }
+        function hashStr(s) {
+          var h = 0;
+          for (var k = 0; k < s.length; k++) h = (h * 31 + s.charCodeAt(k)) >>> 0;
+          return h;
+        }
+        var paletteGreen = ["#2ecc71", "#4adf86", "#6bf1a3", "#1abc9c", "#00d084", "#16a085"];
+        var paletteRed = ["#ff4a4a", "#ff6b6b", "#ff5252", "#e74c3c", "#f25f5c", "#c0392b"];
+        var pal = ev.event === "weed_sprayed" || ev.event === "spray_attempt" ? paletteGreen : paletteRed;
+        var idx = hashStr(weedKey) % pal.length;
+        var col = pal[idx];
         out.push(
           L.circleMarker(ll, {
             radius: 8,

@@ -1,0 +1,208 @@
+<!doctype html>
+<html><head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Weed marking utility – Skydock</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="{{ url_for('static', filename='map_shared.js') }}"></script>
+  {% include "partials/sd_theme_style.html" %}
+  <style>
+    /* Full-height utility: map uses remaining viewport */
+    .weed-shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .weed-main {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    @media (min-width: 992px) {
+      .weed-main {
+        flex-direction: row;
+        align-items: stretch;
+        min-height: calc(100vh - 120px);
+      }
+    }
+    .weed-sidebar {
+      flex-shrink: 0;
+      background: var(--sd-input, rgba(0,0,0,0.15));
+      border-bottom: 1px solid var(--sd-border);
+      max-height: 42vh;
+      overflow-y: auto;
+    }
+    @media (min-width: 992px) {
+      .weed-sidebar {
+        width: min(380px, 38vw);
+        max-height: none;
+        border-bottom: none;
+        border-right: 1px solid var(--sd-border);
+        align-self: stretch;
+      }
+    }
+    .weed-map-wrap {
+      flex: 1;
+      min-width: 0;
+      min-height: 280px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .leaflet-container.weed-click-add {
+      cursor: crosshair !important;
+    }
+    #map {
+      flex: 1;
+      min-height: 280px;
+      border-radius: 0;
+    }
+    @media (min-width: 992px) {
+      #map {
+        border-radius: 0 8px 8px 0;
+      }
+    }
+    .weed-section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--sd-muted);
+      margin-bottom: 0.35rem;
+    }
+    .weed-btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.35rem;
+    }
+    @media (min-width: 400px) {
+      .weed-btn-grid--dense {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head><body>
+<div class="weed-shell container-fluid px-0">
+
+  <div class="px-3 pt-3 pb-2 border-bottom border-secondary border-opacity-25" style="border-color: var(--sd-border) !important;">
+    <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+      <div>
+        <h2 class="mb-0 h4">Weed marking</h2>
+        <div class="muted small">Setup JSON (<code class="small">sv.json</code> schema)</div>
+      </div>
+      <div class="d-flex gap-2 align-items-center">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.missions_list', src=src) }}">← Home</a>
+        <button id="themeBtn"></button>
+      </div>
+    </div>
+    {% include "partials/mission_mode_nav.html" %}
+  </div>
+
+  <div class="weed-main">
+    <aside class="weed-sidebar p-3">
+      <div class="weed-section-title">Map</div>
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+        <button id="tileToggle" type="button" class="btn btn-sm btn-outline-secondary">Satellite</button>
+        <div class="d-flex flex-wrap gap-3 align-items-center small">
+          <label class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="checkbox" id="layerPath" checked>
+            <span>Path</span>
+          </label>
+          <label class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="checkbox" id="layerPred" checked>
+            <span>Truths</span>
+          </label>
+          <label class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="checkbox" id="layerSpray" checked>
+            <span>Spray</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="weed-section-title">Setup file</div>
+      <div class="mb-3">
+        <label class="form-label small mb-1">Save to</label>
+        <select id="setupTargetSel" class="form-select form-select-sm">
+          <option value="real">Real (<code>real_missions/</code>)</option>
+          <option value="sim">Sim (<code>sim_data/</code>)</option>
+        </select>
+      </div>
+      <div class="row g-2 mb-2">
+        <div class="col-12">
+          <label class="form-label small mb-0">Filename</label>
+          <input id="setupNameInput" class="form-control form-control-sm" placeholder="field_2026-04-01.json">
+        </div>
+        <div class="col-6">
+          <button id="setupSaveBtn" type="button" class="btn btn-sm btn-primary w-100">Save</button>
+        </div>
+        <div class="col-6">
+          <select id="setupLoadSel" class="form-select form-select-sm">
+            <option value="">Load…</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="weed-section-title">Truth weeds</div>
+      <div class="d-grid gap-1 mb-2 weed-btn-grid">
+        <button id="setupClickWeedBtn" type="button" class="btn btn-sm btn-outline-secondary" title="When on, click the map to place a weed (scan path edit uses clicks while Edit is on)">Click map: Off</button>
+        <button id="setupMarkDroneBtn" type="button" class="btn btn-sm btn-outline-secondary">Mark @ drone</button>
+        <button id="setupUndoBtn" type="button" class="btn btn-sm btn-outline-secondary">Undo</button>
+        <button id="setupClearBtn" type="button" class="btn btn-sm btn-outline-secondary">Clear weeds</button>
+      </div>
+      <label class="form-label small mb-1">Or add by coordinates</label>
+      <div class="row g-1 mb-1">
+        <div class="col-6">
+          <input id="setupWeedLat" class="form-control form-control-sm" type="text" inputmode="decimal" placeholder="Latitude" autocomplete="off">
+        </div>
+        <div class="col-6">
+          <input id="setupWeedLon" class="form-control form-control-sm" type="text" inputmode="decimal" placeholder="Longitude" autocomplete="off">
+        </div>
+      </div>
+      <div class="d-flex gap-1 mb-1">
+        <button id="setupAddWeedCoordsBtn" type="button" class="btn btn-sm btn-outline-secondary flex-fill">Add at lat/lon</button>
+        <button id="setupJumpCoordsBtn" type="button" class="btn btn-sm btn-outline-secondary flex-fill" title="Pan map to these coordinates">Jump to lat/lon</button>
+      </div>
+      <label class="form-label small mb-1">Jump to a weed</label>
+      <div class="d-flex gap-1 mb-3">
+        <select id="setupJumpWeedSel" class="form-select form-select-sm flex-grow-1" title="Choose a marked weed">
+          <option value="">(no weeds yet)</option>
+        </select>
+        <button id="setupJumpWeedBtn" type="button" class="btn btn-sm btn-outline-secondary text-nowrap">Go</button>
+      </div>
+
+      <div class="weed-section-title">Scan path</div>
+      <div class="d-grid gap-1 mb-2 weed-btn-grid weed-btn-grid--dense">
+        <button id="setupGenPathBtn" type="button" class="btn btn-sm btn-outline-secondary">Generate path</button>
+        <button id="setupEditPathBtn" type="button" class="btn btn-sm btn-outline-secondary">Edit: Off</button>
+        <button id="setupInsertPathBtn" type="button" class="btn btn-sm btn-outline-secondary">Insert: Off</button>
+        <button id="setupAddPathDroneBtn" type="button" class="btn btn-sm btn-outline-secondary">Waypoint @ drone</button>
+        <button id="setupDeletePathBtn" type="button" class="btn btn-sm btn-outline-secondary">Delete sel.</button>
+        <button id="setupUndoPathBtn" type="button" class="btn btn-sm btn-outline-secondary">Undo wpt</button>
+        <button id="setupReversePathBtn" type="button" class="btn btn-sm btn-outline-secondary">Reverse</button>
+        <button id="setupClearPathBtn" type="button" class="btn btn-sm btn-outline-secondary">Clear path</button>
+      </div>
+
+      <div id="setupStatus" class="small text-muted border-top pt-2 mt-1" style="border-color: var(--sd-border) !important;">
+        <b>Jump to weed</b> or <b>Jump to lat/lon</b> pans the map. <b>Click map</b> adds weeds. Path <b>Edit</b> uses clicks for waypoints.
+      </div>
+    </aside>
+
+    <div class="weed-map-wrap">
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.__SKYDOCK = {
+  mid: {{ mission_id_json | safe }},
+  src: {{ src_json | safe }},
+  tile_osm: {{ tile_osm_url|tojson }},
+  tile_esri: {{ tile_esri_url|tojson }},
+};
+</script>
+<script src="{{ url_for('static', filename='mission_weed_marking.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% include "partials/sd_theme_script.html" %}
+</body></html>

@@ -25,6 +25,8 @@ class StateMachine:
         match self.current_state:
             case DroneStateEnum.OVERRIDE:
                 self.current_state = self._update_override(frame,drone_state)
+                # todo: remove this 
+                # self.current_state = DroneStateEnum.GOTO
             case DroneStateEnum.SCAN:
                 self.current_state = self._update_scan(frame,drone_state)
             case DroneStateEnum.GOTO:

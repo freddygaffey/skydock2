@@ -13,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from DB import (
-    db_session, WaypointModel, WeedModel, DroneStateModel, DetectionModel, DatabaseSession
+    WaypointModel, WeedModel, DroneStateModel, DetectionModel, DatabaseSession
 )
 from drone_state import DroneStateForHoming, Rotation
 from ai_class import Frame, Detection
@@ -121,9 +121,9 @@ class DBAbstraction:
     Thread-safe through SQLAlchemy's session management.
     """
     
-    def __init__(self, db_path: str = "droneDB.db"):
+    def __init__(self):
         """Initialize database connection"""
-        self.db_session = DatabaseSession(db_path)
+        self.db_session = DatabaseSession()
     
     # ===== WAYPOINT OPERATIONS =====
     
@@ -221,7 +221,7 @@ class DBAbstraction:
         with self.db_session.get_session() as session:
             query = session.query(WeedModel)
             if only_unsprayed:
-                query = query.filter_by(sprayed=False, traveled_to=False)
+                query = query.filter_by(sprayed=False)
             
             weeds = query.all()
             
@@ -494,17 +494,19 @@ class DBAbstraction:
         import json
         import os
         from datetime import datetime
+        from mission_logging import get_mission_dir
 
-        # Create backup directory if needed
-        os.makedirs(backup_dir, exist_ok=True)
-
-        # Generate timestamped filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = os.path.join(backup_dir, f"drone_backup_{timestamp}.json")
+        mission_dir = get_mission_dir()
+        if mission_dir is not None:
+            backup_path = str(mission_dir / "database_snapshot.json")
+        else:
+            os.makedirs(backup_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = os.path.join(backup_dir, f"drone_backup_{timestamp}.json")
 
         # Collect all data
         backup_data = {
-            "timestamp": timestamp,
+            "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "stats": self.get_stats(),
             "waypoints": [],
             "weeds": [],

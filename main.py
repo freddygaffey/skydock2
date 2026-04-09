@@ -1,45 +1,97 @@
 import sys
 import os
+import time
 
 def main():
     is_sim = "-s" in sys.argv or "--sim" in sys.argv
 
+    speed = int(float(sys.argv[sys.argv.index("--speedup") + 1])) if "--speedup" in sys.argv else (int(float(sys.argv[sys.argv.index("--speed") + 1])) if "--speed" in sys.argv else 1)
+
     if is_sim:
-        speed = int(float(sys.argv[sys.argv.index("--speed") + 1])) if "--speed" in sys.argv else 1
-        from sitl import launch_sitl_process
-        sitl_proc = launch_sitl_process(speed)
+        from sitl import slot_port, get_sim_files,start_sim, SLOT_BASE_PORT, SLOT_PORT_STEP
+        import subprocess
+
+        if "--sim-port" not in sys.argv:
+            # top-level invocation: launch one subprocess per sim file
+            sim_files = get_sim_files()
+            start_sim(speed, count=len(sim_files))
+            if len(sim_files) > 1:
+                children = []
+                for slot, f in enumerate(sim_files):
+                    port = slot_port(slot)
+                    # essenaliy calling recucivly
+                    cmd = (
+                        f"{sys.executable} main.py --sim '{f}' --sim-port {port} --speedup {speed}; "
+                        f"echo 'Done - press enter to close'; read"
+                    )
+                    children.append(subprocess.Popen(
+                        ["xterm", "-title", f"Vehicle {slot} - {f}", "-e", "bash", "-c", cmd]
+                    ))
+                try:
+                    for c in children:
+                        c.wait()
+                except KeyboardInterrupt:
+                    for c in children:
+                        c.terminate()
+                    from sitl import kill_sim
+                    kill_sim()
+                return
+
+        sim_port = int(sys.argv[sys.argv.index("--sim-port") + 1]) if "--sim-port" in sys.argv else 14552
+        slot = (sim_port - SLOT_BASE_PORT) // SLOT_PORT_STEP
+
+        connection_string = f"udp:127.0.0.1:{sim_port}"
+    else:
+        connection_string = None
 
     # Imports that connect to the drone must happen after SITL is running
-    from ai_class import ai_storage_singleton
-    from telemetry import telemetry_singlton
-    from fsm import StateMachine
+    import telemetry
+    from telemetry import Telemetry
+    sysid = slot + 1 if is_sim else None
+    telemetry.telemetry_singlton = Telemetry(connection_string=connection_string, sysid=sysid)
+    telemetry_singlton = telemetry.telemetry_singlton
+
     from mission_logging import init_mission_log, allocate_mission_dir, configure_mission_dir
     from constants import MIN_SPRAY_ERROR
     from pathlib import Path
     from mission_logging import log_event
+    from DB import set_db_path
+
+    # set_db_path must be called before fsm is imported (which triggers db_abstraction init)
+    mission_dir = allocate_mission_dir(Path(__file__).resolve().parent)
+    set_db_path(str(mission_dir / "droneDB.db"))
+    configure_mission_dir(mission_dir)
+
+    from ai_class import ai_storage_singleton
+    from fsm import StateMachine
 
     if is_sim:
-        from sitl import (disable_sensor_noise, set_sim_speed, setup_rangefinder,
-                          arm_and_takeoff, get_sim_files, load_mission_file)
+        from sitl import (set_sim_speed, setup_rangefinder,
+                          arm_and_takeoff, get_sim_files,
+                          load_mission_file, enable_sim_rc, kill_sim)
         import constants
         import time
-
         conn = telemetry_singlton.connection
-        # disable_sensor_noise(conn)
+
+        sim_files = get_sim_files()
+        file = sim_files[slot] if slot < len(sim_files) else sim_files[0]
+        init_mission_log(is_sim=True, truth_file=file, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
+
         set_sim_speed(conn, speed)
         setup_rangefinder(conn)
+        enable_sim_rc(conn)
         time.sleep(0.5)
-        arm_and_takeoff(conn, telemetry_singlton)
+        arm_and_takeoff(conn, telemetry_singlton, speed=speed)
 
-        for file in get_sim_files():
-            configure_mission_dir(allocate_mission_dir(Path(__file__).resolve().parent))
-            init_mission_log(is_sim=True, truth_file=file, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
-            load_mission_file(file)
-            fsm = StateMachine()
+        load_mission_file(file)
+        fsm = StateMachine()
+        try:
             while fsm.update() is not False:
                 time.sleep((1 / 30) / constants.SIM_SPEED)
-
-        sitl_proc.terminate()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            kill_sim()
         return
     else:
         def ask():
@@ -83,7 +135,6 @@ def main():
             return
 
         from sitl import load_mission_file
-        configure_mission_dir(allocate_mission_dir(Path(__file__).resolve().parent))
         truth_basename = os.path.basename(mission_path)
         init_mission_log(
             is_sim=False,

@@ -8,26 +8,34 @@ from pymavlink import mavutil
 from typing import Callable
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
-from constants import SIM_SPEED
+from constants import SIM_SPEED, SCAN_SPEED_MS
 
 
-class Telemetry(object):
-    def __new__(cls):
-        if not hasattr(cls, 'instance'):
-            cls.instance = super(Telemetry, cls).__new__(cls)
-        return cls.instance
-
-    def __init__(self):
-        self.drone_state = DroneStateForHoming() 
+class Telemetry:
+    def __init__(self, connection_string: str = None, sysid: int = None):
+        self.drone_state = DroneStateForHoming()
+        self._sysid = sysid
         # connect to drone
 
-        connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0","/dev/ttyACM10",None]
+        if connection_string is not None:
+            connection_palths = [connection_string, None]
+        else:
+            connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0", "/dev/ttyACM10", None]
 
         for i in connection_palths:
             try:
                 path_to_uav = i
                 self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
-                self.connection.wait_heartbeat(timeout=5)
+                if sysid is not None:
+                    while True:
+                        msg = self.connection.recv_match(type='HEARTBEAT', blocking=True, timeout=10)
+                        if msg is None:
+                            break
+                        if msg.get_srcSystem() == sysid:
+                            self.connection.target_system = sysid
+                            break
+                else:
+                    self.connection.wait_heartbeat(timeout=5)
                 if self.connection is not None:
                     break
             except serial.serialutil.SerialException:
@@ -51,7 +59,7 @@ class Telemetry(object):
         # drone_state_rate = 1
         self.set_a_message_interval("GLOBAL_POSITION_INT",drone_state_rate)
         self.set_a_message_interval("DISTANCE_SENSOR",drone_state_rate)
-        self.set_a_message_interval("SERVO_OUTPUT_RAW",drone_state_rate)
+        self.set_a_message_interval("RC_CHANNELS",drone_state_rate)
         self.set_a_message_interval("ATTITUDE", 1/50)
         self.set_a_message_interval("HEARTBEAT", 1/2)
 
@@ -62,6 +70,8 @@ class Telemetry(object):
             except serial.SerialException: pass
             if msg is None:
                 time.sleep(0.0003/SIM_SPEED)
+                continue
+            if self._sysid is not None and msg.get_srcSystem() != self._sysid:
                 continue
             self.drone_state.set_pass_message(msg)
             # Throttle telemetry logging; high-rate raw logs are noisy.
@@ -276,17 +286,22 @@ class Telemetry(object):
                 mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
                 0, 0, 0, 0, 0, 0, 0, hight
             )
-    def fly_to_point(self,lat,lon,alt_above_home,bitmask=3576):
+    def fly_to_point(self,lat,lon,alt_above_home,bitmask=3576,speed_ms=SCAN_SPEED_MS):
         log_event(
             "move_command",
             logger="telemetry",
             level="INFO",
             drone_state=self.drone_state,
-            command={"type": "fly_to_point", "lat": lat, "lon": lon, "alt_above_home": alt_above_home, "bitmask": bitmask},
+            command={"type": "fly_to_point", "lat": lat, "lon": lon, "alt_above_home": alt_above_home, "bitmask": bitmask, "speed_ms": speed_ms},
         )
         lat = int(lat * 1e7)
         lon = int(lon * 1e7)
-
+        self.connection.mav.command_long_send(
+            self.connection.target_system,
+            self.connection.target_component,
+            mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
+            0, 1, speed_ms, -1, 0, 0, 0, 0
+        )
         self.connection.mav.set_position_target_global_int_send(
             0,
             self.connection.target_system,
@@ -332,9 +347,8 @@ class Telemetry(object):
         for i in new_array:print(i)
         return new_array
 
-telemetry_singlton = Telemetry()
-
 if __name__ == "__main__":
+    telemetry_singlton = Telemetry()
     while 1:
         print(telemetry_singlton.drone_state)
         time.sleep(1)

@@ -4,7 +4,7 @@ import json
 import time
 import subprocess
 
-
+os.environ['MAVLINK20'] = '1'
 from pymavlink import mavutil
 
 
@@ -13,7 +13,13 @@ def set_param(conn, name: bytes, value: float):
         conn.target_system, conn.target_component,
         name, value, mavutil.mavlink.MAV_PARAM_TYPE_REAL32
     )
-
+def enable_sim_rc(conn):
+    conn.mav.rc_channels_override_send(
+    conn.target_system,
+    conn.target_component,
+    65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535,
+    chan17_raw=1500,
+    )
 
 def disable_sensor_noise(conn):
     print("[sitl] disabling sensor noise...")
@@ -34,7 +40,7 @@ def setup_rangefinder(conn):
     set_param(conn, b"RNGFND1_MIN_CM",   20.0)  # 0.2 m
 
 
-def arm_and_takeoff(conn, telemetry, altitude: float = 10):
+def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
     print("[sitl] waiting for EKF and GPS to be ready (retrying arm)...")
     for i in range(30):
         print(f"lunch atempt {i}/30")
@@ -43,13 +49,13 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10):
             mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
             1, 4, 0, 0, 0, 0, 0  # 4 = GUIDED
         )
-        time.sleep(1)
+        time.sleep(1 / speed)
         conn.mav.command_long_send(
             conn.target_system, conn.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
             1, 21196, 0, 0, 0, 0, 0  # 21196 = force arm
         )
-        time.sleep(2)
+        time.sleep(2 / speed)
         if telemetry.arm_state:
             print("[sitl] armed! taking off...")
             conn.mav.command_long_send(
@@ -57,8 +63,12 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10):
                 mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0,
                 0, 0, 0, 0, 0, 0, altitude
             )
-            time.sleep(5)
-            return True
+            # wait and check altitude actually increases — EKF may reject takeoff
+            for _ in range(10):
+                time.sleep(1 / speed)
+                if telemetry.drone_state.altitude_rel_home > 0.5:
+                    return True
+            print("[sitl] takeoff not climbing, retrying...")
     print("[sitl] failed to arm")
     return False
 
@@ -71,20 +81,52 @@ def setup_sitl(conn, telemetry, speed: float = 1.0, altitude: float = 10):
     arm_and_takeoff(conn, telemetry, altitude)
 
 
-def launch_sitl_process(speed: int):
-    print(f"[sitl] launching SITL at {speed}x speed...")
+SLOT_BASE_PORT = 14550
+SLOT_PORT_STEP = 10
+
+
+def slot_port(slot: int) -> int:
+    return SLOT_BASE_PORT + slot * SLOT_PORT_STEP
+
+
+def start_sim(speed: int, count=1) -> None:
+    already_running = 0
+    for slot in range(count):
+        port = slot_port(slot)
+        try:
+            conn = mavutil.mavlink_connection(f"udp:127.0.0.1:{port}", timeout=2)
+            msg = conn.wait_heartbeat(timeout=3)
+            conn.close()
+            if msg is not None:
+                print(f"[sitl] slot {slot} already running on port {port}")
+                already_running += 1
+        except Exception:
+            pass
+
+    if already_running == count:
+        return
+    if already_running > 0:
+        raise EnvironmentError("please kill the sim")
+
+    open(os.path.expanduser("~/.mavinit.scr"), "w").close()
     cmd = (
         f"source ~/venv-ardupilot/bin/activate && "
         f"cd ~/ardupilot/ArduCopter && "
-        f"sim_vehicle.py -v ArduCopter -w --console --map "
-        f"--out=tcp:127.0.0.1:5760 --out=udp:127.0.0.1:14552 "
-        f"--speedup={speed}"
+        f"sim_vehicle.py -v Copter --map --console --speedup {speed} --count {count} --auto-sysid "
+        f"--location CMAC --auto-offset-line 90,10; read"
     )
-    proc = subprocess.Popen(["xterm", "-e", "bash", "-c", cmd])
-    open(os.path.expanduser("~/.mavinit.scr"), "w").close()
-    print("[sitl] waiting 15s for SITL to boot...")
-    time.sleep(15)
-    return proc
+    proc = subprocess.Popen(["xterm", "-title", "SITL", "-e", "bash", "-c", cmd])
+    _sim_procs.append(proc)
+    print(f"[sitl] waiting for {count} slot(s) to boot...")
+    time.sleep(max(15 / speed, 5))
+
+
+_sim_procs: list[subprocess.Popen] = []
+
+
+def kill_sim() -> None:
+    for p in _sim_procs:
+        p.terminate()
 
 
 def get_sim_files() -> list[str]:
@@ -102,7 +144,7 @@ def get_sim_files() -> list[str]:
     elif sim_file:
         return [sim_file + ".json"]
     else:
-        return [f for f in os.listdir("sim_data") if f.endswith(".json")]
+        return sorted(f for f in os.listdir("sim_data") if f.endswith(".json"))
 
 
 def load_mission_file(file: str, base_dir: str = "sim_data", start_sim_ai: bool = True):

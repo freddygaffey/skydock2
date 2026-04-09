@@ -1,8 +1,17 @@
 from dataclasses import dataclass, field
 from pymavlink import mavutil
 from collections import deque
-
+from math import cos, radians
 import time
+@dataclass
+class GPSFix:
+    time_ns: float
+    lat: float
+    lon: float
+    vx: float  # m/s North
+    vy: float  # m/s East
+
+
 @dataclass
 class Rotation:
     time_ns: float
@@ -30,13 +39,14 @@ class DroneStateForHoming:
     velocity_y: float = 0.0
     velocity_z: float = 0.0
 
-    enable_homing_and_autonomy: bool = False
+    enable_homing_and_autonomy: bool = True
     mode: str = 'STABILIZE'
 
     heading: float = 0
     
     rotaion:Rotation = field(default_factory=lambda: Rotation(0,0,0,0))
     rotaion_history: deque = field(default_factory=lambda: deque(maxlen=10))
+    gps_history: deque = field(default_factory=lambda: deque(maxlen=10))
 
     # MAVLink DISTANCE_SENSOR.current_distance is centimeters (common.xml). Convert to metres here.
     rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, metres; 0 = no data
@@ -46,6 +56,8 @@ class DroneStateForHoming:
             return 0
 
         if msg._type == "HEARTBEAT":
+            if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
+                return
             mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
             mode_id = msg.custom_mode
             current_mode = None
@@ -78,11 +90,21 @@ class DroneStateForHoming:
             # Heading 65535 = unknown)
             self.heading = msg.hdg / 100.0 if msg.hdg != 65535 else None
 
-        if msg._type == "SERVO_OUTPUT_RAW":
+            self.gps_history.append(GPSFix(
+                time_ns=time.time_ns(),
+                lat=self.latitude,
+                lon=self.longitude,
+                vx=self.velocity_x,
+                vy=self.velocity_y,
+            ))
+
+        if msg._type == "RC_CHANNELS":
             import sys
             if "-s" in sys.argv or "--sim" in sys.argv:
                 self.enable_homing_and_autonomy = True
-            elif msg.servo10_raw > 1000:
+            elif msg.chan16_raw < 1200:
+                self.enable_homing_and_autonomy = False
+            else:
                 self.enable_homing_and_autonomy = True
 
             # # TODO: remove
@@ -119,11 +141,17 @@ class DroneStateForHoming:
                 self.rotaion.z,
                 self.mode)
 
+    def get_position_at_time(self, time_ns: float) -> 'GPSFix':
+        """Dead-reckon lat/lon to time_ns using the GPS history (wall-clock timestamps)."""
+        if not self.gps_history:
+            return GPSFix(time_ns, self.latitude, self.longitude, self.velocity_x, self.velocity_y)
+        fix = self.gps_history[-1]
+        dt_s = (time_ns - fix.time_ns) * 1e-9
+        dlat = fix.vx * dt_s / 111320
+        dlon = fix.vy * dt_s / (111320 * cos(radians(fix.lat)))
+        return GPSFix(time_ns, fix.lat + dlat, fix.lon + dlon, fix.vx, fix.vy)
+
     def get_rotation_at_time(self, time_ns: float) -> 'Rotation':
-        return self.rotaion
-        print(f"requested time {time_ns}")
-        for i in self.rotaion_history:
-            print(i.time_ns)
         before = None
         after = None
         for rot in self.rotaion_history:
@@ -134,7 +162,7 @@ class DroneStateForHoming:
                 break
 
         if before is None:
-            raise ValueError("rotation history is empty")
+            return self.rotaion
 
         if after is None:
             # Extrapolate forward from the last known entry using its angular rates.

@@ -4,7 +4,7 @@ from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import Frame
 from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
-from constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR
+from constants import MAX_HOMING_DIST, MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED
 from states.enum import DroneStateEnum
 import states.shared_data as shared_data
 from DB_abstraction import db_abstraction
@@ -42,14 +42,14 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     if closest_det:
         last_det_time = time.time()
 
-    if (time.time() - shared_data.last_goto_time) > 10 and (time.time() - last_det_time) > 1:
+    if (time.time() - shared_data.last_goto_time) > 10 / SIM_SPEED and (time.time() - last_det_time) > 1 / SIM_SPEED:
         return DroneStateEnum.GOTO
     
     if closest_det is None:
         return DroneStateEnum.HOMING
 
     # Choose altitude change based on how recently we saw a detection
-    if (time.time() - last_det_time) > 1:
+    if (time.time() - last_det_time) > 1 / SIM_SPEED:
         dalt = 1
     elif drone_state.altitude_rel_home < MIN_ALT:
         dalt = 0

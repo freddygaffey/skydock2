@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from flask import Blueprint, abort, current_app, redirect, render_template, request, url_for
 
@@ -15,10 +16,64 @@ from services.tile_cache import ESRI_URL, OSM_URL
 bp = Blueprint("log_web", __name__)
 
 
+def _mission_page_common(mission_id: str) -> dict[str, Any]:
+    """Shared template vars for mission_id pages (log / weed marking / GC)."""
+    src = request.args.get("src", "sim")
+    missions_root = _missions_root(src)
+    sim_root: Path = current_app.config["SIM_DATA_ROOT"]
+    p = resolve_mission_log(missions_root, mission_id)
+    if p is None:
+        abort(404)
+
+    mission_ids = [
+        d.name
+        for d in mission_paths(missions_root)
+        if (d / "mission.jsonl").exists()
+    ]
+    try:
+        idx = mission_ids.index(mission_id)
+    except ValueError:
+        idx = -1
+    prev_mission_id = mission_ids[idx - 1] if idx > 0 else None
+    next_mission_id = mission_ids[idx + 1] if 0 <= idx < len(mission_ids) - 1 else None
+
+    auto_truth = ""
+    for ev in iter_events(p):
+        if ev.get("event") == "mission_start":
+            raw = ev.get("sim_truth_file", "") or ""
+            auto_truth = Path(str(raw)).name if raw else ""
+            break
+    sf = truth_files_for_ui(sim_root, src)
+    return {
+        "mission_id": mission_id,
+        "mission_ids": mission_ids,
+        "log_path": str(p),
+        "sim_files": sf,
+        "mission_id_json": json.dumps(mission_id),
+        "mission_ids_json": json.dumps(mission_ids),
+        "sim_files_json": json.dumps(sf),
+        "auto_truth_json": json.dumps(auto_truth),
+        "auto_truth": auto_truth,
+        "prev_mission_id": prev_mission_id,
+        "next_mission_id": next_mission_id,
+        "src": src,
+        "src_json": json.dumps(src),
+    }
+
+
 def _missions_root(src: str | None = None) -> Path:
     if src == "rpi":
         return current_app.config["RPI_MISSIONS_ROOT"]
     return current_app.config["MISSIONS_ROOT"]
+
+
+def _latest_mission_id(src: str) -> str | None:
+    mids = [
+        d.name
+        for d in mission_paths(_missions_root(src))
+        if (d / "mission.jsonl").exists()
+    ]
+    return mids[-1] if mids else None
 
 
 @bp.context_processor
@@ -55,45 +110,48 @@ def missions_list():
 
 @bp.get("/missions/<mission_id>")
 def mission_dashboard(mission_id: str):
-    src = request.args.get("src", "sim")
-    missions_root = _missions_root(src)
-    sim_root: Path = current_app.config["SIM_DATA_ROOT"]
-    p = resolve_mission_log(missions_root, mission_id)
-    if p is None:
-        abort(404)
-
-    mission_ids = [
-        d.name
-        for d in mission_paths(missions_root)
-        if (d / "mission.jsonl").exists()
-    ]
-    try:
-        idx = mission_ids.index(mission_id)
-    except ValueError:
-        idx = -1
-    prev_mission_id = mission_ids[idx - 1] if idx > 0 else None
-    next_mission_id = mission_ids[idx + 1] if 0 <= idx < len(mission_ids) - 1 else None
-
-    auto_truth = ""
-    for ev in iter_events(p):
-        if ev.get("event") == "mission_start":
-            raw = ev.get("sim_truth_file", "") or ""
-            auto_truth = Path(str(raw)).name if raw else ""
-            break
-    sf = truth_files_for_ui(sim_root, src)
+    ctx = _mission_page_common(mission_id)
     return render_template(
         "mission_dashboard.html",
-        mission_id=mission_id,
-        log_path=str(p),
-        sim_files=sf,
-        mission_id_json=json.dumps(mission_id),
-        sim_files_json=json.dumps(sf),
-        auto_truth_json=json.dumps(auto_truth),
-        auto_truth=auto_truth,
-        prev_mission_id=prev_mission_id,
-        next_mission_id=next_mission_id,
-        src=src,
-        src_json=json.dumps(src),
+        nav_active="log",
+        log_url=url_for("log_web.mission_dashboard", mission_id=mission_id, src=ctx["src"]),
+        weed_url=url_for("log_web.weed_marking", src=ctx["src"]),
+        gc_url=url_for("log_web.gc_page", src=ctx["src"]),
+        **ctx,
+    )
+
+
+@bp.get("/weed-marking")
+def weed_marking():
+    src = request.args.get("src", "sim")
+    latest = _latest_mission_id(src)
+    if latest is None:
+        return redirect(url_for("log_web.missions_list", src=src))
+    ctx = _mission_page_common(latest)
+    return render_template(
+        "mission_weed_marking.html",
+        nav_active="weed",
+        log_url=url_for("log_web.mission_dashboard", mission_id=latest, src=src),
+        weed_url=url_for("log_web.weed_marking", src=src),
+        gc_url=url_for("log_web.gc_page", src=src),
+        **ctx,
+    )
+
+
+@bp.get("/gc")
+def gc_page():
+    src = request.args.get("src", "sim")
+    latest = _latest_mission_id(src)
+    if latest is None:
+        return redirect(url_for("log_web.missions_list", src=src))
+    ctx = _mission_page_common(latest)
+    return render_template(
+        "mission_gc.html",
+        nav_active="gc",
+        log_url=url_for("log_web.mission_dashboard", mission_id=latest, src=src),
+        weed_url=url_for("log_web.weed_marking", src=src),
+        gc_url=url_for("log_web.gc_page", src=src),
+        **ctx,
     )
 
 
@@ -112,8 +170,18 @@ def compare_page():
     if not sel_a and not sel_b and len(missions) >= 2:
         sel_a = missions[-2]["id"]
         sel_b = missions[-1]["id"]
+    latest = _latest_mission_id(src)
+    log_url = (
+        url_for("log_web.mission_dashboard", mission_id=latest, src=src)
+        if latest
+        else url_for("log_web.missions_list", src=src)
+    )
     return render_template(
         "compare.html",
+        nav_active="log",
+        log_url=log_url,
+        weed_url=url_for("log_web.weed_marking", src=src),
+        gc_url=url_for("log_web.gc_page", src=src),
         missions=missions,
         sim_files=truth_files_for_ui(sim_root, src),
         sel_a=sel_a,

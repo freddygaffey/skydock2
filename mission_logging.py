@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import threading
@@ -39,30 +40,34 @@ def allocate_mission_dir(
                     pass
         return max_id + 1 if max_id > 0 else 1
 
-    next_id: Optional[int] = None
-    if counter_path.exists():
-        try:
-            raw = counter_path.read_text(encoding="utf-8").strip()
-            if raw:
-                next_id = int(raw)
-        except Exception:
-            next_id = None
-
-    if next_id is None or next_id <= 0:
-        next_id = scan_next()
-
-    # Avoid collisions if folders were created without updating counter
-    while (missions_root / f"{next_id:0{pad}d}").exists():
-        next_id += 1
-
-    mission_dir = missions_root / f"{next_id:0{pad}d}"
-    mission_dir.mkdir(parents=True, exist_ok=False)
-
-    # Persist next value (best-effort)
+    lock_path = missions_root / ".allocate.lock"
+    lock_fd = open(lock_path, "w")
     try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        next_id: Optional[int] = None
+        if counter_path.exists():
+            try:
+                raw = counter_path.read_text(encoding="utf-8").strip()
+                if raw:
+                    next_id = int(raw)
+            except Exception:
+                next_id = None
+
+        if next_id is None or next_id <= 0:
+            next_id = scan_next()
+
+        # Avoid collisions if folders were created without updating counter
+        while (missions_root / f"{next_id:0{pad}d}").exists():
+            next_id += 1
+
+        mission_dir = missions_root / f"{next_id:0{pad}d}"
+        mission_dir.mkdir(parents=True, exist_ok=False)
+
         counter_path.write_text(str(next_id + 1), encoding="utf-8")
-    except Exception:
-        pass
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
     return mission_dir
 

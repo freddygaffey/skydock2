@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import datetime as _dt
 import shutil
 import subprocess
 import sys
@@ -256,7 +257,43 @@ def parse_mission(mission_dir: Path) -> dict:
             lat = ev.get("lat") or (ev.get("weed") or {}).get("lat")
             lon = ev.get("lon") or (ev.get("weed") or {}).get("lon")
             if ts is not None and lat is not None and lon is not None:
-                weed_events_ts.append(int(float(ts)) if isinstance(ts, str) else int(ts))
+                def _parse_ts_to_ns(v: Any) -> int | None:
+                    if v is None:
+                        return None
+                    # Already numeric nanoseconds (or something very close).
+                    if isinstance(v, (int, float)):
+                        try:
+                            return int(v)
+                        except Exception:
+                            return None
+                    if isinstance(v, str):
+                        s = v.strip()
+                        # Numeric string?
+                        try:
+                            return int(float(s))
+                        except Exception:
+                            pass
+                        # ISO string (mission_logging uses UTC ISO-8601).
+                        # Example: "2026-04-01T10:49:48.123Z"
+                        try:
+                            if s.endswith("Z"):
+                                s2 = s[:-1] + "+00:00"
+                            else:
+                                s2 = s
+                            dt = _dt.datetime.fromisoformat(s2)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=_dt.timezone.utc)
+                            return int(dt.timestamp() * 1e9)
+                        except Exception:
+                            return None
+                    return None
+
+                ns = _parse_ts_to_ns(ts)
+                if ns is None:
+                    # Still store coords, but without a usable time the "preds-so-far"
+                    # overlay can't be ordered correctly.
+                    continue
+                weed_events_ts.append(ns)
                 weed_events_data.append({"lat": float(lat), "lon": float(lon)})
 
     return {
