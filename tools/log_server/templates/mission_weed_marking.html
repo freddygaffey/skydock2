@@ -121,27 +121,36 @@
       </div>
 
       <div class="weed-section-title">Setup file</div>
-      <div class="mb-3">
+      <div class="mb-2">
         <label class="form-label small mb-1">Save to</label>
         <select id="setupTargetSel" class="form-select form-select-sm">
           <option value="real">Real (<code>real_missions/</code>)</option>
           <option value="sim">Sim (<code>sim_data/</code>)</option>
         </select>
       </div>
-      <div class="row g-2 mb-2">
-        <div class="col-12">
-          <label class="form-label small mb-0">Filename</label>
-          <input id="setupNameInput" class="form-control form-control-sm" placeholder="field_2026-04-01.json">
-        </div>
+      <div class="mb-1">
+        <label class="form-label small mb-0">Filename</label>
+        <input id="setupNameInput" class="form-control form-control-sm" placeholder="field_2026-04-01.json">
+      </div>
+      <div class="row g-1 mb-1">
         <div class="col-6">
           <button id="setupSaveBtn" type="button" class="btn btn-sm btn-primary w-100">Save</button>
         </div>
+        <div class="col-6">
+          <button id="rpiPushBtn" type="button" class="btn btn-sm btn-outline-secondary w-100">Push to RPi</button>
+        </div>
+      </div>
+      <div class="row g-1 mb-1">
         <div class="col-6">
           <select id="setupLoadSel" class="form-select form-select-sm">
             <option value="">Load…</option>
           </select>
         </div>
+        <div class="col-6">
+          <button id="rpiPullBtn" type="button" class="btn btn-sm btn-outline-secondary w-100">Pull from RPi</button>
+        </div>
       </div>
+      <div id="rpiSyncStatus" class="small text-secondary mb-2" style="min-height:1.2em"></div>
 
       <div class="weed-section-title">Truth weeds</div>
       <div class="d-grid gap-1 mb-2 weed-btn-grid">

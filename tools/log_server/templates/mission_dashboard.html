@@ -140,26 +140,8 @@
         <div class="col-auto">
           <button id="runCompare" class="btn btn-sm btn-primary">Run accuracy</button>
         </div>
-        <div class="col-auto ms-2" style="position:relative;min-height:1px">
-          <div class="muted small" style="position:absolute;top:0;left:0;display:flex;flex-direction:column;gap:2px;white-space:normal;line-height:1.1;padding-left:2px;text-align:left">
-            <span>
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4a9eff;vertical-align:middle;margin-right:6px"></span>
-              Predicted weeds
-            </span>
-            <span>
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid #ffffff;background:transparent;vertical-align:middle;margin-right:6px"></span>
-              Truth weeds
-            </span>
-            <span>
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4adf86;vertical-align:middle;margin-right:6px"></span>
-              Spray hit/attempt
-            </span>
-            <span>
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4a4a;vertical-align:middle;margin-right:6px"></span>
-              Spray miss/ready
-            </span>
-          </div>
-          <div class="d-flex flex-wrap gap-2 align-items-center" style="padding-top:3.9rem">
+        <div class="col-auto">
+          <div class="d-flex flex-wrap gap-2 align-items-center">
             <div class="form-check form-check-inline mb-0">
               <input class="form-check-input" type="checkbox" id="layerPath" checked>
               <label class="form-check-label small" for="layerPath">Path</label>
@@ -185,6 +167,30 @@
               <label class="form-check-label small" for="layerCameraFrame" title="Off by default. Turn on to load FOV footprints (same projection as utils.detection_to_latlon).">Camera FOV</label>
             </div>
             <button id="tileToggle" class="btn btn-sm btn-outline-secondary">Satellite</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── map legend ──────────────────────────────────────────────────────── -->
+      <div class="d-flex flex-wrap align-items-start gap-4 mb-2 px-1" style="font-size:12px;line-height:1.6">
+        <div>
+          <div class="muted mb-1" style="font-size:11px;font-weight:600;letter-spacing:.04em">PATH</div>
+          <div class="d-flex flex-wrap gap-x-3 gap-2">
+            <span><span style="display:inline-block;width:22px;height:4px;background:#4a9eff;border-radius:2px;vertical-align:middle;margin-right:5px"></span>SCAN</span>
+            <span><span style="display:inline-block;width:22px;height:4px;background:#bf4aff;border-radius:2px;vertical-align:middle;margin-right:5px"></span>GOTO</span>
+            <span><span style="display:inline-block;width:22px;height:4px;background:#ff9a4a;border-radius:2px;vertical-align:middle;margin-right:5px"></span>HOMING</span>
+            <span><span style="display:inline-block;width:22px;height:4px;background:#4adf86;border-radius:2px;vertical-align:middle;margin-right:5px"></span>SPRAY</span>
+            <span><span style="display:inline-block;width:22px;height:4px;background:#ff4a4a;border-radius:2px;vertical-align:middle;margin-right:5px"></span>RTL/LAND</span>
+            <span><span style="display:inline-block;width:22px;height:4px;background:#9fb0c7;border-radius:2px;vertical-align:middle;margin-right:5px"></span>OVERRIDE</span>
+          </div>
+        </div>
+        <div>
+          <div class="muted mb-1" style="font-size:11px;font-weight:600;letter-spacing:.04em">MARKERS</div>
+          <div class="d-flex flex-wrap gap-2">
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4a9eff;vertical-align:middle;margin-right:5px"></span>Predicted weed</span>
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid #ffffff;background:transparent;vertical-align:middle;margin-right:5px"></span>Truth weed</span>
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4adf86;vertical-align:middle;margin-right:5px"></span>Spray hit</span>
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4a4a;vertical-align:middle;margin-right:5px"></span>Spray miss/ready</span>
           </div>
         </div>
       </div>
@@ -237,17 +243,6 @@
       <div id="map"></div>
       <div id="bboxGroundNote" class="muted small mt-2 d-none" style="min-height:1.3em"></div>
       <div id="cameraFrameNote" class="muted small mt-1 d-none" style="min-height:1.2em"></div>
-      <div id="cameraFovLegend" class="muted small mt-1 d-none">
-        FSM colors:
-        <span style="color:#4a9eff">■</span> SCAN
-        <span style="color:#bf4aff">■</span> GOTO
-        <span style="color:#ff9a4a">■</span> HOMING
-        <span style="color:#4adf86">■</span> SPRAY
-        <span style="color:#ff4a4a">■</span> RTL
-        <span style="color:#9fb0c7">■</span> OVERRIDE
-        <span style="color:#6b8899">■</span> DONE
-        <span style="color:#ff6b6b">■</span> LAND
-      </div>
       <div id="mapStats" class="muted small mt-2" style="min-height:1.4em"></div>
 
       <div class="card p-3 mb-3" id="insightsCard">

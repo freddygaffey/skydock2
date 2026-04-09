@@ -172,6 +172,8 @@ def draw_overlay(
 
     # Detection bboxes
     if detections:
+        state_clean = fsm_state.replace("DroneStateEnum.", "").split(".")[-1].upper() if fsm_state else ""
+        bbox_color = FSM_COLORS.get("HOMING") if state_clean == "HOMING" else (0, 255, 0)
         for det in detections:
             bbox = det.get("bbox")
             label = det.get("label", "?")
@@ -179,10 +181,10 @@ def draw_overlay(
             if bbox and len(bbox) == 2:
                 (x1, y1_d), (x2, y2_d) = bbox
                 x1, y1_d, x2, y2_d = int(x1), int(y1_d), int(x2), int(y2_d)
-                cv2.rectangle(frame, (x1, y1_d), (x2, y2_d), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.0%}", (x1, y1_d - 5), font, fs, (0, 255, 0), th)
+                cv2.rectangle(frame, (x1, y1_d), (x2, y2_d), bbox_color, 2)
+                cv2.putText(frame, f"{label} {conf:.0%}", (x1, y1_d - 5), font, fs, bbox_color, th)
         cv2.putText(frame, f"Detections: {len(detections)}",
-                    (w - 210, 16 + 2 * lh), font, fs, (0, 255, 0), th)
+                    (w - 210, 16 + 2 * lh), font, fs, bbox_color, th)
 
     # Accuracy panel (sim only) — bottom-right corner
     if accuracy:

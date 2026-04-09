@@ -493,3 +493,64 @@ def sync_rpi():
         return jsonify({"ok": False, "error": "Sync timed out after 60s"})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
+
+
+def _rpi_resolve_host() -> str | None:
+    """Try rpi.local then 10.0.0.1; return reachable host or None."""
+    ssh_opts = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
+    for host in ["rpi.local", "10.0.0.1"]:
+        try:
+            r = subprocess.run(["ssh"] + ssh_opts + [f"fred@{host}", "exit"], timeout=8)
+            if r.returncode == 0:
+                return host
+        except Exception:
+            pass
+    return None
+
+
+@bp.post("/api/rpi/push_real_missions")
+def rpi_push_real_missions():
+    """rsync local real_missions/ → RPi."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    src = str(repo_root / "real_missions") + "/"
+    host = _rpi_resolve_host()
+    if not host:
+        return jsonify({"status": "error", "output": "Cannot reach RPi (tried rpi.local, 10.0.0.1)"}), 502
+    ssh_cmd = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no"
+    try:
+        result = subprocess.run(
+            ["rsync", "-avz", "-e", ssh_cmd, src, f"fred@{host}:~/skydock2/real_missions/"],
+            capture_output=True, text=True, timeout=60,
+        )
+        out = (result.stdout + result.stderr).strip()
+        if result.returncode != 0:
+            return jsonify({"status": "error", "output": out}), 500
+        return jsonify({"status": "ok", "output": out})
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "error", "output": "Timed out after 60s"}), 504
+    except Exception as exc:
+        return jsonify({"status": "error", "output": str(exc)}), 500
+
+
+@bp.post("/api/rpi/pull_real_missions")
+def rpi_pull_real_missions():
+    """rsync RPi real_missions/ → local."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    dest = str(repo_root / "real_missions") + "/"
+    host = _rpi_resolve_host()
+    if not host:
+        return jsonify({"status": "error", "output": "Cannot reach RPi (tried rpi.local, 10.0.0.1)"}), 502
+    ssh_cmd = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no"
+    try:
+        result = subprocess.run(
+            ["rsync", "-avz", "-e", ssh_cmd, f"fred@{host}:~/skydock2/real_missions/", dest],
+            capture_output=True, text=True, timeout=60,
+        )
+        out = (result.stdout + result.stderr).strip()
+        if result.returncode != 0:
+            return jsonify({"status": "error", "output": out}), 500
+        return jsonify({"status": "ok", "output": out})
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "error", "output": "Timed out after 60s"}), 504
+    except Exception as exc:
+        return jsonify({"status": "error", "output": str(exc)}), 500

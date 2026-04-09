@@ -6,9 +6,29 @@ import argparse
 
 def _ask_for_mission(telemetry_singlton):
     from mission_gen import save_mission
-    file_name = input("enter mission file name: ").strip()
-    if not file_name.endswith(".json"):
-        file_name += ".json"
+
+    # List existing mission files
+    existing = sorted(f for f in os.listdir("real_missions") if f.endswith(".json")) if os.path.isdir("real_missions") else []
+    if existing:
+        print("existing missions:")
+        for i, f in enumerate(existing, 1):
+            print(f"  {i}. {f}")
+
+    raw = input("enter mission file name or number: ").strip()
+
+    # If user entered a number, resolve to filename
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(existing):
+            file_name = existing[idx]
+        else:
+            print("invalid number")
+            return None
+    else:
+        file_name = raw
+        if not file_name.endswith(".json"):
+            file_name += ".json"
+
     path = f"real_missions/{file_name}"
 
     if os.path.exists(path):
@@ -97,7 +117,11 @@ def main():
         setup_rangefinder(conn)
         enable_sim_rc(conn)
         time.sleep(0.5)
-        arm_and_takeoff(conn, telemetry_singlton, speed=speed)
+        if not arm_and_takeoff(conn, telemetry_singlton, speed=speed):
+            print("[main] arm/takeoff failed, aborting")
+            from sitl import kill_sim
+            kill_sim()
+            return
     else:
         input("please press enter after takeoff")
 

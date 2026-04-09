@@ -668,6 +668,49 @@
         setupStatus(`Target: ${_setupTarget} setup files`);
       });
     }
+    // RPi push/pull buttons
+    const rpiStatus = document.getElementById("rpiSyncStatus");
+    function setRpiStatus(msg) { if (rpiStatus) rpiStatus.textContent = msg; }
+
+    const rpiPushBtn = document.getElementById("rpiPushBtn");
+    if (rpiPushBtn) {
+      rpiPushBtn.addEventListener("click", async () => {
+        rpiPushBtn.disabled = true;
+        setRpiStatus("Pushing…");
+        try {
+          const r = await fetch("/api/rpi/push_real_missions", { method: "POST" });
+          const j = await r.json();
+          setRpiStatus(r.ok ? "Push OK" : ("Error: " + (j.output || "").split("\n").filter(Boolean).pop()));
+        } catch (e) {
+          setRpiStatus("Network error");
+        } finally {
+          rpiPushBtn.disabled = false;
+        }
+      });
+    }
+
+    const rpiPullBtn = document.getElementById("rpiPullBtn");
+    if (rpiPullBtn) {
+      rpiPullBtn.addEventListener("click", async () => {
+        rpiPullBtn.disabled = true;
+        setRpiStatus("Pulling…");
+        try {
+          const r = await fetch("/api/rpi/pull_real_missions", { method: "POST" });
+          const j = await r.json();
+          if (r.ok) {
+            setRpiStatus("Pull OK");
+            await setupLoadFileList();
+          } else {
+            setRpiStatus("Error: " + (j.output || "").split("\n").filter(Boolean).pop());
+          }
+        } catch (e) {
+          setRpiStatus("Network error");
+        } finally {
+          rpiPullBtn.disabled = false;
+        }
+      });
+    }
+
     setupLoadFileList().catch(console.warn);
     const nameInp = document.getElementById("setupNameInput");
     if (nameInp && !nameInp.value) nameInp.value = setupDefaultName();

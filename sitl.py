@@ -41,6 +41,12 @@ def setup_rangefinder(conn):
 
 
 def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
+    # Minimum real-wall-clock waits so telemetry thread can receive confirmations
+    # regardless of sim speedup. At speed=1 these are the same as before.
+    WAIT_MODE_S  = max(1.0 / speed, 0.3)
+    WAIT_ARM_S   = max(2.0 / speed, 0.5)
+    WAIT_CLIMB_S = max(1.0 / speed, 0.3)
+
     print("[sitl] waiting for EKF and GPS to be ready (retrying arm)...")
     for i in range(30):
         print(f"lunch atempt {i}/30")
@@ -49,13 +55,13 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
             mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
             1, 4, 0, 0, 0, 0, 0  # 4 = GUIDED
         )
-        time.sleep(1 / speed)
+        time.sleep(WAIT_MODE_S)
         conn.mav.command_long_send(
             conn.target_system, conn.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
             1, 21196, 0, 0, 0, 0, 0  # 21196 = force arm
         )
-        time.sleep(2 / speed)
+        time.sleep(WAIT_ARM_S)
         if telemetry.arm_state:
             print("[sitl] armed! taking off...")
             conn.mav.command_long_send(
@@ -65,7 +71,7 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
             )
             # wait and check altitude actually increases — EKF may reject takeoff
             for _ in range(10):
-                time.sleep(1 / speed)
+                time.sleep(WAIT_CLIMB_S)
                 if telemetry.drone_state.altitude_rel_home > 0.5:
                     return True
             print("[sitl] takeoff not climbing, retrying...")
