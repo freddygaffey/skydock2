@@ -8,47 +8,16 @@ def main():
     speed = int(float(sys.argv[sys.argv.index("--speedup") + 1])) if "--speedup" in sys.argv else (int(float(sys.argv[sys.argv.index("--speed") + 1])) if "--speed" in sys.argv else 1)
 
     if is_sim:
-        from sitl import slot_port, get_sim_files,start_sim, SLOT_BASE_PORT, SLOT_PORT_STEP
-        import subprocess
-
-        if "--sim-port" not in sys.argv:
-            # top-level invocation: launch one subprocess per sim file
-            sim_files = get_sim_files()
-            start_sim(speed, count=len(sim_files))
-            if len(sim_files) > 1:
-                children = []
-                for slot, f in enumerate(sim_files):
-                    port = slot_port(slot)
-                    # essenaliy calling recucivly
-                    cmd = (
-                        f"{sys.executable} main.py --sim '{f}' --sim-port {port} --speedup {speed}; "
-                        f"echo 'Done - press enter to close'; read"
-                    )
-                    children.append(subprocess.Popen(
-                        ["xterm", "-title", f"Vehicle {slot} - {f}", "-e", "bash", "-c", cmd]
-                    ))
-                try:
-                    for c in children:
-                        c.wait()
-                except KeyboardInterrupt:
-                    for c in children:
-                        c.terminate()
-                    from sitl import kill_sim
-                    kill_sim()
-                return
-
-        sim_port = int(sys.argv[sys.argv.index("--sim-port") + 1]) if "--sim-port" in sys.argv else 14552
-        slot = (sim_port - SLOT_BASE_PORT) // SLOT_PORT_STEP
-
-        connection_string = f"udp:127.0.0.1:{sim_port}"
+        from sitl import get_sim_files, start_sim
+        start_sim(speed)
+        connection_string = "udp:127.0.0.1:14550"
     else:
         connection_string = None
 
     # Imports that connect to the drone must happen after SITL is running
     import telemetry
     from telemetry import Telemetry
-    sysid = slot + 1 if is_sim else None
-    telemetry.telemetry_singlton = Telemetry(connection_string=connection_string, sysid=sysid)
+    telemetry.telemetry_singlton = Telemetry(connection_string=connection_string)
     telemetry_singlton = telemetry.telemetry_singlton
 
     from mission_logging import init_mission_log, allocate_mission_dir, configure_mission_dir
@@ -74,7 +43,7 @@ def main():
         conn = telemetry_singlton.connection
 
         sim_files = get_sim_files()
-        file = sim_files[slot] if slot < len(sim_files) else sim_files[0]
+        file = sim_files[0]
         init_mission_log(is_sim=True, truth_file=file, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
 
         set_sim_speed(conn, speed)

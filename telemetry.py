@@ -12,9 +12,8 @@ from constants import SIM_SPEED, SCAN_SPEED_MS
 
 
 class Telemetry:
-    def __init__(self, connection_string: str = None, sysid: int = None):
+    def __init__(self, connection_string: str = None):
         self.drone_state = DroneStateForHoming()
-        self._sysid = sysid
         # connect to drone
 
         if connection_string is not None:
@@ -23,26 +22,14 @@ class Telemetry:
             connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0", "/dev/ttyACM10", None]
 
         for i in connection_palths:
-            try:
-                path_to_uav = i
-                self.connection = mavutil.mavlink_connection(path_to_uav, baud=115200)
-                if sysid is not None:
-                    while True:
-                        msg = self.connection.recv_match(type='HEARTBEAT', blocking=True, timeout=10)
-                        if msg is None:
-                            break
-                        if msg.get_srcSystem() == sysid:
-                            self.connection.target_system = sysid
-                            break
-                else:
-                    self.connection.wait_heartbeat(timeout=5)
-                if self.connection is not None:
-                    break
-            except serial.serialutil.SerialException:
-                print(f"cant connect to {i}")
-
             if i is None:
                 raise ConnectionError("could not connect to the fc")
+            try:
+                self.connection = mavutil.mavlink_connection(i, baud=115200)
+                self.connection.wait_heartbeat(timeout=5)
+                break
+            except serial.serialutil.SerialException:
+                print(f"cant connect to {i}")
 
         self.wp_q = Queue(maxsize=1000) 
 
@@ -70,8 +57,6 @@ class Telemetry:
             except serial.SerialException: pass
             if msg is None:
                 time.sleep(0.0003/SIM_SPEED)
-                continue
-            if self._sysid is not None and msg.get_srcSystem() != self._sysid:
                 continue
             self.drone_state.set_pass_message(msg)
             # Throttle telemetry logging; high-rate raw logs are noisy.

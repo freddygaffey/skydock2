@@ -81,43 +81,27 @@ def setup_sitl(conn, telemetry, speed: float = 1.0, altitude: float = 10):
     arm_and_takeoff(conn, telemetry, altitude)
 
 
-SLOT_BASE_PORT = 14550
-SLOT_PORT_STEP = 10
-
-
-def slot_port(slot: int) -> int:
-    return SLOT_BASE_PORT + slot * SLOT_PORT_STEP
-
-
-def start_sim(speed: int, count=1) -> None:
-    already_running = 0
-    for slot in range(count):
-        port = slot_port(slot)
-        try:
-            conn = mavutil.mavlink_connection(f"udp:127.0.0.1:{port}", timeout=2)
-            msg = conn.wait_heartbeat(timeout=3)
-            conn.close()
-            if msg is not None:
-                print(f"[sitl] slot {slot} already running on port {port}")
-                already_running += 1
-        except Exception:
-            pass
-
-    if already_running == count:
-        return
-    if already_running > 0:
-        raise EnvironmentError("please kill the sim")
+def start_sim(speed: int) -> None:
+    try:
+        conn = mavutil.mavlink_connection("udp:127.0.0.1:14550", timeout=2)
+        msg = conn.wait_heartbeat(timeout=3)
+        conn.close()
+        if msg is not None:
+            print("[sitl] already running on port 14550")
+            return
+    except Exception:
+        pass
 
     open(os.path.expanduser("~/.mavinit.scr"), "w").close()
     cmd = (
         f"source ~/venv-ardupilot/bin/activate && "
         f"cd ~/ardupilot/ArduCopter && "
-        f"sim_vehicle.py -v Copter --map --console --speedup {speed} --count {count} --auto-sysid "
+        f"sim_vehicle.py -v Copter --map --console --speedup {speed} "
         f"--location CMAC --auto-offset-line 90,10; read"
     )
     proc = subprocess.Popen(["xterm", "-title", "SITL", "-e", "bash", "-c", cmd])
     _sim_procs.append(proc)
-    print(f"[sitl] waiting for {count} slot(s) to boot...")
+    print("[sitl] waiting for SITL to boot...")
     time.sleep(max(15 / speed, 5))
 
 

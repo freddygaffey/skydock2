@@ -3,7 +3,6 @@
 # #######################
 import sys
 SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys.argv else (int(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1)
-VEHICLE_ID = int(sys.argv[sys.argv.index("--vehicle-id") + 1]) if "--vehicle-id" in sys.argv else 0
 
 
 ###########################
