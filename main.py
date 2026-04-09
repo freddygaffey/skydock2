@@ -1,14 +1,57 @@
 import sys
 import os
 import time
+import argparse
+
+
+def _ask_for_mission(telemetry_singlton):
+    from mission_gen import save_mission
+    file_name = input("enter mission file name: ").strip()
+    if not file_name.endswith(".json"):
+        file_name += ".json"
+    path = f"real_missions/{file_name}"
+
+    if os.path.exists(path):
+        print("that file exists")
+        input("take off the drone and press enter")
+        return path
+    else:
+        if input("make a new file? press y: ").lower() != "y":
+            return None
+        print("waiting for GPS fix...")
+        while telemetry_singlton.drone_state.latitude == 0 and telemetry_singlton.drone_state.longitude == 0:
+            time.sleep(0.1)
+        print("GPS fix acquired")
+        print("move the drone above each weed and press enter, type 'f' when done q to cancel")
+        weeds = []
+        while True:
+            i = input("> ").strip()
+            if i.lower() == "f":
+                break
+            if i.lower() == "q":
+                return None
+            lat = telemetry_singlton.drone_state.latitude
+            lon = telemetry_singlton.drone_state.longitude
+            weeds.append({"id": len(weeds), "lat": lat, "lon": lon})
+            print(f"  weed {len(weeds)} at ({lat:.6f}, {lon:.6f})")
+        if not weeds:
+            print("no weeds recorded")
+            return None
+        os.makedirs("real_missions", exist_ok=True)
+        return save_mission(weeds, name=file_name.replace(".json", ""), out_dir="real_missions")
+
 
 def main():
-    is_sim = "-s" in sys.argv or "--sim" in sys.argv
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sim", "-s", action="store_true")
+    parser.add_argument("--speed", "--speedup", type=float, default=1.0)
+    args, _ = parser.parse_known_args()
+    is_sim = args.sim
+    speed = int(args.speed)
 
-    speed = int(float(sys.argv[sys.argv.index("--speedup") + 1])) if "--speedup" in sys.argv else (int(float(sys.argv[sys.argv.index("--speed") + 1])) if "--speed" in sys.argv else 1)
-
+    # Start SITL before connecting telemetry
     if is_sim:
-        from sitl import get_sim_files, start_sim
+        from sitl import start_sim
         start_sim(speed)
         connection_string = "udp:127.0.0.1:14550"
     else:
@@ -20,10 +63,9 @@ def main():
     telemetry.telemetry_singlton = Telemetry(connection_string=connection_string)
     telemetry_singlton = telemetry.telemetry_singlton
 
-    from mission_logging import init_mission_log, allocate_mission_dir, configure_mission_dir
+    from mission_logging import allocate_mission_dir, configure_mission_dir, init_mission_log, log_event
     from constants import MIN_SPRAY_ERROR
     from pathlib import Path
-    from mission_logging import log_event
     from DB import set_db_path
 
     # set_db_path must be called before fsm is imported (which triggers db_abstraction init)
@@ -34,93 +76,52 @@ def main():
     from ai_class import ai_storage_singleton
     from fsm import StateMachine
 
+    # Select mission file
     if is_sim:
-        from sitl import (set_sim_speed, setup_rangefinder,
-                          arm_and_takeoff, get_sim_files,
-                          load_mission_file, enable_sim_rc, kill_sim)
-        import constants
-        import time
+        from sitl import get_sim_files
+        mission_file = get_sim_files()[0]
+    else:
+        mission_file = _ask_for_mission(telemetry_singlton)
+        if mission_file is None:
+            return
+
+    # Init mission log
+    truth_file = mission_file if is_sim else os.path.basename(mission_file)
+    init_mission_log(is_sim=is_sim, truth_file=truth_file, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
+
+    # Pre-flight
+    if is_sim:
+        from sitl import set_sim_speed, setup_rangefinder, arm_and_takeoff, enable_sim_rc
         conn = telemetry_singlton.connection
-
-        sim_files = get_sim_files()
-        file = sim_files[0]
-        init_mission_log(is_sim=True, truth_file=file, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
-
         set_sim_speed(conn, speed)
         setup_rangefinder(conn)
         enable_sim_rc(conn)
         time.sleep(0.5)
         arm_and_takeoff(conn, telemetry_singlton, speed=speed)
-
-        load_mission_file(file)
-        fsm = StateMachine()
-        try:
-            while fsm.update() is not False:
-                time.sleep((1 / 30) / constants.SIM_SPEED)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            kill_sim()
-        return
     else:
-        def ask():
-            from mission_gen import save_mission
-            file_name = input("enter mission file name: ").strip()
-            if not file_name.endswith(".json"):
-                file_name += ".json"
-            path = f"real_missions/{file_name}"
-
-            if os.path.exists(path):
-                print("that file exists")
-                input("take off the drone and press enter")
-                return path
-            else:
-                if input("make a new file? press y: ").lower() != "y":
-                    return None
-                import time
-                print("waiting for GPS fix...")
-                while telemetry_singlton.drone_state.latitude == 0 and telemetry_singlton.drone_state.longitude == 0:
-                    time.sleep(0.1)
-                print("GPS fix acquired")
-                print("move the drone above each weed and press enter, type 'f' when done q to can")
-                weeds = []
-                while True:
-                    i = input("> ").strip()
-                    if i.lower() == "f":
-                        break
-                    if i.lower() == "q": return
-                    lat = telemetry_singlton.drone_state.latitude
-                    lon = telemetry_singlton.drone_state.longitude
-                    weeds.append({"id": len(weeds), "lat": lat, "lon": lon})
-                    print(f"  weed {len(weeds)} at ({lat:.6f}, {lon:.6f})")
-                if not weeds:
-                    print("no weeds recorded")
-                    return None
-                os.makedirs("real_missions", exist_ok=True)
-                return save_mission(weeds, name=file_name.replace(".json", ""), out_dir="real_missions")
-
-        mission_path = ask()
-        if mission_path is None:
-            return
-
-        from sitl import load_mission_file
-        truth_basename = os.path.basename(mission_path)
-        init_mission_log(
-            is_sim=False,
-            truth_file=truth_basename,
-            weed_match_m=0.5,
-            min_spray_error_m=float(MIN_SPRAY_ERROR),
-        )
-        mission = load_mission_file(mission_path, start_sim_ai=False)
-        log_event("mission_plan", logger="main", level="INFO", mission=mission)
-
         input("please press enter after takeoff")
 
-        ai_storage_singleton.start_sim_ai(None)
-        fsm = StateMachine()
+    # Load mission and start AI
+    from sitl import load_mission_file
+    mission = load_mission_file(mission_file, start_sim_ai=is_sim)
+    log_event("mission_plan", logger="main", level="INFO", mission=mission)
 
-        while True:
-            fsm.update()
+    if not is_sim:
+        ai_storage_singleton.start_sim_ai(None)
+
+    # FSM loop (~30 Hz; SIM_SPEED=1 on real hardware)
+    import constants
+    fsm = StateMachine()
+    try:
+        while fsm.update() is not False:
+            time.sleep((1 / 30) / constants.SIM_SPEED)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if is_sim:
+            from sitl import kill_sim
+            kill_sim()
+
 
 if __name__ == "__main__":
     main()

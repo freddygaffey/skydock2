@@ -17,6 +17,8 @@ from states.enum import DroneStateEnum
 class StateMachine:
     def __init__(self):
         self.current_state = DroneStateEnum.OVERRIDE
+        self._last_state_print = 0.0
+        self._last_printed_state = None
 
     def update(self):
         frame = ai_storage_singleton.get_latest_frame()
@@ -43,7 +45,11 @@ class StateMachine:
                 return False 
             case _:
                 self.current_state = DroneStateEnum.OVERRIDE            
-        print(self.current_state)
+        now = time.time()
+        if self.current_state != self._last_printed_state or now - self._last_state_print >= 5:
+            print(self.current_state)
+            self._last_printed_state = self.current_state
+            self._last_state_print = now
         timestamp_ns = time.time_ns()
         if prev_state != self.current_state:
             log_event(
