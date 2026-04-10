@@ -42,10 +42,11 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     if closest_det:
         last_det_time = time.time()
 
-    if (time.time() - shared_data.last_goto_time) > 10 / SIM_SPEED and (time.time() - last_det_time) > 1 / SIM_SPEED:
-        return DroneStateEnum.GOTO
+    # if (time.time() - shared_data.last_goto_time) > 10 / SIM_SPEED and (time.time() - last_det_time) > 1 / SIM_SPEED:
+    #     return DroneStateEnum.GOTO
     
     if closest_det is None:
+        telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -1)  # ascend to widen FOV
         return DroneStateEnum.HOMING
 
     # Choose altitude change based on how recently we saw a detection
@@ -55,7 +56,6 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
         dalt = 0
     else:
         dalt = -1
-
 
     ned = detection_to_ned(drone_state, closest_det)
     telemetry_singlton.send_displacement_command_yaw_stay_same(ned[0], ned[1], dalt)

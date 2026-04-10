@@ -379,8 +379,8 @@ async function runCompare(){
       api(`/missions/${midB}/timeline`),
       api(`/missions/${midA}/weeds/pred?dedup=1`),
       api(`/missions/${midB}/weeds/pred?dedup=1`),
-      api(`/missions/${midA}/path?stride=1&source=fsm`),
-      api(`/missions/${midB}/path?stride=1&source=fsm`),
+      api(`/missions/${midA}/path?stride=2&source=fsm`),
+      api(`/missions/${midB}/path?stride=2&source=fsm`),
       api(`/missions/${midA}/spray`),
       api(`/missions/${midB}/spray`),
     ]);

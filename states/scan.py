@@ -6,7 +6,7 @@ from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance, detection_to_ned
-from constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET
+from constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET, GOTO_ALT, SIM_SPEED
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
@@ -18,12 +18,15 @@ def scan(drone_state:DroneStateForHoming,frame:Frame):
     if point == None:
         if not _scan_data_processed:
             print("prosesing all data")
+            telemetry_singlton.fly_to_point(drone_state.latitude,drone_state.longitude,GOTO_ALT)
             prosess_all_scan_data()
             print("prosess_all_scan_data is compleate")
             _scan_data_processed = True
+            import time
+            time.sleep(10/SIM_SPEED)
         return DroneStateEnum.GOTO
-
     db_abstraction.log_drone_state_and_frame(drone_state,frame)
+
     telemetry_singlton.fly_to_point(point.lat,point.lon,SCAN_HIGHT)
     if MIN_DIST_FROM_WAYPOINT > (haversine_distance(drone_state.latitude,drone_state.longitude,point.lat,point.lon)):
         db_abstraction.mark_waypoint_traveled(point)
@@ -52,6 +55,7 @@ class Point:
     def dist_to_cord(self,poss):
         return haversine_distance(*self.location,*poss)
 
+# old
 def prosess_all_scan_data():
     all_points : list[Point] = []
     frame_state = db_abstraction.get_all_snapshots()

@@ -131,7 +131,7 @@
 
   async function loadMap() {
     const [pathPts, predPts, sprayEvs] = await Promise.all([
-      api(`/missions/${MID}/path?stride=1&source=fsm`),
+      api(`/missions/${MID}/path?stride=2&source=fsm`),
       api(`/missions/${MID}/weeds/pred?dedup=1`),
       api(`/missions/${MID}/spray`),
     ]);

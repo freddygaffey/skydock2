@@ -18,7 +18,47 @@ from services.projection import (
     drone_state_from_dict,
     ground_project_list,
 )
-from constants import MIN_NUM_DET, MIN_WEED_SPACING
+MIN_NUM_DET = 3
+MIN_WEED_SPACING = 2
+
+
+def _log_rev_key(path: Path) -> tuple[str, int, int]:
+    st = path.stat()
+    return (str(path.resolve()), st.st_mtime_ns, st.st_size)
+
+
+def _frames_dir_rev(mission_dir: Path | None) -> int:
+    """Change when JPEGs under ``mission_dir/frames/`` change (for ``build_frame_events`` cache)."""
+    if mission_dir is None:
+        return 0
+    fd = mission_dir / "frames"
+    if not fd.is_dir():
+        return 0
+    try:
+        return max((f.stat().st_mtime_ns for f in fd.iterdir() if f.is_file()), default=0)
+    except OSError:
+        return 0
+
+
+_SUMMARY_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_TIMELINE_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_PATH_STRIDE_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
+_FRAME_EVENTS_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
+_PAYLOAD_CACHE_MAX = 48
+
+
+def _payload_cache_get(cache: OrderedDict, key: tuple[Any, ...]) -> Any | None:
+    if key not in cache:
+        return None
+    cache.move_to_end(key)
+    return cache[key]
+
+
+def _payload_cache_set(cache: OrderedDict, key: tuple[Any, ...], value: Any) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _PAYLOAD_CACHE_MAX:
+        cache.popitem(last=False)
 
 
 def weed_prediction_points(path: Path, dedup: bool, thresh_m: float) -> list[dict[str, float]]:
@@ -322,6 +362,12 @@ def telemetry_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
 
 def fsm_tick_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
     """GPS path from ``fsm_tick`` drone_state — same state stream as camera / bbox projection (aligns with overlays)."""
+    rev = _log_rev_key(path)
+    cache_key = (*rev, int(stride))
+    cached = _payload_cache_get(_PATH_STRIDE_CACHE, cache_key)
+    if cached is not None:
+        return cached
+
     pts: list[dict[str, Any]] = []
     first_added = False
     last_point: dict[str, Any] | None = None
@@ -370,10 +416,16 @@ def fsm_tick_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
 
     if last_point is not None and (last_added_tick_index != last_tick_index):
         pts.append(last_point)
+    _payload_cache_set(_PATH_STRIDE_CACHE, cache_key, pts)
     return pts
 
 
 def build_timeline_payload(path: Path) -> dict[str, Any]:
+    rev = _log_rev_key(path)
+    cached = _payload_cache_get(_TIMELINE_CACHE, rev)
+    if cached is not None:
+        return cached
+
     transitions: list[dict[str, Any]] = []
     last_ts = None
     for ev in iter_events(path):
@@ -410,13 +462,20 @@ def build_timeline_payload(path: Path) -> dict[str, Any]:
         summary[s]["total_s"] += seg["duration_s"]
         summary[s]["visits"] += 1
 
-    return {
+    out = {
         "segments": segments,
         "summary": sorted(summary.values(), key=lambda x: -x["total_s"]),
     }
+    _payload_cache_set(_TIMELINE_CACHE, rev, out)
+    return out
 
 
 def build_summary_payload(path: Path) -> dict[str, Any]:
+    rev = _log_rev_key(path)
+    cached = _payload_cache_get(_SUMMARY_CACHE, rev)
+    if cached is not None:
+        return cached
+
     header: dict[str, Any] = {}
     event_counts: dict[str, int] = {}
     first_ts = last_ts = None
@@ -498,7 +557,7 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
         "db_writes": db_writes,
     }
 
-    return {
+    payload = {
         "header": header,
         "duration_s": duration_s,
         "event_counts": event_counts,
@@ -508,6 +567,8 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
         "sim_truth_file": sim_truth_file,
         "insights": insights,
     }
+    _payload_cache_set(_SUMMARY_CACHE, rev, payload)
+    return payload
 
 
 def tail_json_events(path: Path, since_byte: int) -> dict[str, Any]:
@@ -619,6 +680,14 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
     ``fsm_tick`` by ``time_ns``, and emit one row per frame image — including
     frames with no detections so the full flight is browsable.
     """
+    rev = _log_rev_key(path)
+    mdir_s = str(mission_dir.resolve()) if mission_dir is not None else ""
+    fr_rev = _frames_dir_rev(mission_dir)
+    fe_key = (*rev, mdir_s, fr_rev)
+    cached = _payload_cache_get(_FRAME_EVENTS_CACHE, fe_key)
+    if cached is not None:
+        return cached
+
     # Check whether to use timestamp-based matching from frames/ directory
     frames_dir = (mission_dir / "frames") if mission_dir else None
     use_frames_dir = False
@@ -652,7 +721,7 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
                 dets = []
                 ts_str = None
                 state_from = ""
-                state_to = ev.get("state_from", "") if ev else ""
+                state_to = ""
             else:
                 drone_state_dict = ev.get("drone_state")
                 fr = ev.get("frame") or {}
@@ -671,6 +740,7 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
                 state_from=state_from,
                 state_to=state_to,
             ))
+        _payload_cache_set(_FRAME_EVENTS_CACHE, fe_key, results)
         return results
 
     # Existing path: JSONL frames with embedded photo_path and detections (sim missions)
@@ -694,6 +764,7 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
             state_from=ev.get("state_from", ""),
             state_to=ev.get("state_to", ""),
         ))
+    _payload_cache_set(_FRAME_EVENTS_CACHE, fe_key, results)
     return results
 
 

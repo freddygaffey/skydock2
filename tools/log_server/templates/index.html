@@ -19,7 +19,7 @@
         <option value="rpi" {% if src == 'rpi' %}selected{% endif %}>Real (RPi)</option>
       </select>
       {% if src == 'rpi' %}
-      <button id="syncBtn" class="btn btn-sm btn-outline-warning">Sync RPi</button>
+      <button id="syncBtn" class="btn btn-sm btn-outline-warning" title="tar over SSH from fred@rpi.local, unpack into rpi_missions/ and real_missions/">Sync RPi</button>
       {% endif %}
       <a href="{{ url_for('log_web.compare_page', src=src) }}" class="btn btn-sm btn-outline-info">&hArr; Compare missions</a>
       <button id="themeBtn"></button>
@@ -28,6 +28,7 @@
 
   {% if src == 'rpi' %}
   <div id="syncStatus" class="alert alert-secondary d-none mb-3" role="alert"></div>
+  <p class="small muted mb-0">Sync streams a gzip tar from the Pi over SSH and unpacks: <code>missions/</code> → <code>rpi_missions/</code>, <code>real_missions/</code> → <code>real_missions/</code>. Defaults: <code>fred@rpi.local</code>, <code>~/skydock2</code>. Env: <code>SKYDOCK_RPI_SSH</code>, <code>SKYDOCK_RPI_REMOTE_DIR</code>.</p>
   {% endif %}
 
   <div class="row g-3">

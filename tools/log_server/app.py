@@ -25,4 +25,5 @@ if __name__ == "__main__":
     else:
         print("  Mission files : (none found)")
     print()
-    app.run(host="0.0.0.0", port=port, debug=True)
+    # threaded=True: parallel API requests (map + summary + frame_events) on first dashboard load
+    app.run(host="0.0.0.0", port=port, debug=True, threaded=True)

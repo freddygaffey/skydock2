@@ -22,12 +22,111 @@
     layerSetupScan = null,
     layerSetupScanMarkers = null;
   let _droneStateLabel = "—";
-  let _setupDraft = { field_center: null, weed_locations: [], scan_path: [] };
+  function defaultParams() {
+    return {
+      scan_height_m: 35,
+      scan_speed_ms: 1.0,
+      min_dist_from_waypoint_m: 1,
+      min_weed_spacing_m: 2,
+      min_num_det: 3,
+      goto_alt_m: 10,
+      max_homing_dist_m: 10,
+      min_alt_m: 5,
+      min_spray_error_m: 2,
+      sim_ai_enable_imperfections: false,
+    };
+  }
+  function mergeParams(p) {
+    return { ...defaultParams(), ...(p && typeof p === "object" ? p : {}) };
+  }
+  function normalizeLoadedPayload(raw) {
+    const d = raw && typeof raw === "object" ? raw : {};
+    return {
+      field_center: d.field_center != null ? d.field_center : null,
+      weed_locations: Array.isArray(d.weed_locations) ? d.weed_locations : [],
+      scan_path: Array.isArray(d.scan_path) ? d.scan_path : [],
+      params: mergeParams(d.params),
+    };
+  }
+  let _setupDraft = normalizeLoadedPayload(null);
   let _setupTarget = "real";
   let _scanEditMode = false;
   let _scanInsertMode = false;
   let _selectedWaypoint = -1;
   let _clickAddWeedMode = false;
+
+  function constantsStatus(msg) {
+    const el = document.getElementById("constantsStatus");
+    if (el) el.textContent = msg;
+  }
+  function updateConstSimAiForTarget() {
+    const real = setupTarget() === "real";
+    const wrap = document.getElementById("constSimAiWrap");
+    const cb = document.getElementById("constSimAiImperfections");
+    const note = document.getElementById("constSimAiRealNote");
+    if (cb) {
+      cb.disabled = real;
+      if (real) cb.checked = false;
+    }
+    if (note) note.classList.toggle("d-none", !real);
+    if (wrap) wrap.classList.toggle("opacity-50", real);
+  }
+  function fillParamsForm() {
+    const v = mergeParams(_setupDraft.params);
+    document.querySelectorAll(".param-inp").forEach((inp) => {
+      const k = inp.getAttribute("data-param-key");
+      if (!k) return;
+      const val = v[k];
+      inp.value = val == null ? "" : String(val);
+    });
+    const cb = document.getElementById("constSimAiImperfections");
+    if (cb) {
+      cb.checked = !!v.sim_ai_enable_imperfections;
+      if (setupTarget() === "real") cb.checked = false;
+    }
+    updateConstSimAiForTarget();
+  }
+  function collectParamsIntoDraft() {
+    const p = mergeParams(_setupDraft.params);
+    document.querySelectorAll(".param-inp").forEach((inp) => {
+      const k = inp.getAttribute("data-param-key");
+      if (!k) return;
+      const raw = String(inp.value ?? "").trim();
+      if (k === "scan_speed_ms") {
+        p[k] = raw === "" ? defaultParams().scan_speed_ms : parseFloat(raw);
+        if (!Number.isFinite(p[k])) p[k] = defaultParams().scan_speed_ms;
+      } else {
+        p[k] = raw === "" ? defaultParams()[k] : parseInt(raw, 10);
+        if (!Number.isFinite(p[k])) p[k] = defaultParams()[k];
+      }
+    });
+    const cb = document.getElementById("constSimAiImperfections");
+    p.sim_ai_enable_imperfections = setupTarget() === "sim" && cb && cb.checked;
+    _setupDraft.params = p;
+  }
+  function showConstantsTab() {
+    fillParamsForm();
+    constantsStatus("Editing params for the current setup draft (merge with Field setup on save).");
+  }
+  async function saveSetupToDisk(statusPrefix) {
+    const inp = document.getElementById("setupNameInput");
+    let name = ((inp && inp.value) || "").trim();
+    if (!name) name = setupDefaultName();
+    if (!name.endsWith(".json")) name += ".json";
+    const tgt = setupTarget();
+    collectParamsIntoDraft();
+    const payload = setupPayloadForSave();
+    const r = await fetch(`/setup_file?src=${encodeURIComponent(SRC)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, payload, target: tgt }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error((d && d.error) || "save failed");
+    if (inp) inp.value = d.name || name;
+    await setupLoadFileList();
+    return { name: d.name || name, tgt, msg: `${statusPrefix}${tgt} setup: ${d.name || name}` };
+  }
 
   function escHtml(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -75,7 +174,7 @@
   async function ensureDroneMarkerFromLatestPath() {
     if (layerDrone && layerDrone.getLatLng) return true;
     try {
-      const pts = await api(`/missions/${MID}/path?stride=1&source=fsm`);
+      const pts = await api(`/missions/${MID}/path?stride=2&source=fsm`);
       if (pts && pts.length) {
         const lp = pts[pts.length - 1];
         if (lp && lp.lat != null && lp.lon != null) {
@@ -329,10 +428,12 @@
   function setupPayloadForSave() {
     setupReindexWeeds();
     setupFieldCenterFromWeeds();
+    collectParamsIntoDraft();
     return {
       field_center: _setupDraft.field_center || [0, 0],
       weed_locations: (_setupDraft.weed_locations || []).map((w) => ({ id: w.id, lat: +w.lat, lon: +w.lon })),
       scan_path: (_setupDraft.scan_path || []).map((p) => [+p[0], +p[1]]),
+      params: mergeParams(_setupDraft.params),
     };
   }
   async function setupLoadFileList() {
@@ -355,7 +456,7 @@
 
   async function loadMap() {
     const [pathPts, predPts, sprayEvs] = await Promise.all([
-      api(`/missions/${MID}/path?stride=1&source=fsm`),
+      api(`/missions/${MID}/path?stride=2&source=fsm`),
       api(`/missions/${MID}/weeds/pred?dedup=1`),
       api(`/missions/${MID}/spray`),
     ]);
@@ -518,7 +619,7 @@
       setupRenderOverlays();
     });
     document.getElementById("setupClearBtn").addEventListener("click", () => {
-      _setupDraft = { field_center: null, weed_locations: [], scan_path: [] };
+      _setupDraft = normalizeLoadedPayload({ params: defaultParams() });
       setupRenderOverlays();
     });
     document.getElementById("setupGenPathBtn").addEventListener("click", async () => {
@@ -539,23 +640,9 @@
       setupRenderOverlays();
     });
     document.getElementById("setupSaveBtn").addEventListener("click", async () => {
-      const inp = document.getElementById("setupNameInput");
-      let name = ((inp && inp.value) || "").trim();
-      if (!name) name = setupDefaultName();
-      if (!name.endsWith(".json")) name += ".json";
-      const tgt = setupTarget();
-      const payload = setupPayloadForSave();
       try {
-        const r = await fetch(`/setup_file?src=${encodeURIComponent(SRC)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, payload, target: tgt }),
-        });
-        const d = await r.json();
-        if (!r.ok || !d.ok) throw new Error((d && d.error) || "save failed");
-        if (inp) inp.value = d.name || name;
-        await setupLoadFileList();
-        setupStatus(`Saved ${tgt} setup: ${d.name || name}`);
+        const { msg } = await saveSetupToDisk("Saved ");
+        setupStatus(msg);
       } catch (e) {
         setupStatus(`Save failed: ${e}`);
       }
@@ -567,7 +654,7 @@
       try {
         const tgt = setupTarget();
         const d = await api(`/setup_file?name=${encodeURIComponent(name)}&target=${encodeURIComponent(tgt)}`);
-        _setupDraft = d.payload || { field_center: null, weed_locations: [], scan_path: [] };
+        _setupDraft = normalizeLoadedPayload(d.payload);
         setupReindexWeeds();
         setupRenderOverlays();
         const inp = document.getElementById("setupNameInput");
@@ -715,6 +802,55 @@
     const nameInp = document.getElementById("setupNameInput");
     if (nameInp && !nameInp.value) nameInp.value = setupDefaultName();
     SdMap.attachMapDetectionPopupPainter(map);
+
+    const tabSetup = document.getElementById("weedTabSetup");
+    const tabConst = document.getElementById("weedTabConstants");
+    const paneSetup = document.getElementById("weedPaneSetup");
+    const paneConst = document.getElementById("weedPaneConstants");
+    function activateWeedTab(which) {
+      const isConst = which === "constants";
+      if (tabSetup) {
+        tabSetup.classList.toggle("active", !isConst);
+        tabSetup.setAttribute("aria-selected", isConst ? "false" : "true");
+      }
+      if (tabConst) {
+        tabConst.classList.toggle("active", isConst);
+        tabConst.setAttribute("aria-selected", isConst ? "true" : "false");
+      }
+      if (paneSetup) paneSetup.classList.toggle("d-none", isConst);
+      if (paneConst) paneConst.classList.toggle("d-none", !isConst);
+      if (isConst) showConstantsTab();
+    }
+    if (tabSetup) tabSetup.addEventListener("click", () => activateWeedTab("setup"));
+    if (tabConst) tabConst.addEventListener("click", () => activateWeedTab("constants"));
+
+    const constReloadBtn = document.getElementById("constReloadBtn");
+    if (constReloadBtn) {
+      constReloadBtn.addEventListener("click", () => {
+        fillParamsForm();
+        constantsStatus("Form reset to match the current draft (unsaved field edits discarded).");
+      });
+    }
+    const constSaveBtn = document.getElementById("constSaveBtn");
+    if (constSaveBtn) {
+      constSaveBtn.addEventListener("click", async () => {
+        try {
+          const { msg } = await saveSetupToDisk("Saved ");
+          setupStatus(msg);
+          constantsStatus(msg);
+        } catch (e) {
+          constantsStatus(`Save failed: ${e}`);
+        }
+      });
+    }
+    const targetSel2 = document.getElementById("setupTargetSel");
+    if (targetSel2) {
+      targetSel2.addEventListener("change", () => {
+        updateConstSimAiForTarget();
+        fillParamsForm();
+      });
+    }
+    fillParamsForm();
   }
 
   async function bootstrap() {

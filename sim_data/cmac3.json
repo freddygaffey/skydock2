@@ -219,5 +219,17 @@
       -35.36252226121914,
       149.16592709428
     ]
-  ]
+  ],
+  "params": {
+    "scan_height_m": 35,
+    "scan_speed_ms": 1.0,
+    "min_dist_from_waypoint_m": 1,
+    "min_weed_spacing_m": 2,
+    "min_num_det": 3,
+    "goto_alt_m": 10,
+    "max_homing_dist_m": 10,
+    "min_alt_m": 5,
+    "min_spray_error_m": 2
+  },
+  "is_sim": true
 }

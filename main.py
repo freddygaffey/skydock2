@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import json
 import argparse
 
 
@@ -84,7 +85,6 @@ def main():
     telemetry_singlton = telemetry.telemetry_singlton
 
     from mission_logging import allocate_mission_dir, configure_mission_dir, init_mission_log, log_event
-    from constants import MIN_SPRAY_ERROR
     from pathlib import Path
     from DB import set_db_path
 
@@ -93,10 +93,7 @@ def main():
     set_db_path(str(mission_dir / "droneDB.db"))
     configure_mission_dir(mission_dir)
 
-    from ai_class import ai_storage_singleton
-    from fsm import StateMachine
-
-    # Select mission file
+    # Select mission file BEFORE importing FSM so constants can be set from JSON
     if is_sim:
         from sitl import get_sim_files
         mission_file = get_sim_files()[0]
@@ -105,9 +102,46 @@ def main():
         if mission_file is None:
             return
 
+    # Load params from mission JSON and set constants before FSM/state modules are imported
+    mission_path = mission_file if os.path.exists(mission_file) else f"sim_data/{mission_file}"
+    with open(mission_path) as f:
+        _mission_data = json.load(f)
+
+    if _mission_data.get("is_sim") and not is_sim:
+        from utils import haversine_distance
+        drone = telemetry_singlton.drone_state
+        print(f"\n[WARNING] '{os.path.basename(mission_file)}' is a sim file!")
+        print("Weed distances from drone:")
+        for w in _mission_data.get("weed_locations", []):
+            dist_m = haversine_distance(drone.latitude, drone.longitude, w["lat"], w["lon"])
+            print(f"  weed {w['id']}: {dist_m/1000:.1f} km away")
+        if input("Continue anyway? (y to confirm): ").strip().lower() != "y":
+            return
+
+    params = _mission_data["params"]
+
+    import constants
+    constants.SCAN_HIGHT             = float(params["scan_height_m"])
+    constants.SCAN_SPEED_MS          = float(params["scan_speed_ms"])
+    constants.MIN_DIST_FROM_WAYPOINT = float(params["min_dist_from_waypoint_m"])
+    constants.MIN_WEED_SPACING       = float(params["min_weed_spacing_m"])
+    constants.MIN_NUM_DET            = int(params["min_num_det"])
+    constants.GOTO_ALT               = float(params["goto_alt_m"])
+    constants.MAX_HOMING_DIST        = float(params["max_homing_dist_m"])
+    constants.MIN_ALT                = float(params["min_alt_m"])
+    constants.MIN_SPRAY_ERROR        = float(params["min_spray_error_m"])
+
+    constants.SIM_AI_ENABLE_IMPERFECTIONS = (
+        bool(params.get("sim_ai_enable_imperfections", False)) if is_sim else False
+    )
+
+    # Now import FSM — state modules will capture the correct values from constants
+    from ai_class import ai_storage_singleton
+    from fsm import StateMachine
+
     # Init mission log
     truth_file = mission_file if is_sim else os.path.basename(mission_file)
-    init_mission_log(is_sim=is_sim, truth_file=truth_file, weed_match_m=0.5, min_spray_error_m=float(MIN_SPRAY_ERROR))
+    init_mission_log(is_sim=is_sim, truth_file=truth_file, weed_match_m=0.5, min_spray_error_m=float(constants.MIN_SPRAY_ERROR))
 
     # Pre-flight
     if is_sim:
@@ -134,7 +168,6 @@ def main():
         ai_storage_singleton.start_sim_ai(None)
 
     # FSM loop (~30 Hz; SIM_SPEED=1 on real hardware)
-    import constants
     fsm = StateMachine()
     try:
         while fsm.update() is not False:

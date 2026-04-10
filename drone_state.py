@@ -58,7 +58,7 @@ class DroneStateForHoming:
         if msg._type == "HEARTBEAT":
             if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
                 return
-            mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
+            mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'LAND': 8,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOROTATE': 26,'RALLY': 27}
             mode_id = msg.custom_mode
             current_mode = None
             for i in mode_mapping:
@@ -70,7 +70,9 @@ class DroneStateForHoming:
             else: 
                 self.arm_state = False
 
-            if current_mode ==  None: raise Exception("mode not found (freddy)")
+            if current_mode is None:
+                print(f"WARNING: unknown mode id {mode_id}, keeping current mode '{self.mode}'")
+                return
             self.mode = current_mode
 
         if msg._type == "GLOBAL_POSITION_INT":

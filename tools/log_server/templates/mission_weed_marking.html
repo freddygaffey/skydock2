@@ -81,6 +81,52 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
+    .weed-sidebar {
+      padding: 1rem 1.1rem 1.25rem;
+    }
+    @media (min-width: 992px) {
+      .weed-sidebar {
+        padding: 1.15rem 1.35rem 1.5rem;
+      }
+    }
+    .weed-sidebar .nav-tabs {
+      margin-bottom: 0.85rem !important;
+    }
+    .weed-pane-constants .weed-params-intro {
+      margin-bottom: 1.15rem;
+      line-height: 1.45;
+    }
+    .weed-pane-constants .weed-params-intro p:last-child {
+      margin-bottom: 0;
+    }
+    .weed-pane-constants .weed-param-grid {
+      margin-bottom: 1.25rem;
+    }
+    .weed-pane-constants .weed-param-grid .form-label {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-size: 0.8rem;
+      line-height: 1.25;
+    }
+    .weed-pane-constants .weed-param-grid .form-control {
+      padding-top: 0.4rem;
+      padding-bottom: 0.4rem;
+    }
+    .weed-pane-constants .weed-params-extras {
+      margin-top: 0.25rem;
+      margin-bottom: 1.15rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--sd-border, rgba(255,255,255,0.12));
+    }
+    .weed-pane-constants .weed-params-actions {
+      gap: 0.5rem;
+      margin-top: 0.25rem;
+      margin-bottom: 0.35rem;
+    }
+    .weed-pane-constants #constantsStatus {
+      margin-top: 0.85rem !important;
+      padding-top: 0.85rem !important;
+    }
   </style>
 </head><body>
 <div class="weed-shell container-fluid px-0">
@@ -100,7 +146,16 @@
   </div>
 
   <div class="weed-main">
-    <aside class="weed-sidebar p-3">
+    <aside class="weed-sidebar">
+      <ul class="nav nav-tabs nav-justified small mb-2" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active py-2" type="button" id="weedTabSetup" data-weed-tab="setup" aria-selected="true">Field setup</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link py-2" type="button" id="weedTabConstants" data-weed-tab="constants" aria-selected="false">Constants</button>
+        </li>
+      </ul>
+      <div id="weedPaneSetup" class="weed-tab-pane">
       <div class="weed-section-title">Map</div>
       <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
         <button id="tileToggle" type="button" class="btn btn-sm btn-outline-secondary">Satellite</button>
@@ -195,6 +250,67 @@
       <div id="setupStatus" class="small text-muted border-top pt-2 mt-1" style="border-color: var(--sd-border) !important;">
         <b>Jump to weed</b> or <b>Jump to lat/lon</b> pans the map. <b>Click map</b> adds weeds. Path <b>Edit</b> uses clicks for waypoints.
       </div>
+      </div>
+
+      <div id="weedPaneConstants" class="weed-tab-pane d-none weed-pane-constants">
+        <div class="weed-section-title">Mission params (JSON)</div>
+        <div class="weed-params-intro small text-secondary">
+          <p class="mb-2">These map to the <code>params</code> object in the setup file. <code>main.py</code> loads them into the FSM at startup. Saving writes the whole JSON (same as <b>Save</b> on Field setup).</p>
+          <p id="constSimSpeedNote" class="mb-0">Simulation time scaling uses <code>python main.py --sim --speed N</code> (not stored in this JSON).</p>
+        </div>
+        <div class="weed-param-grid">
+          <div class="row g-3 row-cols-1 row-cols-sm-2">
+            <div class="col">
+              <label class="form-label" for="param-scan_height_m">scan_height_m</label>
+              <input id="param-scan_height_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="scan_height_m" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-scan_speed_ms">scan_speed_ms</label>
+              <input id="param-scan_speed_ms" type="number" step="any" class="form-control form-control-sm param-inp" data-param-key="scan_speed_ms" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-min_dist_from_waypoint_m">min_dist_from_waypoint_m</label>
+              <input id="param-min_dist_from_waypoint_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="min_dist_from_waypoint_m" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-min_weed_spacing_m">min_weed_spacing_m</label>
+              <input id="param-min_weed_spacing_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="min_weed_spacing_m" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-min_num_det">min_num_det</label>
+              <input id="param-min_num_det" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="min_num_det" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-goto_alt_m">goto_alt_m</label>
+              <input id="param-goto_alt_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="goto_alt_m" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-max_homing_dist_m">max_homing_dist_m</label>
+              <input id="param-max_homing_dist_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="max_homing_dist_m" autocomplete="off">
+            </div>
+            <div class="col">
+              <label class="form-label" for="param-min_alt_m">min_alt_m</label>
+              <input id="param-min_alt_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="min_alt_m" autocomplete="off">
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label" for="param-min_spray_error_m">min_spray_error_m</label>
+              <input id="param-min_spray_error_m" type="number" step="1" class="form-control form-control-sm param-inp" data-param-key="min_spray_error_m" autocomplete="off">
+            </div>
+          </div>
+        </div>
+        <div class="weed-params-extras">
+          <label class="form-check mb-0 d-flex align-items-start gap-2" id="constSimAiWrap">
+            <input class="form-check-input mt-1" type="checkbox" id="constSimAiImperfections">
+            <span class="small">sim_ai_enable_imperfections <span class="text-secondary">(SITL only)</span></span>
+          </label>
+          <div id="constSimAiRealNote" class="small text-secondary mt-2 ms-4 d-none">Real hardware always runs with imperfections off; not written from Real target.</div>
+        </div>
+        <div class="d-flex weed-params-actions">
+          <button type="button" class="btn btn-sm btn-primary flex-fill" id="constSaveBtn">Save setup JSON</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary flex-fill" id="constReloadBtn">Reset form</button>
+        </div>
+        <div id="constantsStatus" class="small text-muted border-top pt-2 mt-1" style="border-color: var(--sd-border) !important;"></div>
+      </div>
     </aside>
 
     <div class="weed-map-wrap">
@@ -211,7 +327,7 @@ window.__SKYDOCK = {
   tile_esri: {{ tile_esri_url|tojson }},
 };
 </script>
-<script src="{{ url_for('static', filename='mission_weed_marking.js') }}"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='mission_weed_marking.js') }}"></script>
 {% include "partials/sd_theme_script.html" %}
 </body></html>

@@ -7,27 +7,25 @@ SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys
 
 ###########################
 ###### fsm ################
+# Set from mission JSON params in main.py before FSM is imported
 ###########################
 
-# Scan state constants
-SCAN_HIGHT = 35  # m
-SCAN_SPEED_MS = 1.0  # m/s
-MIN_DIST_FROM_WAYPOINT = 1  # m
-MIN_WEED_SPACING = 2  # m
-MIN_NUM_DET = 3
+# Scan state
+SCAN_HIGHT = None           # scan_height_m
+SCAN_SPEED_MS = None        # scan_speed_ms
+MIN_DIST_FROM_WAYPOINT = None  # min_dist_from_waypoint_m
+MIN_WEED_SPACING = None     # min_weed_spacing_m
+MIN_NUM_DET = None          # min_num_det
 
-# Goto state constants
-GOTO_ALT = 10  # m
-LAST_GO_TO_TIME = 0
+# Goto state
+GOTO_ALT = None             # goto_alt_m
 
-# Homing state constants
-MAX_HOMING_DIST = 10  # m
-MIN_ALT = 5  # m
+# Homing state
+MAX_HOMING_DIST = None      # max_homing_dist_m
+MIN_ALT = None              # min_alt_m
 
-# Spray state constants
-MIN_SPRAY_ERROR = 2  # m
-
-last_det_time = 0
+# Spray state
+MIN_SPRAY_ERROR = None      # min_spray_error_m
 
 
 ###########################
@@ -36,4 +34,4 @@ last_det_time = 0
 
 # False = perfect camera: every weed detected exactly, no false positives
 # True  = realistic camera: pixel jitter, missed detections, false positives, wrong labels
-SIM_AI_ENABLE_IMPERFECTIONS = False
+SIM_AI_ENABLE_IMPERFECTIONS = True

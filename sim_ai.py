@@ -8,7 +8,7 @@ from telemetry import telemetry_singlton
 from ai_class import ai_storage_singleton, Detection, Frame
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
-from constants import SIM_SPEED, SIM_AI_ENABLE_IMPERFECTIONS
+import constants
 
 
 # Camera parameters – must match utils.detection_to_ned
@@ -67,7 +67,7 @@ def _vision_params():
         },
         "sim_ai": {
             "fps": SIM_AI_FPS,
-            "enable_imperfections": SIM_AI_ENABLE_IMPERFECTIONS,
+            "enable_imperfections": constants.SIM_AI_ENABLE_IMPERFECTIONS,
             "pixel_noise_std_px": SIM_AI_PIXEL_NOISE_STD_PX,
             "size_noise_std_frac": SIM_AI_SIZE_NOISE_STD_FRAC,
             "miss_prob": SIM_AI_MISS_PROB,
@@ -225,7 +225,7 @@ def run_sim_ai(weed_locations: list[dict]):
             if drone_state is not None:
                 dets = _visible_weed_detections(drone_state, weed_locations)
 
-                if SIM_AI_ENABLE_IMPERFECTIONS:
+                if constants.SIM_AI_ENABLE_IMPERFECTIONS:
                     noisy: list[Detection] = []
 
                     for d in dets:
@@ -306,7 +306,7 @@ def run_sim_ai(weed_locations: list[dict]):
 
             # Schedule next frame based on absolute time
             frame_idx += 1
-            next_time = start + frame_idx * dt / SIM_SPEED
+            next_time = start + frame_idx * dt / constants.SIM_SPEED
 
             now = time.perf_counter()
             sleep_time = next_time - now

@@ -18,8 +18,12 @@ gap (minimum 0.05s).
 
 **Fixed FPS:** pass ``--fps N`` to use equal time per frame (legacy behaviour).
 
-Output is saved as ``mission_video.mp4``. Real-time mode encodes directly with FFmpeg
-(H.264). Fixed-FPS mode uses OpenCV ``mp4v`` then FFmpeg transcode to H.264 for browsers.
+Output is saved as ``mission_video.mp4``. Real-time mode renders frames in parallel (see
+``SKYDOCK_VIDEO_WORKERS``), writes temp JPEGs (not PNG), and encodes with FFmpeg ``libx264``
+``-preset veryfast``. Fixed-FPS mode uses OpenCV ``mp4v`` then FFmpeg transcode to H.264.
+
+Env: ``SKYDOCK_VIDEO_WORKERS`` (default min(2×CPU, 128)), ``SKYDOCK_VIDEO_JPEG_Q`` (default 90),
+``SKYDOCK_VIDEO_X264_PRESET``, ``SKYDOCK_VIDEO_CRF``.
 """
 
 from __future__ import annotations
@@ -27,11 +31,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import datetime as _dt
 import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from bisect import bisect_right
 from pathlib import Path
 from typing import Any
@@ -422,6 +428,25 @@ def compose_frame(
     return draw_overlay(frame, drone_state, detections, fsm_state, elapsed_s, accuracy)
 
 
+def _ffmpeg_x264_fast() -> list[str]:
+    """libx264 flags tuned for speed (mission review in browser, not archival)."""
+    return [
+        "-c:v",
+        "libx264",
+        "-preset",
+        os.environ.get("SKYDOCK_VIDEO_X264_PRESET", "veryfast"),
+        "-crf",
+        os.environ.get("SKYDOCK_VIDEO_CRF", "23"),
+        "-threads",
+        "0",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+    ]
+
+
 def transcode_h264_for_web(path: Path) -> bool:
     """Replace *path* with an H.264 yuv420p + faststart MP4 suitable for browsers."""
     ffmpeg = resolve_ffmpeg_exe()
@@ -433,24 +458,7 @@ def transcode_h264_for_web(path: Path) -> bool:
         return False
     tmp = path.with_name(path.stem + "._h264_tmp.mp4")
     r = subprocess.run(
-        [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-an",
-            str(tmp),
-        ],
+        [ffmpeg, "-y", "-i", str(path), *_ffmpeg_x264_fast(), str(tmp)],
         capture_output=True,
         text=True,
         timeout=7200,
@@ -535,12 +543,12 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
         print("Error: no JPEG frames found")
         sys.exit(1)
 
-    kept: list[tuple[int, Path]] = []
-    for ts_ns, img_path in frame_images:
-        if cv2.imread(str(img_path)) is not None:
-            kept.append((ts_ns, img_path))
+    # One pass only: compose_frame reads each JPEG (avoid double cv2.imread per frame).
+    kept: list[tuple[int, Path]] = [
+        (ts_ns, p) for ts_ns, p in frame_images if p.is_file() and p.stat().st_size > 0
+    ]
     if not kept:
-        print("Error: no readable JPEG frames")
+        print("Error: no JPEG frames on disk")
         sys.exit(1)
 
     stems = [t for t, _ in kept]
@@ -548,7 +556,7 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
     durations = _frame_durations_seconds(stems, spu)
     total_s = sum(durations)
 
-    print(f"  Frames: {len(kept)} readable  ({len(frame_images)} on disk)")
+    print(f"  Frames: {len(kept)} to render  ({len(frame_images)} JPEGs on disk)")
     print(f"  FSM ticks: {len(data['fsm_ticks_ts'])}")
     print(f"  FSM transitions: {len(data['fsm_trans_ts'])}")
     print(f"  Mode: real-time  (~{total_s:.1f}s wall time from frame gaps, stem scale ~{spu:g} s/unit)")
@@ -562,23 +570,59 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
 
     start_ns = data["start_ts_ns"] or kept[0][0]
 
+    n_frames = len(kept)
+    max_workers = max(
+        1,
+        min(
+            n_frames,
+            int(os.environ.get("SKYDOCK_VIDEO_WORKERS", "0"))
+            or min((os.cpu_count() or 2) * 2, 128),
+        ),
+    )
+    jpeg_q = int(os.environ.get("SKYDOCK_VIDEO_JPEG_Q", "90"))
+
+    def _render_one(j: int, ts_ns: int, img_path: Path, dur: float) -> tuple[int, Path, float, str | None]:
+        frame = compose_frame(img_path, ts_ns, data, start_ns, truth)
+        if frame is None:
+            return j, Path(), dur, str(img_path)
+        out = tmp_path / f"f_{j:06d}.jpg"
+        if not cv2.imwrite(str(out), frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_q]):
+            return j, Path(), dur, str(out)
+        return j, out.resolve(), dur, None
+
     with tempfile.TemporaryDirectory(prefix="skydock_vid_") as tmp:
         tmp_path = Path(tmp)
+        rendered: list[tuple[int, Path, float, str | None]] = []
+        if max_workers <= 1:
+            for j, ((ts_ns, img_path), dur) in enumerate(zip(kept, durations, strict=True)):
+                rendered.append(_render_one(j, ts_ns, img_path, dur))
+                if (j + 1) % 50 == 0 or (j + 1) == n_frames:
+                    print(f"  {j + 1}/{n_frames} frames processed")
+        else:
+            print(f"  Parallel render: {max_workers} workers (set SKYDOCK_VIDEO_WORKERS to override)")
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futs = [
+                    pool.submit(_render_one, j, ts_ns, img_path, dur)
+                    for j, ((ts_ns, img_path), dur) in enumerate(zip(kept, durations, strict=True))
+                ]
+                done = 0
+                for fut in as_completed(futs):
+                    rendered.append(fut.result())
+                    done += 1
+                    if done % 50 == 0 or done == n_frames:
+                        print(f"  {done}/{n_frames} frames processed")
+            rendered.sort(key=lambda x: x[0])
+
+        for _ji, _pp, _dd, err in rendered:
+            if err is not None:
+                print(f"Error: compose/write failed for {err}")
+                sys.exit(1)
+
         lines = ["ffconcat version 1.0"]
-        for j, ((ts_ns, img_path), dur) in enumerate(zip(kept, durations, strict=True)):
-            frame = compose_frame(img_path, ts_ns, data, start_ns, truth)
-            if frame is None:
-                print(f"Error: compose failed for {img_path}")
-                sys.exit(1)
-            png = tmp_path / f"f_{j:06d}.png"
-            if not cv2.imwrite(str(png), frame):
-                print(f"Error: could not write {png}")
-                sys.exit(1)
-            pesc = str(png.resolve()).replace("\\", "/").replace("'", "'\\''")
+        for _ji, img_out, dur, _e in sorted(rendered, key=lambda x: x[0]):
+            pesc = str(img_out).replace("\\", "/").replace("'", "'\\''")
             lines.append(f"file '{pesc}'")
             lines.append(f"duration {dur:.6f}")
-            if (j + 1) % 50 == 0 or (j + 1) == len(kept):
-                print(f"  {j + 1}/{len(kept)} frames processed")
 
         if len(lines) <= 1:
             print("Error: no frames written")
@@ -597,17 +641,7 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
                 "0",
                 "-i",
                 str(concat_path),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "23",
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",
-                "-an",
+                *_ffmpeg_x264_fast(),
                 str(output_path),
             ],
             capture_output=True,

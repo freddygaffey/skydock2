@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 from collections import OrderedDict
@@ -40,9 +42,51 @@ from services.geometry import grid_dedup
 
 bp = Blueprint("log_api", __name__)
 
+# Default mission ``params`` (same keys as ``main.py`` reads from setup JSON).
+_SETUP_PARAM_DEFAULTS: dict[str, Any] = {
+    "scan_height_m": 35,
+    "scan_speed_ms": 1.0,
+    "min_dist_from_waypoint_m": 1,
+    "min_weed_spacing_m": 2,
+    "min_num_det": 3,
+    "goto_alt_m": 10,
+    "max_homing_dist_m": 10,
+    "min_alt_m": 5,
+    "min_spray_error_m": 2,
+    "sim_ai_enable_imperfections": False,
+}
+
 # In-memory cache for expensive FOV scans (invalidated when mission.jsonl mtime/size changes).
 _FOV_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _FOV_CACHE_MAX = 16
+
+
+def _coerce_setup_params(obj: Any) -> dict[str, Any]:
+    if not isinstance(obj, dict):
+        raise ValueError("params must be a JSON object")
+    out = dict(_SETUP_PARAM_DEFAULTS)
+    int_keys = (
+        "scan_height_m",
+        "min_dist_from_waypoint_m",
+        "min_weed_spacing_m",
+        "min_num_det",
+        "goto_alt_m",
+        "max_homing_dist_m",
+        "min_alt_m",
+        "min_spray_error_m",
+    )
+    for k, v in obj.items():
+        if k not in _SETUP_PARAM_DEFAULTS:
+            raise ValueError(f"unknown params key: {k}")
+        if k == "scan_speed_ms":
+            out[k] = float(v)
+        elif k == "sim_ai_enable_imperfections":
+            out[k] = bool(v)
+        elif k in int_keys:
+            out[k] = int(v)
+        else:
+            out[k] = v
+    return out
 
 
 def _setup_payload_from_json(data: Any) -> dict[str, Any]:
@@ -71,10 +115,16 @@ def _setup_payload_from_json(data: Any) -> dict[str, Any]:
         if not isinstance(p, list) or len(p) != 2:
             raise ValueError("Each scan_path point must be [lat, lon]")
         scan_path.append([float(p[0]), float(p[1])])
+    params_raw = data.get("params")
+    if params_raw is None:
+        params = dict(_SETUP_PARAM_DEFAULTS)
+    else:
+        params = _coerce_setup_params(params_raw)
     return {
         "field_center": field_center,
         "weed_locations": weed_locations,
         "scan_path": scan_path,
+        "params": params,
     }
 
 
@@ -470,37 +520,102 @@ def setup_scan_path():
     return jsonify({"scan_path": scan_path, "count": len(scan_path)})
 
 
-@bp.post("/api/sync/rpi")
-def sync_rpi():
-    """Run pull_logs_rpi.sh to sync missions from the RPi."""
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    script = (repo_root / "pull_logs_rpi.sh").resolve()
-    if not script.is_file():
-        return jsonify({"ok": False, "error": f"Script not found: {script}"}), 404
-    try:
-        result = subprocess.run(
-            ["bash", str(script)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        output = (result.stdout + result.stderr).strip()
-        if result.returncode == 0:
-            return jsonify({"ok": True, "output": output})
-        else:
-            return jsonify({"ok": False, "error": output})
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "Sync timed out after 60s"})
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)})
+def _rpi_ssh_user_at_host() -> str:
+    """e.g. ``fred@rpi.local`` — override with ``SKYDOCK_RPI_SSH``."""
+    return os.environ.get("SKYDOCK_RPI_SSH", "fred@rpi.local").strip() or "fred@rpi.local"
+
+
+def _rpi_remote_skydock_path() -> str:
+    """Directory on the Pi that contains ``missions/`` and ``real_missions/`` (``~`` expanded on the Pi)."""
+    return os.environ.get("SKYDOCK_RPI_REMOTE_DIR", "~/skydock2").rstrip("/")
+
+
+def _rpi_ssh_base_args() -> list[str]:
+    return [
+        "ssh",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+    ]
+
+
+def _rpi_remote_cd_expr(remote_chdir: str) -> str:
+    """Shell fragment for ``cd`` on the Pi: ``~/foo`` → ``$HOME/foo`` so tilde expands."""
+    s = remote_chdir.strip()
+    if s.startswith("~/"):
+        return f'"$HOME/{s[2:]}"'
+    return shlex.quote(s)
+
+
+def _rpi_tar_ssh_pull(
+    user_host: str,
+    remote_chdir: str,
+    remote_topdir: str,
+    local_dest: Path,
+    *,
+    timeout_s: int = 300,
+) -> tuple[int, str]:
+    """Stream ``tar czf -`` from ``remote_chdir/remote_topdir`` over SSH and unpack into ``local_dest``.
+
+    Uses ``--strip-components=1`` so ``missions/0001/...`` → ``local_dest/0001/...`` (same for ``real_missions``).
+    """
+    local_dest.mkdir(parents=True, exist_ok=True)
+    rcmd = f"cd {_rpi_remote_cd_expr(remote_chdir)} && tar czf - {shlex.quote(remote_topdir)}"
+    ssh_cmd = _rpi_ssh_base_args() + [user_host, rcmd]
+    out_parts: list[str] = []
+    with subprocess.Popen(
+        ssh_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as p_ssh:
+        assert p_ssh.stdout is not None
+        try:
+            tar = subprocess.run(
+                [
+                    "tar",
+                    "-xzf",
+                    "-",
+                    "-C",
+                    str(local_dest),
+                    "--strip-components=1",
+                ],
+                stdin=p_ssh.stdout,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        finally:
+            p_ssh.stdout.close()
+        _out_ssh, err_ssh = p_ssh.communicate(timeout=timeout_s)
+        rc_ssh = p_ssh.returncode
+        if err_ssh:
+            out_parts.append(err_ssh)
+        if tar.stderr:
+            out_parts.append(tar.stderr)
+        if tar.stdout:
+            out_parts.append(tar.stdout)
+        rc = rc_ssh if rc_ssh != 0 else tar.returncode
+        return rc, "\n".join(s for s in out_parts if s).strip()
 
 
 def _rpi_resolve_host() -> str | None:
-    """Try rpi.local then 10.0.0.1; return reachable host or None."""
-    ssh_opts = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
+    """Return a host name that answers SSH, or None. Honors ``SKYDOCK_RPI_SSH`` (e.g. ``fred@rpi.local``) first."""
+    ssh_opts = ["-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no"]
+    spec = os.environ.get("SKYDOCK_RPI_SSH", "").strip()
+    if spec and "@" in spec:
+        try:
+            r = subprocess.run(["ssh"] + ssh_opts + [spec, "exit"], timeout=10)
+            if r.returncode == 0:
+                return spec.split("@", 1)[1].strip()
+        except Exception:
+            pass
     for host in ["rpi.local", "10.0.0.1"]:
         try:
-            r = subprocess.run(["ssh"] + ssh_opts + [f"fred@{host}", "exit"], timeout=8)
+            r = subprocess.run(["ssh"] + ssh_opts + [f"fred@{host}", "exit"], timeout=10)
             if r.returncode == 0:
                 return host
         except Exception:
@@ -508,49 +623,103 @@ def _rpi_resolve_host() -> str | None:
     return None
 
 
+@bp.post("/api/sync/rpi")
+def sync_rpi():
+    """Pull ``real_missions/`` and ``missions/`` from the RPi: remote ``tar czf -`` over SSH, unpack locally.
+
+    Uses ``SKYDOCK_RPI_SSH`` (default ``fred@rpi.local``) and ``SKYDOCK_RPI_REMOTE_DIR`` (default ``~/skydock2``).
+    Mission logs land in ``RPI_MISSIONS_ROOT`` (see ``SKYDOCK_RPI_MISSIONS_DIR``).
+    """
+    if _rpi_resolve_host() is None:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Cannot reach RPi over SSH (try SKYDOCK_RPI_SSH=fred@rpi.local or check the Pi is on the network).",
+            }
+        ), 502
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    user_host = _rpi_ssh_user_at_host()
+    remote = _rpi_remote_skydock_path()
+
+    rpi_missions: Path = current_app.config["RPI_MISSIONS_ROOT"]
+    real_missions = repo_root / "real_missions"
+
+    pulls: list[tuple[str, str, Path]] = [
+        ("real_missions (tar → unpack)", "real_missions", real_missions),
+        ("missions → rpi_missions (tar → unpack)", "missions", rpi_missions),
+    ]
+    chunks: list[str] = []
+    rc = 0
+    for label, topdir, dest in pulls:
+        code, out = _rpi_tar_ssh_pull(user_host, remote, topdir, dest)
+        chunks.append(f"=== {label} ===\n{out or '(no output)'}")
+        if code != 0:
+            rc = code
+            break
+
+    output = "\n\n".join(chunks)
+    if rc == 0:
+        return jsonify({"ok": True, "output": output})
+    return jsonify({"ok": False, "error": output})
+
+
+@bp.post("/api/rpi/pull_missions")
+def rpi_pull_missions():
+    """Pull only remote ``missions/`` into local ``rpi_missions/`` (tar stream + unpack; same as sync step 2)."""
+    if _rpi_resolve_host() is None:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Cannot reach RPi over SSH (try SKYDOCK_RPI_SSH=fred@rpi.local).",
+            }
+        ), 502
+    user_host = _rpi_ssh_user_at_host()
+    remote = _rpi_remote_skydock_path()
+    rpi_missions: Path = current_app.config["RPI_MISSIONS_ROOT"]
+    code, out = _rpi_tar_ssh_pull(user_host, remote, "missions", rpi_missions)
+    if code == 0:
+        return jsonify({"ok": True, "output": out or "(no output)"})
+    return jsonify({"ok": False, "error": out}), 500
+
+
 @bp.post("/api/rpi/push_real_missions")
 def rpi_push_real_missions():
     """rsync local real_missions/ → RPi."""
+    if _rpi_resolve_host() is None:
+        return jsonify({"status": "error", "output": "Cannot reach RPi (set SKYDOCK_RPI_SSH=fred@rpi.local)"}), 502
     repo_root = Path(__file__).resolve().parent.parent.parent
     src = str(repo_root / "real_missions") + "/"
-    host = _rpi_resolve_host()
-    if not host:
-        return jsonify({"status": "error", "output": "Cannot reach RPi (tried rpi.local, 10.0.0.1)"}), 502
-    ssh_cmd = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no"
+    user_host = _rpi_ssh_user_at_host()
+    remote = _rpi_remote_skydock_path()
+    ssh_cmd = "ssh -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=no"
     try:
         result = subprocess.run(
-            ["rsync", "-avz", "-e", ssh_cmd, src, f"fred@{host}:~/skydock2/real_missions/"],
-            capture_output=True, text=True, timeout=60,
+            ["rsync", "-avz", "-e", ssh_cmd, src, f"{user_host}:{remote}/real_missions/"],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         out = (result.stdout + result.stderr).strip()
         if result.returncode != 0:
             return jsonify({"status": "error", "output": out}), 500
         return jsonify({"status": "ok", "output": out})
     except subprocess.TimeoutExpired:
-        return jsonify({"status": "error", "output": "Timed out after 60s"}), 504
+        return jsonify({"status": "error", "output": "Timed out"}), 504
     except Exception as exc:
         return jsonify({"status": "error", "output": str(exc)}), 500
 
 
 @bp.post("/api/rpi/pull_real_missions")
 def rpi_pull_real_missions():
-    """rsync RPi real_missions/ → local."""
+    """RPi ``real_missions/`` → local via tar stream + unpack."""
+    if _rpi_resolve_host() is None:
+        return jsonify({"status": "error", "output": "Cannot reach RPi (set SKYDOCK_RPI_SSH=fred@rpi.local)"}), 502
     repo_root = Path(__file__).resolve().parent.parent.parent
-    dest = str(repo_root / "real_missions") + "/"
-    host = _rpi_resolve_host()
-    if not host:
-        return jsonify({"status": "error", "output": "Cannot reach RPi (tried rpi.local, 10.0.0.1)"}), 502
-    ssh_cmd = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no"
-    try:
-        result = subprocess.run(
-            ["rsync", "-avz", "-e", ssh_cmd, f"fred@{host}:~/skydock2/real_missions/", dest],
-            capture_output=True, text=True, timeout=60,
-        )
-        out = (result.stdout + result.stderr).strip()
-        if result.returncode != 0:
-            return jsonify({"status": "error", "output": out}), 500
-        return jsonify({"status": "ok", "output": out})
-    except subprocess.TimeoutExpired:
-        return jsonify({"status": "error", "output": "Timed out after 60s"}), 504
-    except Exception as exc:
-        return jsonify({"status": "error", "output": str(exc)}), 500
+    dest = repo_root / "real_missions"
+    user_host = _rpi_ssh_user_at_host()
+    remote = _rpi_remote_skydock_path()
+    code, out = _rpi_tar_ssh_pull(user_host, remote, "real_missions", dest, timeout_s=120)
+    if code == 0:
+        return jsonify({"status": "ok", "output": out or "(no output)"})
+    return jsonify({"status": "error", "output": out}), 500

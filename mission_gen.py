@@ -36,9 +36,10 @@ def generate_scan_path(weed_locations, row_spacing_m=8, padding_m=5):
     return path
 
 
-def save_mission(weed_locations, name="real_mission", out_dir="sim_data"):
+def save_mission(weed_locations, name="real_mission", out_dir="sim_data", params=None):
     """Generate and save a mission file from weed locations.
 
+    params must be provided explicitly — add a "params" block to the JSON before flying.
     Returns the path to the saved file.
     """
     os.makedirs(out_dir, exist_ok=True)
@@ -54,6 +55,8 @@ def save_mission(weed_locations, name="real_mission", out_dir="sim_data"):
         "weed_locations": weed_locations,
         "scan_path": scan_path,
     }
+    if params is not None:
+        mission["params"] = params
 
     path = os.path.join(out_dir, f"{name}.json")
     with open(path, "w") as f:

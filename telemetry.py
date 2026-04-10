@@ -5,10 +5,10 @@ from queue import Queue, Full
 
 
 from pymavlink import mavutil
-from typing import Callable
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
-from constants import SIM_SPEED, SCAN_SPEED_MS
+import constants
+from constants import SIM_SPEED
 
 
 class Telemetry:
@@ -185,6 +185,7 @@ class Telemetry:
                 0, 0, 0,     # acceleration ignored
                 0, 0         # yaw and yaw_rate ignored
                 )
+
     def send_volocity_command_yaw_stay_same(self,mx,my,mz,bitmask=int(0b10111000111)):
         # this command must be sent every 3 seconds to continue moving
         if not bitmask:
@@ -271,7 +272,9 @@ class Telemetry:
                 mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
                 0, 0, 0, 0, 0, 0, 0, hight
             )
-    def fly_to_point(self,lat,lon,alt_above_home,bitmask=3576,speed_ms=SCAN_SPEED_MS):
+    def fly_to_point(self,lat,lon,alt_above_home,bitmask=3576,speed_ms=None):
+        if speed_ms is None:
+            speed_ms = float(constants.SCAN_SPEED_MS)
         log_event(
             "move_command",
             logger="telemetry",

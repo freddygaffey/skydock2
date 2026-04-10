@@ -11,11 +11,19 @@
   <style>
     /* Tall map; wheel over map zooms map instead of scrolling the page (see initMap) */
     #map{height:min(86vh,calc(100vh - 200px));min-height:620px;border-radius:8px}
-    #framelist{height:480px;overflow-y:auto}
-    .frame-item{cursor:pointer;padding:8px 10px;border-bottom:1px solid var(--sd-border);font-size:12px}
+    #framelist{
+      height:480px;overflow-y:auto;
+      overscroll-behavior:contain;
+      -webkit-overflow-scrolling:touch;
+    }
+    #framelist.frame-list-scroll{
+      max-height:min(70vh,560px);overflow-y:auto;
+    }
+    .frame-item{
+      cursor:pointer;padding:8px 10px;border-bottom:1px solid var(--sd-border);font-size:12px;
+    }
     .frame-item:hover{background:var(--sd-input)}
     .frame-item.active{background:var(--sd-hover);border-left:3px solid var(--sd-accent)}
-    #framelist.frame-list-scroll{max-height:min(70vh,560px);overflow-y:auto}
     #frameCanvas{background:var(--sd-input);border:1px solid var(--sd-border);
                  border-radius:6px;max-width:100%;image-rendering:pixelated}
     #framesDetTimeline{
@@ -267,6 +275,10 @@
       <div class="row g-3">
         <div class="col-12 col-md-4">
           <div class="muted small mb-2" id="frameCount">Loading frames…</div>
+          <div id="framesFilterWrap" class="form-check mb-2 d-none">
+            <input class="form-check-input" type="checkbox" id="framesOnlyWithDets">
+            <label class="form-check-label small" for="framesOnlyWithDets" title="Hides camera frames where the log has no detections (full flight uses every JPEG).">Only frames with detections</label>
+          </div>
           <div id="framesNavWrap" class="d-none mb-2">
             <div class="d-flex flex-wrap align-items-center gap-2">
               <button type="button" class="btn btn-sm btn-outline-secondary" id="framesPrev" title="Previous frame (←)">&#8249; Prev</button>
@@ -303,7 +315,7 @@
             <div id="frameGroundNote" class="muted small mt-2" style="min-height:1.2em"></div>
             <div id="frameGroundTableWrap" class="table-responsive small mt-2"></div>
           </div>
-          <canvas id="frameCanvas" width="640" height="640" class="mt-3"></canvas>
+          <canvas id="frameCanvas" width="640" height="640" class="mt-3" title="Scroll wheel: previous / next frame (like video scrub)"></canvas>
           <div id="frameRawBlock" class="card p-2 mt-2">
             <div class="muted small mb-1">Ground + pixel JSON <span id="frameRawHint" class="d-none">(raw pixel list only exists when logged separately)</span></div>
             <pre id="frameRawPre" class="mb-0" style="max-height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-word"></pre>
@@ -321,6 +333,7 @@
 
     <!-- ── FRAME REVIEW ───────────────────────────────────────────────── -->
     <div class="tab-pane fade" id="tabFrameReview">
+      <p class="muted small mb-0">Scrub frames on the map: yellow camera footprint, detection shapes, optional truth file and predicted weed clusters — same geometry as the main field map.</p>
       <div class="row g-3">
 
         <!-- Left panel: controls -->
@@ -393,7 +406,7 @@
         <div class="col-12 col-lg-10">
           <div id="videoGenerating" class="alert alert-info d-none">
             <div class="d-flex align-items-center gap-2">
-              <div class="spinner-border spinner-border-sm"></div>
+              <div id="videoGenSpinner" class="spinner-border spinner-border-sm"></div>
               <span class="video-gen-msg">Generating video… this may take a minute. Checking every 3s.</span>
             </div>
           </div>
@@ -1102,7 +1115,7 @@ async function refreshPredOverlay(){
 
 async function loadMap(){
   const [pathPts, predPts, sprayEvs] = await Promise.all([
-    api(`/missions/${MID}/path?stride=1&source=fsm`),
+    api(`/missions/${MID}/path?stride=2&source=fsm`),
     (async ()=>{ const {spacingM,minNumDet} = getPredClusteringParams(); return api(`/missions/${MID}/weeds/pred?dedup=1&spacing_m=${encodeURIComponent(spacingM)}&min_num_det=${encodeURIComponent(minNumDet)}`); })(),
     api(`/missions/${MID}/spray`),
   ]);
@@ -1305,6 +1318,9 @@ async function loadTimeline(){
 }
 
 // ═══════════════════════ FRAMES TAB ═════════════════════════════════════════
+/** Full list from <code>/frame_events</code> (every JPEG for real missions). */
+let _frameEventsAll = [];
+/** View list: either same as <code>_frameEventsAll</code> or filtered to rows with detections. */
 let _frameEvents = [];
 let framesLoaded = false;
 /** Single in-flight load so concurrent callers (popup vs tab) await the same fetch — avoids finishing with selectFrameIndex(0) after a chosen index. */
@@ -1315,6 +1331,8 @@ let _frameIndex = 0;
 let _framesNavListenersBound = false;
 let _framesDetTlBound = false;
 let _framesDetThemeObserver = null;
+/** Incremented each renderFrame(); photo loads are async — ignore stale onload so canvas keeps flip-book continuity */
+let _frameRenderSeq = 0;
 
 function framesDetTimelineCanvas(){
   return document.getElementById("framesDetTimeline");
@@ -1406,7 +1424,7 @@ function bindFramesDetectionTimelineOnce(){
   cv.addEventListener("click", (e)=>{
     const idx = frameIndexFromTimelineOffset(e.offsetX);
     if(idx == null) return;
-    selectFrameIndex(idx);
+    selectFrameIndex(idx, { listScroll: "smooth" });
   });
   window.addEventListener("resize", ()=> drawFramesDetTimeline(null));
   // Redraw immediately when dark/light mode switches.
@@ -1518,29 +1536,172 @@ function framesNavUpdateUi(){
   drawFramesDetTimeline(null);
 }
 
-function selectFrameIndex(i){
+function syncFrameEventsFromFilter(){
+  const all = _frameEventsAll;
+  if(!all || !all.length){
+    _frameEvents = [];
+    return;
+  }
+  const chk = document.getElementById("framesOnlyWithDets");
+  if(chk && chk.checked){
+    _frameEvents = all.filter((f)=> (f.detections && f.detections.length > 0));
+  } else {
+    _frameEvents = all;
+  }
+}
+
+function updateFrameCountLabel(){
+  const el = document.getElementById("frameCount");
+  if(!el) return;
+  const all = _frameEventsAll || [];
+  const n = (_frameEvents && _frameEvents.length) || 0;
+  const chk = document.getElementById("framesOnlyWithDets");
+  const only = chk && chk.checked;
+  if(!all.length){
+    el.textContent = "No frames in this log";
+    return;
+  }
+  if(!only || n === all.length){
+    el.textContent = `${all.length} frame${all.length === 1 ? "" : "s"} in log`;
+  } else {
+    el.textContent = `Showing ${n} of ${all.length} frames (with detections only)`;
+  }
+}
+
+function rebuildFrameListDom(){
+  const list = document.getElementById("framelist");
+  const nav = document.getElementById("framesNavWrap");
+  if(!list) return;
+  list.innerHTML = "";
+  const frames = _frameEvents || [];
+  list.classList.toggle("frame-list-scroll", frames.length > 0);
+  if(!_frameEventsAll || !_frameEventsAll.length){
+    if(nav) nav.classList.add("d-none");
+    list.innerHTML = '<div class="muted p-3">No frames in this log.</div>';
+    return;
+  }
+  if(!frames.length){
+    list.innerHTML =
+      '<div class="muted p-3">No frames with detections. Uncheck “Only frames with detections” to see the full flight.</div>';
+    if(nav) nav.classList.remove("d-none");
+    framesNavUpdateUi();
+    drawFramesDetTimeline(null);
+    return;
+  }
+  if(nav) nav.classList.remove("d-none");
+  frames.forEach((f, i)=>{
+    const div = document.createElement("div");
+    div.className = "frame-item";
+    div.dataset.frameIndex = String(i);
+    const state = f.state_to || f.state_from || f.event || "";
+    div.innerHTML = `
+      <div class="d-flex justify-content-between align-items-baseline gap-2">
+        <span><span class="muted small">#${i}</span> <span style="color:${stateColor(state)}">${state}</span></span>
+        <span class="muted" style="white-space:nowrap">${fmtTs(f.ts)}</span>
+      </div>
+      <div class="muted" style="font-size:11px">${(f.detections || []).length} detection(s)
+        &nbsp;${f.photo_path && f.photo_path !== "No photo taken"
+          ? '<span style="color:#4adf86">📷 photo</span>'
+          : '<span style="color:#9fb0c7">synthetic</span>'}</div>`;
+    div.addEventListener("click", ()=> selectFrameIndex(i, { listScroll: "smooth" }));
+    list.appendChild(div);
+  });
+  const slider = document.getElementById("framesSlider");
+  if(slider){
+    slider.max = String(frames.length - 1);
+    slider.value = String(Math.min(_frameIndex, frames.length - 1));
+  }
+}
+
+function applyFramesFilterChange(){
+  const prev = _activeFrame;
+  const prevIdx = _frameIndex;
+  syncFrameEventsFromFilter();
+  updateFrameCountLabel();
+  rebuildFrameListDom();
+  if(_frameEvents && _frameEvents.length){
+    let newIdx = 0;
+    if(prev){
+      const j = _frameEvents.findIndex(
+        (g)=> g.photo_path === prev.photo_path && String(g.ts || "") === String(prev.ts || "")
+      );
+      if(j >= 0) newIdx = j;
+      else newIdx = Math.min(prevIdx, _frameEvents.length - 1);
+    }
+    selectFrameIndex(Math.max(0, newIdx));
+  } else {
+    _frameIndex = 0;
+    _activeFrame = null;
+    const info = document.getElementById("frameInfo");
+    if(info) info.textContent = "No frame to show — adjust the filter above.";
+    const cv = document.getElementById("frameCanvas");
+    if(cv && cv.width && cv.height){
+      const x = cv.getContext("2d");
+      if(x){ x.fillStyle = "#0e1728"; x.fillRect(0, 0, cv.width, cv.height); }
+    }
+    framesNavUpdateUi();
+    drawFramesDetTimeline(null);
+  }
+}
+
+/** Map API / frame_events index (e.g. map popup, timeline) → index in the current <code>_frameEvents</code> view. */
+function fullFrameIndexToViewIndex(fullIdx){
+  if(fullIdx == null || !_frameEventsAll || fullIdx < 0 || fullIdx >= _frameEventsAll.length) return 0;
+  const chk = document.getElementById("framesOnlyWithDets");
+  if(!chk || !chk.checked) return fullIdx;
+  const want = _frameEventsAll[fullIdx];
+  const j = _frameEvents.findIndex(
+    (g)=> g.photo_path === want.photo_path && String(g.ts || "") === String(want.ts || "")
+  );
+  return j >= 0 ? j : null;
+}
+
+/** opts.listScroll: "sync" (default) = instant list follow for slider/keys/wheel; "smooth" = ease list when clicking a row */
+function selectFrameIndex(i, opts){
+  opts = opts || {};
   const frames = _frameEvents;
   if(!frames || !frames.length) return;
   const n = frames.length;
   i = Math.max(0, Math.min(n - 1, i | 0));
   _frameIndex = i;
   _activeFrame = frames[i];
+  const wantListSmooth = opts.listScroll === "smooth";
+  var listSmooth = wantListSmooth;
+  try{
+    if(window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches) listSmooth = false;
+  }catch(e){}
   const items = document.querySelectorAll("#framelist .frame-item");
   items.forEach((el, j)=>{
     el.classList.toggle("active", j === i);
     if(j === i){
-      try{ el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }catch(e){ el.scrollIntoView({ block: "nearest" }); }
+      try{
+        el.scrollIntoView({ block: "nearest", behavior: listSmooth ? "smooth" : "auto" });
+      }catch(e){ el.scrollIntoView({ block: "nearest" }); }
     }
   });
+  var fl = document.getElementById("framelist");
+  if(fl && fl._sdSyncWheelTarget) fl._sdSyncWheelTarget();
   renderFrame(_activeFrame);
   framesNavUpdateUi();
 }
 
-/** Detection popup "Open in frame viewer" → Frames tab + 640× canvas; idx is 0-based index in frame_events (not mission frame_index). */
+/** Detection popup "Open in frame viewer" → Frames tab + 640× canvas; idx is 0-based index in full <code>/frame_events</code> (not mission frame_index). */
 async function openMissionFrameViewerFromPopup(idx){
   await loadFrames();
-  if(!_frameEvents || !_frameEvents.length) return;
-  selectFrameIndex(idx);
+  if(!_frameEventsAll || !_frameEventsAll.length) return;
+  let v = fullFrameIndexToViewIndex(idx);
+  if(v === null){
+    const chk = document.getElementById("framesOnlyWithDets");
+    if(chk && chk.checked){
+      chk.checked = false;
+      syncFrameEventsFromFilter();
+      updateFrameCountLabel();
+      rebuildFrameListDom();
+    }
+    v = fullFrameIndexToViewIndex(idx);
+  }
+  if(v == null || !_frameEvents || !_frameEvents.length) return;
+  selectFrameIndex(v);
   const tabBtn = document.querySelector('#mainTabs button[data-bs-target="#tabFrames"]');
   if(tabBtn){
     if(typeof bootstrap !== "undefined" && bootstrap.Tab){
@@ -1570,14 +1731,99 @@ document.addEventListener("click", (e)=>{
   openMissionFrameViewerFromPopup(idx).catch((err)=> console.warn(err));
 }, true);
 
+function bindFrameListInertialScroll(){
+  const el = document.getElementById("framelist");
+  if(!el || el.dataset.sdWheelSmooth) return;
+  try{
+    if(window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches) return;
+  }catch(e){}
+  el.dataset.sdWheelSmooth = "1";
+  var target = el.scrollTop;
+  var raf = null;
+  var fromAnim = false;
+  el.addEventListener("scroll", function(){
+    if(fromAnim) return;
+    target = el.scrollTop;
+  }, { passive: true });
+  function tick(){
+    var cur = el.scrollTop;
+    var diff = target - cur;
+    if(Math.abs(diff) < 0.4){
+      fromAnim = true;
+      el.scrollTop = target;
+      fromAnim = false;
+      raf = null;
+      return;
+    }
+    fromAnim = true;
+    el.scrollTop = cur + diff * 0.24;
+    fromAnim = false;
+    raf = requestAnimationFrame(tick);
+  }
+  el.addEventListener("wheel", function(e){
+    if(e.ctrlKey) return;
+    e.preventDefault();
+    var max = Math.max(0, el.scrollHeight - el.clientHeight);
+    var dy = e.deltaY;
+    if(e.deltaMode === 1) dy *= 18;
+    else if(e.deltaMode === 2) dy *= (e.currentTarget.clientHeight || 420);
+    target = Math.max(0, Math.min(max, target + dy));
+    if(!raf) raf = requestAnimationFrame(tick);
+  }, { passive: false });
+  el._sdSyncWheelTarget = function(){ target = el.scrollTop; };
+}
+
 function bindFramesNavOnce(){
   if(_framesNavListenersBound) return;
   _framesNavListenersBound = true;
+  const fod = document.getElementById("framesOnlyWithDets");
+  if(fod && !fod.dataset.bound){
+    fod.dataset.bound = "1";
+    fod.addEventListener("change", ()=> applyFramesFilterChange());
+  }
+  bindFrameListInertialScroll();
   document.getElementById("framesPrev").addEventListener("click", ()=> selectFrameIndex(_frameIndex - 1));
   document.getElementById("framesNext").addEventListener("click", ()=> selectFrameIndex(_frameIndex + 1));
-  document.getElementById("framesSlider").addEventListener("input", (e)=>{
+  const sliderEl = document.getElementById("framesSlider");
+  sliderEl.addEventListener("input", (e)=>{
     selectFrameIndex(+e.target.value);
   });
+  sliderEl.addEventListener("change", ()=>{
+    selectFrameIndex(+sliderEl.value);
+  });
+  /* Wheel on preview: scrub frames; deltaMode-aware so trackpads feel continuous */
+  const fc = document.getElementById("frameCanvas");
+  if(fc && !fc.dataset.sdFrameWheel){
+    fc.dataset.sdFrameWheel = "1";
+    var acc = 0;
+    function pxPerFrame(ev){
+      if(ev.deltaMode === 0) return 26;
+      if(ev.deltaMode === 1) return 70;
+      return 120;
+    }
+    function normDelta(ev){
+      var d = ev.deltaY;
+      if(ev.deltaMode === 1) d *= 18;
+      else if(ev.deltaMode === 2) d *= (fc.clientHeight || 500);
+      return d;
+    }
+    fc.addEventListener("wheel", function(ev){
+      if(ev.ctrlKey) return;
+      const frames = _frameEvents;
+      if(!frames || frames.length < 2) return;
+      ev.preventDefault();
+      acc += normDelta(ev);
+      var step = pxPerFrame(ev);
+      while(acc >= step){
+        selectFrameIndex(_frameIndex + 1);
+        acc -= step;
+      }
+      while(acc <= -step){
+        selectFrameIndex(_frameIndex - 1);
+        acc += step;
+      }
+    }, { passive: false });
+  }
   document.getElementById("framesJumpBtn").addEventListener("click", ()=>{
     const v = parseInt(document.getElementById("framesJump").value, 10);
     if(Number.isFinite(v)) selectFrameIndex(v);
@@ -1601,44 +1847,26 @@ async function loadFrames(){
   _loadFramesPromise = (async ()=>{
     try{
       const frames = await api(`/missions/${MID}/frame_events`);
-      _frameEvents = frames;
+      _frameEventsAll = frames;
       framesLoaded = true;
-      document.getElementById("frameCount").textContent =
-        `${frames.length} frame${frames.length===1?"":"s"} with detections`;
+      const filterWrap = document.getElementById("framesFilterWrap");
+      if(filterWrap) filterWrap.classList.toggle("d-none", !frames.length);
+      syncFrameEventsFromFilter();
+      updateFrameCountLabel();
       const list = document.getElementById("framelist");
       const nav = document.getElementById("framesNavWrap");
-      list.innerHTML = "";
-      list.classList.toggle("frame-list-scroll", !!frames.length);
       if(!frames.length){
         if(nav) nav.classList.add("d-none");
-        list.innerHTML = '<div class="muted p-3">No frames with detections in this log.</div>';
+        if(filterWrap) filterWrap.classList.add("d-none");
+        if(list){
+          list.innerHTML = '<div class="muted p-3">No frames in this log.</div>';
+          list.classList.remove("frame-list-scroll");
+        }
         return;
       }
-      if(nav) nav.classList.remove("d-none");
       bindFramesNavOnce();
       bindFramesDetectionTimelineOnce();
-      frames.forEach((f,i)=>{
-        const div = document.createElement("div");
-        div.className = "frame-item";
-        div.dataset.frameIndex = String(i);
-        const state = f.state_to || f.state_from || f.event || "";
-        div.innerHTML = `
-      <div class="d-flex justify-content-between align-items-baseline gap-2">
-        <span><span class="muted small">#${i}</span> <span style="color:${stateColor(state)}">${state}</span></span>
-        <span class="muted" style="white-space:nowrap">${fmtTs(f.ts)}</span>
-      </div>
-      <div class="muted" style="font-size:11px">${f.detections.length} detection(s)
-        &nbsp;${f.photo_path && f.photo_path!=="No photo taken"
-          ? '<span style="color:#4adf86">📷 photo</span>'
-          : '<span style="color:#9fb0c7">synthetic</span>'}</div>`;
-        div.addEventListener("click", ()=> selectFrameIndex(i));
-        list.appendChild(div);
-      });
-      const slider = document.getElementById("framesSlider");
-      if(slider){
-        slider.max = String(frames.length - 1);
-        slider.value = "0";
-      }
+      rebuildFrameListDom();
     } finally {
       _loadFramesPromise = null;
     }
@@ -1650,7 +1878,12 @@ function renderFrame(f){
   const canvas = document.getElementById("frameCanvas");
   const ctx    = canvas.getContext("2d");
   const W=640, H=640;
-  canvas.width=W; canvas.height=H;
+  /* Only resizing clears the canvas — avoid that between frames so the previous image stays visible until the next one loads (flip-book, no white flash). */
+  if(canvas.width !== W || canvas.height !== H){
+    canvas.width = W;
+    canvas.height = H;
+  }
+  const seq = ++_frameRenderSeq;
   const hasPhoto = f.photo_path && f.photo_path !== "No photo taken";
   document.getElementById("frameInfo").innerHTML =
     `<span class="muted">${fmtTs(f.ts)} &nbsp; ${f.event||""} &nbsp; </span>`+
@@ -1699,12 +1932,21 @@ function renderFrame(f){
   }
 
   if(hasPhoto){
-    const img=new Image();
-    img.onload=()=>{ ctx.drawImage(img,0,0,W,H); drawBoxes(); };
-    img.onerror=()=>{ drawSyntheticBg(ctx,W,H); drawBoxes(); };
-    img.src=`/missions/${MID}/image?path=${encodeURIComponent(f.photo_path)}&src=${encodeURIComponent(SRC)}`;
+    const img = new Image();
+    const url = `/missions/${MID}/image?path=${encodeURIComponent(f.photo_path)}&src=${encodeURIComponent(SRC)}`;
+    img.onload = function(){
+      if(seq !== _frameRenderSeq) return;
+      ctx.drawImage(img, 0, 0, W, H);
+      drawBoxes();
+    };
+    img.onerror = function(){
+      if(seq !== _frameRenderSeq) return;
+      drawSyntheticBg(ctx, W, H);
+      drawBoxes();
+    };
+    img.src = url;
   } else {
-    drawSyntheticBg(ctx,W,H);
+    drawSyntheticBg(ctx, W, H);
     drawBoxes();
   }
   const tgf = document.getElementById("toggleFrameGround");
@@ -2031,19 +2273,26 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
   const lowPowerBtn = document.getElementById("lowPowerBtn");
   if(lowPowerBtn) lowPowerBtn.addEventListener("click", ()=> setLowPowerMode(!_lowPower));
   initMap();
-  try{
-    await loadMap();
-  }catch(e){
-    const ms = document.getElementById("mapStats");
-    if(ms) ms.innerHTML = `<span style="color:#ff9a4a">Map load error:</span> ${e}`;
-  }
-  // BBox ground was easy to miss: layer was off until the checkbox was ticked.
-  // When frame_events includes ground_projections, turn the layer on and fit bounds to include them.
   const bbEl0 = document.getElementById("layerBboxGround");
   const shouldAutoLoadBboxGround = !_lowPower || (bbEl0 && bbEl0.checked);
+  {
+    const [lm, ls] = await Promise.allSettled([loadMap(), loadSummary()]);
+    if(lm.status === "rejected"){
+      const ms = document.getElementById("mapStats");
+      if(ms) ms.innerHTML = `<span style="color:#ff9a4a">Map load error:</span> ${lm.reason}`;
+    }
+    if(ls.status === "rejected"){
+      const sb = document.getElementById("summaryBar");
+      if(sb) sb.innerHTML = `<span class="muted">Summary unavailable: ${ls.reason}</span>`;
+    }
+  }
+  // BBox ground: load in parallel with timeline (both hit the server; cached JSONL scans help).
   if(shouldAutoLoadBboxGround){
     try{
-      const { bounds: bboxBounds, hasDrawable } = await refreshMissionBboxGroundLayer();
+      const [{ bounds: bboxBounds, hasDrawable }, tline] = await Promise.all([
+        refreshMissionBboxGroundLayer(),
+        api(`/missions/${MID}/timeline`),
+      ]);
       const bbEl = document.getElementById("layerBboxGround");
       if(layerBboxGround && bbEl && hasDrawable && bboxBounds && bboxBounds.length){
         bbEl.checked = true;
@@ -2052,13 +2301,27 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
         bboxBounds.forEach(c=>bb.extend(c));
         map.fitBounds(bb, MAP_FIT_OPTS);
       }
-    }catch(e){ console.warn("BBox ground auto-load:", e); }
-  }
-  try{
-    await loadSummary();
-  }catch(e){
-    const sb = document.getElementById("summaryBar");
-    if(sb) sb.innerHTML = `<span class="muted">Summary unavailable: ${e}</span>`;
+      const segs = (tline && tline.segments) || [];
+      if(segs.length){
+        _droneStateLabel = normalizeStateLabel(segs[segs.length-1].state) || _droneStateLabel;
+        if(layerDrone && layerDrone.getLatLng){
+          const ll = layerDrone.getLatLng();
+          updateDroneMarker(ll.lat, ll.lng, _droneStateLabel, null);
+        }
+      }
+    }catch(e){ console.warn("BBox / timeline:", e); }
+  } else {
+    try{
+      const tline = await api(`/missions/${MID}/timeline`);
+      const segs = (tline && tline.segments) || [];
+      if(segs.length){
+        _droneStateLabel = normalizeStateLabel(segs[segs.length-1].state) || _droneStateLabel;
+        if(layerDrone && layerDrone.getLatLng){
+          const ll = layerDrone.getLatLng();
+          updateDroneMarker(ll.lat, ll.lng, _droneStateLabel, null);
+        }
+      }
+    }catch(e){}
   }
   const tg = document.getElementById("toggleFrameGround");
   const wrap = document.getElementById("frameGroundWrap");
@@ -2081,17 +2344,6 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     document.getElementById("layerTruth").checked = true;
     try{ await loadTruth(); }catch(e){}
   }
-  try{
-    const tline = await api(`/missions/${MID}/timeline`);
-    const segs = (tline && tline.segments) || [];
-    if(segs.length){
-      _droneStateLabel = normalizeStateLabel(segs[segs.length-1].state) || _droneStateLabel;
-      if(layerDrone && layerDrone.getLatLng){
-        const ll = layerDrone.getLatLng();
-        updateDroneMarker(ll.lat, ll.lng, _droneStateLabel, null);
-      }
-    }
-  }catch(e){}
 })();
 
 // ═══════════════════════ FRAME REVIEW TAB ═══════════════════════════════════
@@ -2151,16 +2403,19 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     const loadingEl = document.getElementById('frLoading');
     loadingEl.textContent = 'Loading frames…';
     try{
-      frFrames = (_frameEvents && _frameEvents.length)
-        ? _frameEvents
-        : await api(`/missions/${MID}/frame_events`);
+      /* Always use the full /frame_events list for this tab — not the Frames-tab filter — so trails, indices, and “Open in frame viewer” match the API and map elsewhere. */
+      if(_frameEventsAll && _frameEventsAll.length){
+        frFrames = _frameEventsAll;
+      } else {
+        frFrames = await api(`/missions/${MID}/frame_events`);
+      }
     }catch(e){
       loadingEl.textContent = `Error loading frames: ${e}`;
       return;
     }
 
     if(!frFrames.length){
-      loadingEl.textContent = 'No frames with detections found.';
+      loadingEl.textContent = 'No frames in this log (nothing under /frame_events). Open the Frames tab once to load, or check mission.jsonl.';
       return;
     }
     loadingEl.classList.add('d-none');
@@ -2312,7 +2567,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
   async function frLoadPath(){
     try{
-      const pts = await api(`/missions/${MID}/path?stride=1&source=fsm`);
+      const pts = await api(`/missions/${MID}/path?stride=2&source=fsm`);
       if(!pts||!pts.length) return;
       frGrpPath = SdMap.pathLayerFsmColored(pts, { weight: 2, opacity: 0.6 });
       if(document.getElementById('frCkPath').checked) frGrpPath.addTo(frMap);
@@ -2379,14 +2634,15 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
     // Detection markers (popup: annotated frame image when photo + bbox_px exist)
     const detItems = [];
-    const fPop = Object.assign({}, f, { frame_index: f.frame_index != null ? f.frame_index : idx });
+    const apiFrameIdx = f.frame_index != null ? f.frame_index : idx;
+    const fPop = Object.assign({}, f, { frame_index: apiFrameIdx });
     (f.ground_projections||[]).forEach(gp=>{
       if(!gp.center) return;
       const c = gp.center;
       const truthTag = gp.truth_id != null ? `truth #${gp.truth_id}` : `false positive`;
       const popHtml = SdMap.detectionPopupHtmlWithImage(escHtml, gp, fPop, {
         missionId: MID, src: SRC, strokeColor: "#ff9a4a", tagPrefix: "", tTag: ` — ${truthTag}`,
-        frameListIndex: idx,
+        frameListIndex: apiFrameIdx,
       }) + `<div class="small muted mt-1">${c.lat.toFixed(6)}, ${c.lon.toFixed(6)} · ground</div>`;
       const hasPoly = gp.corners && gp.corners.length >= 3;
       if(hasPoly){
@@ -2440,6 +2696,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
   const videoGenError = document.getElementById('videoGenError');
   const playbackCtl   = document.getElementById('videoPlaybackControls');
   const genMsgEl      = generating && generating.querySelector('.video-gen-msg');
+  const genSpinnerEl  = document.getElementById('videoGenSpinner');
   const speedSlider   = document.getElementById('speedSlider');
   const speedLabel    = document.getElementById('speedLabel');
 
@@ -2456,6 +2713,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
   function resetGenMessage(){
     if(genMsgEl) genMsgEl.textContent = 'Generating video… this may take a minute. Checking every 3s.';
+    if(genSpinnerEl) genSpinnerEl.classList.remove('d-none');
   }
 
   function setGenError(msg){
@@ -2496,8 +2754,37 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     try{ video.load(); }catch(e){}
   }
 
+  /** True if mission_video.mp4 is present on the server (HEAD, or GET Range fallback if HEAD fails). */
   function checkVideo(){
-    return fetch(videoUrl, {method:'HEAD'}).then(r => r.ok);
+    return fetch(videoUrl, { method: 'HEAD', cache: 'no-store' })
+      .then(function(r){
+        if(r.ok){
+          var cl = r.headers.get('Content-Length');
+          if(cl != null && parseInt(cl, 10) < 256) return false;
+          return true;
+        }
+        if(r.status === 404) return false;
+        return fetch(videoUrl, { method: 'GET', headers: { 'Range': 'bytes=0-0' }, cache: 'no-store' })
+          .then(function(r2){ return r2.status === 206 || r2.ok; });
+      })
+      .catch(function(){
+        return fetch(videoUrl, { method: 'GET', headers: { 'Range': 'bytes=0-0' }, cache: 'no-store' })
+          .then(function(r2){ return r2.status === 206 || r2.ok; })
+          .catch(function(){ return false; });
+      });
+  }
+
+  function showVideoDownloadFallback(){
+    if(pollInterval){ clearInterval(pollInterval); pollInterval = null; }
+    hideVideoPlayer();
+    generating.classList.remove('d-none');
+    notFound.classList.add('d-none');
+    if(genSpinnerEl) genSpinnerEl.classList.add('d-none');
+    if(genMsgEl){
+      var u = videoUrl + (videoUrl.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+      genMsgEl.innerHTML = 'The MP4 is on the server, but this browser could not play it inline. ' +
+        '<a class="link-primary fw-semibold" href="' + u + '" download="mission_video.mp4" target="_blank" rel="noopener">Download</a> or open the file in VLC or your system player.';
+    }
   }
 
   function startPolling(pendingDecode){
@@ -2506,7 +2793,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     generating.classList.remove('d-none');
     notFound.classList.add('d-none');
     if(pendingDecode && genMsgEl){
-      genMsgEl.textContent = 'Video file exists but is not playable yet (still encoding or incomplete). Checking every 3s…';
+      genMsgEl.textContent = 'Waiting for a complete video file… Checking every 3s.';
     } else resetGenMessage();
     pollInterval = setInterval(function(){
       checkVideo().then(function(ok){
@@ -2517,7 +2804,10 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
   video.addEventListener('error', function(){
     if(!video.getAttribute('src')) return;
-    startPolling(true);
+    checkVideo().then(function(ok){
+      if(ok) showVideoDownloadFallback();
+      else startPolling(true);
+    });
   });
 
   genBtn.addEventListener('click', function(){

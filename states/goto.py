@@ -18,6 +18,9 @@ def goto(drone_state:DroneStateForHoming,frame:Frame):
     if not weed:
         return DroneStateEnum.RTL
     if haversine_distance(weed.lat,weed.lon,drone_state.latitude,drone_state.longitude) < MAX_HOMING_DIST:
+        # if drone_state.altitude_rel_home > GOTO_ALT + 1:
+        #     telemetry_singlton.fly_to_point(weed.lat,weed.lon,GOTO_ALT)
+        #     return DroneStateEnum.GOTO
         db_abstraction.mark_weed_traveled(weed)
         return DroneStateEnum.HOMING
     telemetry_singlton.fly_to_point(weed.lat,weed.lon,GOTO_ALT)

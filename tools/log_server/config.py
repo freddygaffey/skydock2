@@ -48,5 +48,6 @@ def data_paths() -> tuple[Path, Path]:
 
 
 def rpi_missions_root() -> Path:
+    """Local folder where RPi ``missions/`` logs are synced (``Sync RPi`` / ``pull_logs_rpi.sh``)."""
     root = project_root()
     return Path(os.environ.get("SKYDOCK_RPI_MISSIONS_DIR", str(root / "rpi_missions")))
