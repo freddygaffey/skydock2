@@ -39,7 +39,7 @@ class Frame:
         self.drone_state = drone_state  # state at generation time, for correct back-projection
 
     def add_detection(self,det:Detection):
-        if det.label not in ["sports ball", "frisbee", "person"]: return
+        if det.label not in ["sports ball", "frisbee"]: return
         self.detection.append(det)
 
 

@@ -56,19 +56,21 @@ def test_telemetry_connection(results: TestResults):
     print("\n[1/6] TELEMETRY CONNECTION")
 
     try:
-        from telemetry import telemetry_singlton
+        from telemetry import Telemetry
+        import telemetry as _telemetry_module
+        telem = Telemetry()
+        _telemetry_module.telemetry_singlton = telem
     except Exception as e:
-        results.fail(f"Cannot import telemetry: {e}")
-        return None
+        results.fail(f"Cannot connect to FC: {e}")
+        return None, None
 
-    results.ok("Telemetry module imported")
+    results.ok("MAVLink connected")
 
     # Wait for data to flow in
     print("  Waiting for telemetry data...")
     time.sleep(2)
 
-    state = telemetry_singlton.drone_state
-    return state
+    return telem, telem.drone_state
 
 
 def test_gps_fix(results: TestResults, state):
@@ -119,7 +121,7 @@ def test_gps_fix(results: TestResults, state):
         results.ok(f"Ground speed: {speed:.2f} m/s (stationary)")
 
 
-def test_flight_mode(results: TestResults, state):
+def test_flight_mode(results: TestResults, telem, state):
     """Test flight mode and arm state"""
     print("\n[3/6] FLIGHT MODE")
 
@@ -135,8 +137,7 @@ def test_flight_mode(results: TestResults, state):
     results.ok(f"Current mode: {mode}")
 
     # Check arm state
-    from telemetry import telemetry_singlton
-    armed = telemetry_singlton.arm_state
+    armed = telem.arm_state
     if armed:
         results.warn("Drone is ARMED - be careful!")
     else:
@@ -187,7 +188,7 @@ def test_ai_pipeline(results: TestResults):
     # Start AI using the singleton's start_ai method
     print("  Starting AI via ai_storage_singleton.start_sim_ai()...")
     try:
-        ai_storage_singleton.start_sim_ai()
+        ai_storage_singleton.start_sim_ai(None)
     except Exception as e:
         results.fail(f"Failed to start AI: {e}")
         return
@@ -201,7 +202,7 @@ def test_ai_pipeline(results: TestResults):
     detections_found = 0
     bbox_valid = False
 
-    for attempt in range(max_attempts):
+    for _ in range(max_attempts):
         time.sleep(0.5)
         frame = ai_storage_singleton.get_latest_frame()
 
@@ -246,15 +247,9 @@ def test_database(results: TestResults):
     print("\n[6/6] DATABASE")
 
     try:
-        from DB_abstraction import DBAbstraction
+        from DB_abstraction import db_abstraction as db
     except Exception as e:
         results.fail(f"Cannot import database: {e}")
-        return
-
-    try:
-        db = DBAbstraction()
-    except Exception as e:
-        results.fail(f"Cannot connect to database: {e}")
         return
 
     results.ok("Database connected")
@@ -331,13 +326,13 @@ def main():
     print("="*50)
 
     # Test 1: Telemetry connection
-    state = test_telemetry_connection(results)
+    telem, state = test_telemetry_connection(results)
 
     # Test 2: GPS fix
     test_gps_fix(results, state)
 
     # Test 3: Flight mode
-    test_flight_mode(results, state)
+    test_flight_mode(results, telem, state)
 
     # Test 4: Attitude data
     test_attitude_data(results, state)
