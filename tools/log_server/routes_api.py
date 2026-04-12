@@ -7,7 +7,6 @@ import os
 import shlex
 import subprocess
 import sys
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +38,7 @@ from services.mission_store import (
     save_setup,
 )
 from services.geometry import grid_dedup
+from services.mission_cache import MISSION_READ_CACHE
 
 bp = Blueprint("log_api", __name__)
 
@@ -56,11 +56,6 @@ _SETUP_PARAM_DEFAULTS: dict[str, Any] = {
     "min_spray_error_m": 2,
     "sim_ai_enable_imperfections": False,
 }
-
-# In-memory cache for expensive FOV scans (invalidated when mission.jsonl mtime/size changes).
-_FOV_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
-_FOV_CACHE_MAX = 16
-
 
 def _coerce_setup_params(obj: Any) -> dict[str, Any]:
     if not isinstance(obj, dict):
@@ -133,21 +128,7 @@ def _setup_payload_from_json(data: Any) -> dict[str, Any]:
 def _fov_cache_key(path: Path, stride: int, states_filter: frozenset[str] | None, max_polygons: int) -> tuple[Any, ...]:
     st = path.stat()
     sf = tuple(sorted(states_filter)) if states_filter is not None else None
-    return (str(path.resolve()), st.st_mtime_ns, st.st_size, stride, sf, max_polygons)
-
-
-def _fov_cache_get(key: tuple[Any, ...]) -> dict[str, Any] | None:
-    if key not in _FOV_CACHE:
-        return None
-    _FOV_CACHE.move_to_end(key)
-    return _FOV_CACHE[key]
-
-
-def _fov_cache_set(key: tuple[Any, ...], payload: dict[str, Any]) -> None:
-    _FOV_CACHE[key] = payload
-    _FOV_CACHE.move_to_end(key)
-    while len(_FOV_CACHE) > _FOV_CACHE_MAX:
-        _FOV_CACHE.popitem(last=False)
+    return ("fov", str(path.resolve()), st.st_mtime_ns, st.st_size, stride, sf, max_polygons)
 
 
 def _missions_root(src: str | None = None) -> Path:
@@ -251,7 +232,7 @@ def mission_camera_fov_footprints(mission_id: str):
         states_filter = None
 
     cache_key = _fov_cache_key(p, stride, states_filter, 0 if max_polygons is None else max_polygons)
-    cached = _fov_cache_get(cache_key)
+    cached = MISSION_READ_CACHE.get(cache_key)
     if cached is not None:
         return jsonify(cached)
 
@@ -268,7 +249,7 @@ def mission_camera_fov_footprints(mission_id: str):
         "polygon_cap": max_polygons,
         "source_log_rev": f"{st.st_mtime_ns}-{st.st_size}",
     }
-    _fov_cache_set(cache_key, payload)
+    MISSION_READ_CACHE.set(cache_key, payload)
     return jsonify(payload)
 
 
@@ -295,6 +276,20 @@ def mission_summary(mission_id: str):
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
     return jsonify(build_summary_payload(p))
+
+
+@bp.post("/missions/<mission_id>/index")
+def mission_index_build(mission_id: str):
+    """Build or refresh ``mission_index.sqlite`` next to this mission's ``mission.jsonl``."""
+    src = request.args.get("src", "sim")
+    p = _mission_log(mission_id, src)
+    from services.mission_index import build_mission_index
+
+    try:
+        out = build_mission_index(p, force=True)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "index_path": str(out)})
 
 
 @bp.get("/missions/<mission_id>/tail")

@@ -72,12 +72,25 @@
       </select>
       <button id="missionJumpBtn" class="btn btn-sm btn-outline-secondary" title="Open selected mission">Go</button>
       <button id="compareFromHereBtn" class="btn btn-sm btn-outline-info" title="Compare this mission with another">Compare…</button>
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.missions_list', src=src) }}">← Home</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.compare_page', src=src) }}">Compare</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.missions_list', src=src) }}">← All missions</a>
       <button id="themeBtn"></button>
     </div>
   </div>
 
   {% include "partials/mission_mode_nav.html" %}
+
+  <div id="indexStatusBanner" class="alert py-2 px-3 mb-2 small d-flex flex-wrap align-items-center gap-2 {% if index_ready %}alert-success{% elif large_log_hint %}alert-warning{% else %}alert-secondary{% endif %}" role="status">
+    {% if index_ready %}
+    <span><strong>Log index:</strong> ready <span class="muted">({{ index_path }})</span></span>
+    {% else %}
+    <span>
+      <strong>Log index:</strong> not built
+      {% if large_log_hint %}— recommended for this log size (~{{ (log_size_bytes / (1024*1024))|round(1) }}&nbsp;MB){% endif %}
+    </span>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="buildLogIndexBtn">Build index</button>
+    {% endif %}
+  </div>
 
   <!-- summary pills -->
   <div id="summaryBar" class="mb-2">
@@ -2217,6 +2230,23 @@ document.getElementById("liveBtn").addEventListener("click", async ()=>{
   }
 });
 
+(function(){
+  const b = document.getElementById("buildLogIndexBtn");
+  if(!b) return;
+  b.addEventListener("click", async ()=>{
+    b.disabled = true;
+    try {
+      const r = await fetch(`/missions/${MID}/index?src=${encodeURIComponent(SRC)}`, { method: "POST" });
+      const d = await r.json();
+      if(!r.ok || !d.ok) throw new Error((d && d.error) || "build failed");
+      location.reload();
+    } catch(e) {
+      alert("Index build failed: " + e);
+      b.disabled = false;
+    }
+  });
+})();
+
 // ═══════════════════════ TAB ACTIVATION ═════════════════════════════════════
 document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
   btn.addEventListener("shown.bs.tab", e=>{
@@ -2832,10 +2862,8 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
       });
   });
 
-  let tabClicked = false;
-  videoTabBtn.addEventListener('click', function(){
-    if(tabClicked) return;
-    tabClicked = true;
+  // Re-check every time the Video tab is shown (Bootstrap fires on the toggle button).
+  videoTabBtn.addEventListener('shown.bs.tab', function(){
     checkVideo().then(function(ok){
       if(ok){
         showVideo({ cacheBust: false });

@@ -9,7 +9,7 @@
   <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
       <h2 class="mb-0">Skydock Logs</h2>
-      <div class="muted">Mission browser &amp; analysis</div>
+      <div class="muted">Mission list (home) — open a mission for log analysis, weed marking, or GC</div>
       <div class="small mt-1">Scanning: <code class="{{ 'better' if missions_root_exists else 'worse' }}">{{ missions_path }}</code>
         <span class="muted">({{ 'found' if missions_root_exists else 'missing' }})</span></div>
     </div>
@@ -57,7 +57,14 @@
             {% endif %}
           {% endfor %}
           {% if missions|length == 0 %}
-            <div class="muted p-2">No missions found.</div>
+            <div class="alert alert-info small mb-0" role="status">
+              <p class="mb-2 fw-semibold">No folders here contain <code>mission.jsonl</code>.</p>
+              <ul class="mb-0 ps-3">
+                <li><strong>Sim:</strong> SITL runs write under <code>missions/&lt;id&gt;/</code> relative to your missions root (see env / config).</li>
+                <li><strong>Real (RPi):</strong> use <strong>Sync RPi</strong> (above) or copy mission directories into the path shown at the top of this page.</li>
+                <li><a href="{{ url_for('log_web.compare_page', src=src) }}">Compare missions</a> needs logs to exist first.</li>
+              </ul>
+            </div>
           {% endif %}
         </div>
       </div>

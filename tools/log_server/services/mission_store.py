@@ -3,24 +3,55 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterator
 
 
-def iter_events(path: Path) -> Iterator[dict[str, Any]]:
+def _iter_events_from_file(path: Path) -> Iterator[dict[str, Any]]:
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                yield json.loads(line)
+                obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(obj, dict):
+                yield obj
+
+
+def iter_events(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield JSONL events in order. Uses ``mission_index.sqlite`` when valid (see ``services.mission_index``)."""
+    from services.mission_index import (
+        build_mission_index,
+        default_index_path,
+        index_matches_log,
+        iter_events_from_index,
+    )
+
+    ip = default_index_path(path.resolve())
+    if os.environ.get("SKYDOCK_AUTO_MISSION_INDEX", "").strip().lower() in ("1", "true", "yes"):
+        if path.is_file() and not index_matches_log(path, ip):
+            try:
+                build_mission_index(path, force=False)
+            except OSError:
+                pass
+    if path.is_file() and index_matches_log(path, ip):
+        yield from iter_events_from_index(ip, event=None)
+        return
+    yield from _iter_events_from_file(path)
 
 
 def iter_events_of_kind(path: Path, event: str) -> Iterator[dict[str, Any]]:
-    """Yield events with ``event == event`` without JSON-decoding unrelated lines (faster for rare kinds)."""
+    """Yield events with ``event == event`` — prefers SQLite index when valid (fast for ``fsm_tick``)."""
+    from services.mission_index import default_index_path, index_matches_log, iter_events_from_index
+
+    ip = default_index_path(path.resolve())
+    if path.is_file() and index_matches_log(path, ip):
+        yield from iter_events_from_index(ip, event=event)
+        return
     spaced = f'"event": "{event}"'
     compact = f'"event":"{event}"'
     with open(path, "r", encoding="utf-8") as f:
@@ -34,7 +65,7 @@ def iter_events_of_kind(path: Path, event: str) -> Iterator[dict[str, Any]]:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if obj.get("event") == event:
+            if isinstance(obj, dict) and obj.get("event") == event:
                 yield obj
 
 

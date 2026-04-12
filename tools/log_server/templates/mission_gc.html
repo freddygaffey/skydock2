@@ -1,7 +1,7 @@
 <!doctype html>
 <html><head>
   <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GC – Latest mission – Skydock</title>
+  <title>GC · Mission {{ mission_id }} – Skydock</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -19,9 +19,12 @@
   <div class="d-flex align-items-start justify-content-between mb-2 flex-wrap gap-2">
     <div>
       <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
-        <h2 class="mb-0">GC · Latest mission ({{ mission_id }})
+        <h2 class="mb-0">GC · Mission {{ mission_id }}
           <span class="badge {% if src == 'rpi' %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-1" style="font-size:0.5em;vertical-align:middle">{{ 'Real' if src == 'rpi' else 'Sim' }}</span>
         </h2>
+        {% if latest_shortcut|default(false) %}
+        <div class="muted small">Short URL <code>/gc</code> — <strong>latest</strong> mission for this source.</div>
+        {% endif %}
         <span id="liveBadge" class="live-badge d-none">LIVE</span>
       </div>
       <div class="muted small">{{ log_path }}</div>
@@ -29,7 +32,8 @@
     <div class="d-flex gap-2 align-items-center">
       <button id="lowPowerBtn" class="btn btn-sm btn-outline-secondary" title="Reduce dashboard load">Low Power: Off</button>
       <button id="liveBtn" class="btn btn-sm btn-outline-danger">&#9679; Live</button>
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.missions_list', src=src) }}">← Home</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.compare_page', src=src) }}">Compare</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('log_web.missions_list', src=src) }}">← All missions</a>
       <button id="themeBtn"></button>
     </div>
   </div>

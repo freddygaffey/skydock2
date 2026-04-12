@@ -11,9 +11,22 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 from services.mission_store import mission_paths, resolve_mission_log, sim_files as list_sim_files
 from services.mission_store import truth_files_for_ui
 from services.mission_store import iter_events
+from services.mission_index import default_index_path, index_matches_log
 from services.tile_cache import ESRI_URL, OSM_URL
 
 bp = Blueprint("log_web", __name__)
+
+# Logs larger than this without an index get a stronger “build index” hint (bytes).
+_LARGE_LOG_BYTES = 5 * 1024 * 1024
+
+
+def _nav_urls_for_mission(mission_id: str, src: str) -> dict[str, str]:
+    """Log / weed / GC links scoped to one mission (avoids jumping to “latest”)."""
+    return {
+        "log_url": url_for("log_web.mission_dashboard", mission_id=mission_id, src=src),
+        "weed_url": url_for("log_web.mission_weed_marking_page", mission_id=mission_id, src=src),
+        "gc_url": url_for("log_web.mission_gc_page", mission_id=mission_id, src=src),
+    }
 
 
 def _mission_page_common(mission_id: str) -> dict[str, Any]:
@@ -84,7 +97,7 @@ def _leaflet_tile_urls():
 
 @bp.get("/")
 def index():
-    return redirect(url_for("log_web.compare_page"))
+    return redirect(url_for("log_web.missions_list"))
 
 
 @bp.get("/missions")
@@ -111,46 +124,83 @@ def missions_list():
 @bp.get("/missions/<mission_id>")
 def mission_dashboard(mission_id: str):
     ctx = _mission_page_common(mission_id)
+    nav = _nav_urls_for_mission(mission_id, ctx["src"])
+    log_p = Path(ctx["log_path"])
+    ip = default_index_path(log_p)
+    index_ready = index_matches_log(log_p, ip)
+    try:
+        log_size_bytes = log_p.stat().st_size
+    except OSError:
+        log_size_bytes = 0
+    large_log_hint = (log_size_bytes >= _LARGE_LOG_BYTES) and (not index_ready)
     return render_template(
         "mission_dashboard.html",
         nav_active="log",
-        log_url=url_for("log_web.mission_dashboard", mission_id=mission_id, src=ctx["src"]),
-        weed_url=url_for("log_web.weed_marking", src=ctx["src"]),
-        gc_url=url_for("log_web.gc_page", src=ctx["src"]),
+        index_ready=index_ready,
+        index_path=str(ip),
+        log_size_bytes=log_size_bytes,
+        large_log_hint=large_log_hint,
+        **nav,
+        **ctx,
+    )
+
+
+@bp.get("/missions/<mission_id>/weed-marking")
+def mission_weed_marking_page(mission_id: str):
+    ctx = _mission_page_common(mission_id)
+    nav = _nav_urls_for_mission(mission_id, ctx["src"])
+    return render_template(
+        "mission_weed_marking.html",
+        nav_active="weed",
+        **nav,
+        **ctx,
+    )
+
+
+@bp.get("/missions/<mission_id>/gc")
+def mission_gc_page(mission_id: str):
+    ctx = _mission_page_common(mission_id)
+    nav = _nav_urls_for_mission(mission_id, ctx["src"])
+    return render_template(
+        "mission_gc.html",
+        nav_active="gc",
+        **nav,
         **ctx,
     )
 
 
 @bp.get("/weed-marking")
 def weed_marking():
+    """Short URL: weed marking for the latest mission (same data as /missions/<id>/weed-marking)."""
     src = request.args.get("src", "sim")
     latest = _latest_mission_id(src)
     if latest is None:
         return redirect(url_for("log_web.missions_list", src=src))
     ctx = _mission_page_common(latest)
+    nav = _nav_urls_for_mission(latest, src)
     return render_template(
         "mission_weed_marking.html",
         nav_active="weed",
-        log_url=url_for("log_web.mission_dashboard", mission_id=latest, src=src),
-        weed_url=url_for("log_web.weed_marking", src=src),
-        gc_url=url_for("log_web.gc_page", src=src),
+        latest_shortcut=True,
+        **nav,
         **ctx,
     )
 
 
 @bp.get("/gc")
 def gc_page():
+    """Short URL: GC for the latest mission."""
     src = request.args.get("src", "sim")
     latest = _latest_mission_id(src)
     if latest is None:
         return redirect(url_for("log_web.missions_list", src=src))
     ctx = _mission_page_common(latest)
+    nav = _nav_urls_for_mission(latest, src)
     return render_template(
         "mission_gc.html",
         nav_active="gc",
-        log_url=url_for("log_web.mission_dashboard", mission_id=latest, src=src),
-        weed_url=url_for("log_web.weed_marking", src=src),
-        gc_url=url_for("log_web.gc_page", src=src),
+        latest_shortcut=True,
+        **nav,
         **ctx,
     )
 
@@ -171,17 +221,18 @@ def compare_page():
         sel_a = missions[-2]["id"]
         sel_b = missions[-1]["id"]
     latest = _latest_mission_id(src)
-    log_url = (
-        url_for("log_web.mission_dashboard", mission_id=latest, src=src)
-        if latest
-        else url_for("log_web.missions_list", src=src)
-    )
+    if latest:
+        nav = _nav_urls_for_mission(latest, src)
+    else:
+        nav = {
+            "log_url": url_for("log_web.missions_list", src=src),
+            "weed_url": url_for("log_web.weed_marking", src=src),
+            "gc_url": url_for("log_web.gc_page", src=src),
+        }
     return render_template(
         "compare.html",
         nav_active="log",
-        log_url=log_url,
-        weed_url=url_for("log_web.weed_marking", src=src),
-        gc_url=url_for("log_web.gc_page", src=src),
+        **nav,
         missions=missions,
         sim_files=truth_files_for_ui(sim_root, src),
         sel_a=sel_a,

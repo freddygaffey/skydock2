@@ -1,12 +1,43 @@
-"""Skydock mission log viewer (Flask). Run: python app.py from this directory, or python tools/log_server/app.py from repo root."""
+"""Skydock mission log viewer (Flask).
+
+Run without setting PYTHONPATH::
+
+    python tools/log_server/app.py
+
+(from repo root), or::
+
+    cd tools/log_server && python app.py
+"""
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_LOG_SERVER_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _LOG_SERVER_DIR.parent.parent
+
+
+def _ensure_skydock_paths() -> None:
+    """Repo root (for ``ai_class``, ``utils``) + this dir (for ``factory``, ``services``)."""
+    for p in (_REPO_ROOT, _LOG_SERVER_DIR):
+        s = str(p)
+        if s not in sys.path:
+            sys.path.insert(0, s)
+
+
+_ensure_skydock_paths()
 
 import os
 
 from factory import create_app
 
 app = create_app()
+
+
+def _env_truth(name: str) -> bool:
+    v = (os.environ.get(name) or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 if __name__ == "__main__":
@@ -26,4 +57,7 @@ if __name__ == "__main__":
         print("  Mission files : (none found)")
     print()
     # threaded=True: parallel API requests (map + summary + frame_events) on first dashboard load
-    app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
+    debug = _env_truth("LOG_SERVER_DEBUG") or _env_truth("FLASK_DEBUG")
+    if not debug:
+        print("  Tip: set LOG_SERVER_DEBUG=1 for Flask debug/reloader (dev only).\n")
+    app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)

@@ -1,0 +1,5 @@
+{"event": "mission_start", "ts": "2024-01-01T00:00:00", "sim_truth_file": "cmac2.json"}
+{"event": "telemetry_sample", "ts": "2024-01-01T00:00:01", "drone_state": {"latitude": -35.0, "longitude": 149.0, "altitude_rel_home": 10.0}}
+{"event": "fsm_transition", "ts": "2024-01-01T00:00:02", "state_from": "DroneStateEnum.OVERRIDE", "state_to": "DroneStateEnum.SCAN"}
+{"event": "fsm_tick", "ts": "2024-01-01T00:00:03", "state": "SCAN", "drone_state": {"latitude": -35.0001, "longitude": 149.0001, "altitude_rel_home": 35.0}}
+{"event": "weed_detected", "ts": "2024-01-01T00:00:04", "weed": {"lat": -35.0002, "lon": 149.0002}}
