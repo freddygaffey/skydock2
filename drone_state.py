@@ -104,10 +104,10 @@ class DroneStateForHoming:
             import sys
             if "-s" in sys.argv or "--sim" in sys.argv:
                 self.enable_homing_and_autonomy = True
-            elif msg.chan16_raw < 1200:
-                self.enable_homing_and_autonomy = False
-            else:
+            elif msg.chan16_raw > 1500:  # high (~2099) = enable, low (~900) = disable
                 self.enable_homing_and_autonomy = True
+            else:
+                self.enable_homing_and_autonomy = False
 
             # # TODO: remove
             # self.rotaion_x = 0.0

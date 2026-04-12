@@ -129,6 +129,7 @@ def main():
     constants.GOTO_ALT               = float(params["goto_alt_m"])
     constants.MAX_HOMING_DIST        = float(params["max_homing_dist_m"])
     constants.MIN_ALT                = float(params["min_alt_m"])
+    constants.MAX_HOMING_ALT         = float(params["max_homing_alt_m"])
     constants.MIN_SPRAY_ERROR        = float(params["min_spray_error_m"])
 
     constants.SIM_AI_ENABLE_IMPERFECTIONS = (

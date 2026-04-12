@@ -23,6 +23,7 @@ GOTO_ALT = None             # goto_alt_m
 # Homing state
 MAX_HOMING_DIST = None      # max_homing_dist_m
 MIN_ALT = None              # min_alt_m
+MAX_HOMING_ALT = None       # max_homing_alt_m
 
 # Spray state
 MIN_SPRAY_ERROR = None      # min_spray_error_m

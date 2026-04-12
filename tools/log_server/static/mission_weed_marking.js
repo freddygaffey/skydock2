@@ -32,6 +32,7 @@
       goto_alt_m: 10,
       max_homing_dist_m: 10,
       min_alt_m: 5,
+      max_homing_alt_m: 15,
       min_spray_error_m: 2,
       sim_ai_enable_imperfections: false,
     };
