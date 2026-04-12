@@ -18,7 +18,9 @@ gap (minimum 0.05s).
 
 **Fixed FPS:** pass ``--fps N`` to use equal time per frame (legacy behaviour).
 
-Output is saved as ``mission_video.mp4``. Real-time mode renders frames in parallel (see
+Output is saved as ``mission_video.mp4``. Encoding always writes to a unique ``*.mp4.work``
+file in the mission folder first, then atomically replaces ``mission_video.mp4`` so browsers
+never see a half-written MP4. Real-time mode renders frames in parallel (see
 ``SKYDOCK_VIDEO_WORKERS``), writes temp JPEGs (not PNG), and encodes with FFmpeg ``libx264``
 ``-preset veryfast``. Fixed-FPS mode uses OpenCV ``mp4v`` then FFmpeg transcode to H.264.
 
@@ -441,14 +443,39 @@ def _ffmpeg_x264_fast() -> list[str]:
         "0",
         "-pix_fmt",
         "yuv420p",
+        "-profile:v",
+        os.environ.get("SKYDOCK_VIDEO_X264_PROFILE", "high"),
         "-movflags",
         "+faststart",
         "-an",
     ]
 
 
-def transcode_h264_for_web(path: Path) -> bool:
-    """Replace *path* with an H.264 yuv420p + faststart MP4 suitable for browsers."""
+def _allocate_work_mp4(dir_path: Path) -> Path:
+    """Reserve a unique path under *dir_path* for encoder output (atomic publish later)."""
+    t = tempfile.NamedTemporaryFile(
+        prefix="mission_video_",
+        suffix=".mp4.work",
+        dir=str(dir_path.resolve()),
+        delete=False,
+    )
+    t.close()
+    return Path(t.name)
+
+
+def _publish_video(work: Path, final: Path) -> None:
+    """Rename *work* over *final* atomically (same filesystem). *work* must exist."""
+    if not work.is_file() or work.stat().st_size < 256:
+        raise RuntimeError("video output missing or too small")
+    os.replace(str(work), str(final))
+
+
+def transcode_h264_for_web(path: Path, dst: Path | None = None) -> bool:
+    """Re-encode *path* to an H.264 yuv420p + faststart MP4.
+
+    If *dst* is None, replaces *path* in place (via a temp file, atomically).
+    If *dst* is set, writes the result to *dst* (leaves *path* unchanged until then).
+    """
     ffmpeg = resolve_ffmpeg_exe()
     if not ffmpeg:
         print(
@@ -456,21 +483,29 @@ def transcode_h264_for_web(path: Path) -> bool:
             "or: pip install imageio-ffmpeg"
         )
         return False
-    tmp = path.with_name(path.stem + "._h264_tmp.mp4")
-    r = subprocess.run(
-        [ffmpeg, "-y", "-i", str(path), *_ffmpeg_x264_fast(), str(tmp)],
-        capture_output=True,
-        text=True,
-        timeout=7200,
-    )
-    if r.returncode != 0 or not tmp.is_file():
-        err = (r.stderr or r.stdout or "").strip()
-        print(f"Error: ffmpeg transcode failed ({r.returncode}). {err[:800]}")
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
-        return False
-    tmp.replace(path)
-    return True
+    target = dst if dst is not None else path
+    tmp_out = _allocate_work_mp4(target.parent)
+    committed = False
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-i", str(path), *_ffmpeg_x264_fast(), str(tmp_out)],
+            capture_output=True,
+            text=True,
+            timeout=7200,
+        )
+        if r.returncode != 0 or not tmp_out.is_file():
+            err = (r.stderr or r.stdout or "").strip()
+            print(f"Error: ffmpeg transcode failed ({r.returncode}). {err[:800]}")
+            return False
+        if tmp_out.stat().st_size < 256:
+            print("Error: ffmpeg transcode produced empty output")
+            return False
+        os.replace(str(tmp_out), str(target))
+        committed = True
+        return True
+    finally:
+        if not committed and tmp_out.is_file():
+            tmp_out.unlink(missing_ok=True)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -506,25 +541,33 @@ def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
         sys.exit(1)
     h, w = first.shape[:2]
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
+    work = _allocate_work_mp4(output_path.parent)
+    try:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(work), fourcc, fps, (w, h))
 
-    for i, (ts_ns, img_path) in enumerate(frame_images):
-        frame = compose_frame(img_path, ts_ns, data, start_ns, truth)
-        if frame is None:
-            print(f"  Warning: could not read {img_path}, skipping")
-            continue
-        writer.write(frame)
-        if (i + 1) % 50 == 0 or (i + 1) == len(frame_images):
-            print(f"  {i + 1}/{len(frame_images)} frames processed")
+        for i, (ts_ns, img_path) in enumerate(frame_images):
+            frame = compose_frame(img_path, ts_ns, data, start_ns, truth)
+            if frame is None:
+                print(f"  Warning: could not read {img_path}, skipping")
+                continue
+            writer.write(frame)
+            if (i + 1) % 50 == 0 or (i + 1) == len(frame_images):
+                print(f"  {i + 1}/{len(frame_images)} frames processed")
 
-    writer.release()
-    if not transcode_h264_for_web(output_path):
-        print(
-            "Error: could not produce browser-compatible H.264 MP4 "
-            "(OpenCV output is MPEG-4 Part 2 and will not play in Firefox / most browsers)."
-        )
-        sys.exit(1)
+        writer.release()
+        if not transcode_h264_for_web(work):
+            print(
+                "Error: could not produce browser-compatible H.264 MP4 "
+                "(OpenCV output is MPEG-4 Part 2 and will not play in Firefox / most browsers)."
+            )
+            sys.exit(1)
+        _publish_video(work, output_path)
+    except BaseException:
+        if work.is_file():
+            work.unlink(missing_ok=True)
+        raise
+
     print(f"Video saved (H.264, web-ready): {output_path}")
 
 
@@ -631,27 +674,34 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
         concat_path = tmp_path / "list.ffconcat"
         concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        r = subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_path),
-                *_ffmpeg_x264_fast(),
-                str(output_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=7200,
-        )
-        if r.returncode != 0:
-            err = (r.stderr or r.stdout or "").strip()
-            print(f"Error: ffmpeg failed ({r.returncode}). {err[:1200]}")
-            sys.exit(1)
+        work = _allocate_work_mp4(output_path.parent)
+        try:
+            r = subprocess.run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_path),
+                    *_ffmpeg_x264_fast(),
+                    str(work),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=7200,
+            )
+            if r.returncode != 0:
+                err = (r.stderr or r.stdout or "").strip()
+                print(f"Error: ffmpeg failed ({r.returncode}). {err[:1200]}")
+                sys.exit(1)
+            _publish_video(work, output_path)
+        except BaseException:
+            if work.is_file():
+                work.unlink(missing_ok=True)
+            raise
 
     print(f"Video saved (real-time H.264): {output_path}")
 
@@ -692,8 +742,15 @@ def main():
             print(f"Error: no file to re-encode: {output_path}")
             sys.exit(1)
         print(f"Re-encoding to H.264: {output_path}")
-        if not transcode_h264_for_web(output_path):
-            sys.exit(1)
+        staged = _allocate_work_mp4(output_path.parent)
+        try:
+            if not transcode_h264_for_web(output_path, staged):
+                sys.exit(1)
+            _publish_video(staged, output_path)
+        except BaseException:
+            if staged.is_file():
+                staged.unlink(missing_ok=True)
+            raise
         print("Done.")
         return
 
