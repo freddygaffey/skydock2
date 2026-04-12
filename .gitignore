@@ -6,6 +6,7 @@ mav.tlog.raw
 backups/
 missions/
 rpi_missions/
+.next_mission_id
 
 # Local map tile caches (optional manual downloads; see tools/download_canberra_osm_tiles.py)
 data/
