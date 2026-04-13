@@ -44,7 +44,11 @@ class user_app_callback_class(app_callback_class):
         super().__init__()
 
 # User-defined callback function: This is the callback function that will be called when data is available from the pipeline
+_det_print_last = 0
+_det_print_count = 0
+
 def app_callback(pad, info, user_data):
+    global _det_print_last, _det_print_count
     save_frames_per_frame = 1 # save x frames out of y frames
     buffer = info.get_buffer()  # Get the GstBuffer from the probe info
     if buffer is None:  # Check if the buffer is valid
@@ -67,10 +71,17 @@ def app_callback(pad, info, user_data):
                 (bbox.xmax() * width, bbox.ymax() * height)]
 
         confidence = float(detection.get_confidence())
-        det = Detection(label=label,confidence=confidence,bbox=bbox) 
+        det = Detection(label=label,confidence=confidence,bbox=bbox)
+        if det.label in ["sports ball", "frisbee"]:
+            _det_print_count += 1
         frame.add_detection(det)
 
-    ai_storage_singleton.set_latest_frame(frame) 
+    ai_storage_singleton.set_latest_frame(frame)
+    now = time.time()
+    if _det_print_count and now - _det_print_last >= 5:
+        print(f"DET {_det_print_count} found")
+        _det_print_count = 0
+        _det_print_last = now
     # Save frame as JPEG (every 5th frame to save space)
     if not hasattr(app_callback, 'count'):
         app_callback.count = 0
