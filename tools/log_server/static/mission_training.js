@@ -138,8 +138,49 @@ function setupFilmstripImageObserver() {
 /** @type {{ x0: number, y0: number, x1: number, y1: number } | null} */
 let dragSelect = null;
 const filmstrip   = document.getElementById('filmstrip');
+const filmstripRail = document.getElementById('filmstripRail');
+const filmstripResizeHandle = document.getElementById('filmstripResizeHandle');
+const LS_FILMSTRIP_WIDTH = 'sd_training_filmstrip_w';
 const frameCounter = document.getElementById('frameCounter');
 const frameInfo   = document.getElementById('frameInfo');
+
+function setFilmstripWidth(px) {
+  const w = Math.max(120, Math.min(800, Math.round(px)));
+  if (filmstripRail) filmstripRail.style.width = w + 'px';
+  try { localStorage.setItem(LS_FILMSTRIP_WIDTH, String(w)); } catch (_e) {}
+}
+
+(function initFilmstripWidth() {
+  try {
+    const saved = localStorage.getItem(LS_FILMSTRIP_WIDTH);
+    if (saved && filmstripRail) filmstripRail.style.width = Math.max(120, Math.min(800, parseInt(saved, 10) || 308)) + 'px';
+  } catch (_e) {}
+})();
+
+if (filmstripResizeHandle && filmstripRail) {
+  let dragging = false, startX = 0, startW = 0;
+  filmstripResizeHandle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    dragging = true;
+    startX = e.clientX;
+    startW = filmstripRail.offsetWidth;
+    filmstripResizeHandle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = startX - e.clientX;
+    setFilmstripWidth(startW + dx);
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    filmstripResizeHandle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+}
 const runBtn      = document.getElementById('runBtn');
 const stopAnalyzeBtn = document.getElementById('stopAnalyzeBtn');
 const compareModelsBtn = document.getElementById('compareModelsBtn');
@@ -177,9 +218,7 @@ const focusNearCurrentChk = document.getElementById('focusNearCurrentChk');
 const manualFromYoloBtn = document.getElementById('manualFromYoloBtn');
 const clearAiPredsBtn = document.getElementById('clearAiPredsBtn');
 const manualClearBtn = document.getElementById('manualClearBtn');
-/** Default label/conf for canvas-drawn boxes (no form UI). */
-const DEFAULT_MANUAL_LABEL = 'sports ball';
-const DEFAULT_MANUAL_CONF = 0.99;
+// DEFAULT_MANUAL_LABEL, DEFAULT_MANUAL_CONF → training/geometry.js
 
 const LS_YOLO_MODEL = 'sd_training_yolo_model';
 const LS_YOLO_SELECT = 'sd_training_yolo_select';
@@ -505,9 +544,58 @@ function refreshIdleFrameInfo() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Idle filmstrip: show frame thumbnails before analysis runs
+// ---------------------------------------------------------------------------
+let _idleFilmstripToken = 0;
+
+function idleThumbSrc(framePath) {
+  return `/missions/${MISSION_ID}/image?path=${encodeURIComponent(framePath)}&src=${SRC}&max_side=${FILMSTRIP_MAX_SIDE}`;
+}
+
+function loadIdleFilmstrip() {
+  const token = ++_idleFilmstripToken;
+  if (frames.length > 0) return;
+  teardownFilmstripImageObserver();
+  filmstrip.innerHTML = '';
+  fetch(`/missions/${MISSION_ID}/training/frame_list?src=${SRC}`)
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(data => {
+      if (token !== _idleFilmstripToken) return;
+      if (frames.length > 0) return;
+      const paths = data.paths || [];
+      if (!paths.length) return;
+      filmstrip.innerHTML = '';
+      const obs = new IntersectionObserver(entries => {
+        for (const ent of entries) {
+          if (!ent.isIntersecting) continue;
+          const img = ent.target.querySelector('img');
+          const path = ent.target.dataset.path;
+          if (img && path && img.src === FILMSTRIP_IMG_PLACEHOLDER) {
+            img.src = idleThumbSrc(path);
+          }
+        }
+      }, { root: filmstrip, rootMargin: '120px', threshold: 0.01 });
+      for (let i = 0; i < paths.length; i++) {
+        const div = document.createElement('div');
+        div.className = 'fs-thumb';
+        div.dataset.path = paths[i];
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = FILMSTRIP_IMG_PLACEHOLDER;
+        div.appendChild(img);
+        filmstrip.appendChild(div);
+        obs.observe(div);
+      }
+      frameCounter.textContent = `— / ${paths.length}`;
+    })
+    .catch(() => {});
+}
+
 realMissionSelect.addEventListener('change', () => {
   syncRunBtnFromSelect();
   refreshIdleFrameInfo();
+  loadIdleFilmstrip();
 });
 
 const yoloTimeEstimate = document.getElementById('yoloTimeEstimate');
@@ -739,6 +827,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   syncRunBtnFromSelect();
   refreshIdleFrameInfo();
+  loadIdleFilmstrip();
   syncManualBboxFormFromFrame();
   if (progressiveStrideChk) {
     progressiveStrideChk.addEventListener('change', persistYoloInputs);
@@ -1129,114 +1218,7 @@ function undoLastDecision() {
   else if (currentIdx >= 0) renderFrame(currentIdx);
 }
 
-// ---------------------------------------------------------------------------
-// Frame ordering: only COCO weed-proxy names (exact match); giraffe etc. never count.
-// ---------------------------------------------------------------------------
-const TRAINING_WEED_PROXY_LABELS = new Set(['sports ball', 'frisbee']);
-/** Detections with these COCO labels are ignored for matching, counts, and drawing (aerial FPs). */
-const TRAINING_IGNORE_DET_LABELS = new Set(['dog']);
-
-function isIgnoredTrainingDet(det) {
-  if (!det) return false;
-  const s = det.label != null ? String(det.label).trim().toLowerCase() : '';
-  return TRAINING_IGNORE_DET_LABELS.has(s);
-}
-
-function isWeedProxyTrainingDet(det) {
-  if (!det) return false;
-  const s = det.label != null ? String(det.label).trim().toLowerCase() : '';
-  return TRAINING_WEED_PROXY_LABELS.has(s);
-}
-
-/** Draw any model output at least this confident (matches typical NMS floor); conf slider only gates auto/review. */
-const YOLO_DISPLAY_CONF_MIN = 0.05;
-
-// ---------------------------------------------------------------------------
-// Camera geometry (mirrors utils.py detection_to_ned / latlon_to_pixel)
-// ---------------------------------------------------------------------------
-const CAM_FOV_X = 27.4, CAM_FOV_Y = 21.0, CAM_PIX = 640;
-const CAM_FX = CAM_PIX / (2 * Math.tan(CAM_FOV_X * Math.PI / 360));
-const CAM_FY = CAM_PIX / (2 * Math.tan(CAM_FOV_Y * Math.PI / 360));
-const CAM_CX = CAM_PIX / 2, CAM_CY = CAM_PIX / 2;
-
-function _dsRot(ds) {
-  const rot = ds.rotaion || {};
-  return { roll: rot.x || 0, pitch: rot.y || 0, yaw: rot.z || 0 };
-}
-
-function _buildR(roll, pitch, yaw) {
-  const cr = Math.cos(roll), sr = Math.sin(roll);
-  const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  // Rz @ Ry @ Rx  (row-major 3x3 flattened)
-  return [
-    cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr,
-    sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr,
-    -sp,    cp*sr,             cp*cr,
-  ];
-}
-
-function _mv3(R, v) {
-  return [
-    R[0]*v[0] + R[1]*v[1] + R[2]*v[2],
-    R[3]*v[0] + R[4]*v[1] + R[5]*v[2],
-    R[6]*v[0] + R[7]*v[1] + R[8]*v[2],
-  ];
-}
-
-function _transposeR(R) {
-  return [R[0],R[3],R[6], R[1],R[4],R[7], R[2],R[5],R[8]];
-}
-
-function _dsAltitude(ds, R) {
-  if (ds.rangefinder_m > 0.3) {
-    const rng = _mv3(R, [0, 0, 1]);
-    return ds.rangefinder_m * rng[2];
-  }
-  return ds.altitude_rel_home || 0;
-}
-
-/** Back-project pixel (px,py) to ground lat/lon using drone state dict. */
-function pixelToLatLon(ds, px, py) {
-  if (!ds) return null;
-  const { roll, pitch, yaw } = _dsRot(ds);
-  const R = _buildR(roll, pitch, yaw);
-  const h = _dsAltitude(ds, R);
-  if (h <= 0) return null;
-
-  const xc = (px - CAM_CX) / CAM_FX;
-  const yc = (py - CAM_CY) / CAM_FY;
-  const ray = [xc, yc, 1];
-  const len = Math.sqrt(xc*xc + yc*yc + 1);
-  ray[0] /= len; ray[1] /= len; ray[2] /= len;
-  const rNED = _mv3(R, ray);
-  if (rNED[2] <= 0.01) return null;
-  const t = h / rNED[2];
-  const N = t * rNED[0];
-  const E = t * rNED[1];
-  const lat = (ds.latitude || 0) + N / 111320;
-  const lon = (ds.longitude || 0) + E / (111320 * Math.cos((ds.latitude || 0) * Math.PI / 180));
-  return { lat, lon };
-}
-
-/** Project ground lat/lon to pixel (px,py) using drone state dict. null if behind camera or out of frame. */
-function latLonToPixel(ds, lat, lon) {
-  if (!ds) return null;
-  const { roll, pitch, yaw } = _dsRot(ds);
-  const R = _buildR(roll, pitch, yaw);
-  const h = _dsAltitude(ds, R);
-  if (h <= 0) return null;
-
-  const N = (lat - (ds.latitude || 0)) * 111320;
-  const E = (lon - (ds.longitude || 0)) * (111320 * Math.cos((ds.latitude || 0) * Math.PI / 180));
-  const ned = [N, E, h];
-  const rb = _mv3(_transposeR(R), ned);
-  if (rb[2] <= 0) return null;
-  const px = CAM_CX + CAM_FX * (rb[0] / rb[2]);
-  const py = CAM_CY + CAM_FY * (rb[1] / rb[2]);
-  if (px < -50 || px > CAM_PIX + 50 || py < -50 || py > CAM_PIX + 50) return null;
-  return { px, py };
-}
+// Label helpers, camera geometry, scoreCandidateMatch, manual bbox helpers → training/geometry.js
 
 // ---------------------------------------------------------------------------
 // Cross-frame weed prediction index (uses camera geometry, not GPS dot)
@@ -1258,7 +1240,6 @@ function buildWeedDetectionIndex(onlyWeedIds) {
 
   for (let fi = 0; fi < frames.length; fi++) {
     const f = frames[fi];
-    // Quick skip: if scoped, only process frames that contain a relevant weed
     if (onlyWeedIds) {
       let relevant = false;
       for (const m of f.matches || []) { if (onlyWeedIds.has(m.weed_id)) { relevant = true; break; } }
@@ -1304,7 +1285,6 @@ function buildWeedDetectionIndex(onlyWeedIds) {
   }
   weedDetIndex = idx;
 
-  // Skip-streak: only rebuild for affected weeds if scoped
   const weedFrames = new Map();
   for (const f of frames) {
     const ts = Number(f.timestamp_ns) || 0;
@@ -1325,7 +1305,6 @@ function buildWeedDetectionIndex(onlyWeedIds) {
     weedSkipStreak.set(wid, streak);
   }
   if (!onlyWeedIds) {
-    // Full rebuild: clear streaks for weeds not found
     const newStreaks = new Map();
     for (const [wid, s] of weedSkipStreak) {
       if (weedFrames.has(wid)) newStreaks.set(wid, s);
@@ -1374,24 +1353,6 @@ function predictBboxForWeed(weedId, curDs, curTs) {
     w: x2 - x1, h: y2 - y1,
     label: best.label,
   };
-}
-
-function scoreCandidateMatch(det, predCx, predCy, predicted) {
-  const dx = det.cx - predCx;
-  const dy = det.cy - predCy;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  if (!predicted) return dist;
-
-  const detW = det.x2 - det.x1, detH = det.y2 - det.y1;
-  const sizeRatio = Math.max(detW, 1) / Math.max(predicted.w, 1);
-  const sizeScore = Math.abs(Math.log(Math.max(sizeRatio, 0.01)));
-
-  const labelMatch = predicted.label &&
-    det.label != null &&
-    String(det.label).trim().toLowerCase() === String(predicted.label).trim().toLowerCase();
-  const labelPenalty = labelMatch ? 0 : 1;
-
-  return dist * 0.6 + sizeScore * 80 * 0.25 + labelPenalty * 40 * 0.15;
 }
 
 function buildPredictedBoxesForFrame(f) {
@@ -1505,110 +1466,9 @@ function autoReassignMatches(onlyWeedIds) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Manual bbox override (640×640, same as canvas).
-// ---------------------------------------------------------------------------
-function roundCoord1(x) {
-  return Math.round(Number(x) * 10) / 10;
-}
-
-function manualBboxIsValid(m) {
-  if (!m) return false;
-  const x1 = Number(m.x1), y1 = Number(m.y1), x2 = Number(m.x2), y2 = Number(m.y2);
-  if (![x1, y1, x2, y2].every(Number.isFinite)) return false;
-  if (x2 - x1 < 2 || y2 - y1 < 2) return false;
-  if (x1 < 0 || y1 < 0 || x2 > 640 || y2 > 640) return false;
-  return true;
-}
-
-function normalizeManualBbox(m) {
-  let x1 = Number(m.x1), y1 = Number(m.y1), x2 = Number(m.x2), y2 = Number(m.y2);
-  if (x2 < x1) {
-    const t = x1;
-    x1 = x2;
-    x2 = t;
-  }
-  if (y2 < y1) {
-    const t = y1;
-    y1 = y2;
-    y2 = t;
-  }
-  x1 = Math.max(0, Math.min(640, x1));
-  x2 = Math.max(0, Math.min(640, x2));
-  y1 = Math.max(0, Math.min(640, y1));
-  y2 = Math.max(0, Math.min(640, y2));
-  if (x2 - x1 < 2) x2 = Math.min(640, x1 + 2);
-  if (y2 - y1 < 2) y2 = Math.min(640, y1 + 2);
-  const label =
-    m.label != null && String(m.label).trim() !== '' ? String(m.label).trim() : 'sports ball';
-  let conf = Number(m.conf);
-  if (!Number.isFinite(conf)) conf = 0.99;
-  conf = Math.min(1, Math.max(0, conf));
-  return {
-    x1: roundCoord1(x1),
-    y1: roundCoord1(y1),
-    x2: roundCoord1(x2),
-    y2: roundCoord1(y2),
-    cx: roundCoord1((x1 + x2) / 2),
-    cy: roundCoord1((y1 + y2) / 2),
-    label,
-    conf,
-  };
-}
-
-function migrateManualBboxesOnFrame(f) {
-  if (!f._manual_bboxes) {
-    if (f._manual_bbox && manualBboxIsValid(f._manual_bbox)) {
-      f._manual_bboxes = [normalizeManualBbox(f._manual_bbox)];
-    } else {
-      f._manual_bboxes = [];
-    }
-  }
-  if (f._manual_bbox) delete f._manual_bbox;
-}
-
-function getManualBboxes(f) {
-  if (!f) return [];
-  migrateManualBboxesOnFrame(f);
-  return f._manual_bboxes && f._manual_bboxes.length ? f._manual_bboxes : [];
-}
-
-function yoloDetToManualNorm(det) {
-  if (!det) return null;
-  return normalizeManualBbox({
-    x1: det.x1,
-    y1: det.y1,
-    x2: det.x2,
-    y2: det.y2,
-    label: det.label,
-    conf: det.conf,
-  });
-}
-
-function bboxesNearlyEqual(a, b) {
-  if (!a || !b) return false;
-  const tol = 1.5;
-  return (
-    Math.abs(a.x1 - b.x1) < tol &&
-    Math.abs(a.y1 - b.y1) < tol &&
-    Math.abs(a.x2 - b.x2) < tol &&
-    Math.abs(a.y2 - b.y2) < tol
-  );
-}
-
-function addManualBboxFromUser(f, norm, append) {
-  if (!f || !norm) return;
-  f._explicit_empty = false;
-  migrateManualBboxesOnFrame(f);
-  if (!append) {
-    f._manual_bboxes = [norm];
-  } else {
-    const list = (f._manual_bboxes || []).slice();
-    if (!list.some(b => bboxesNearlyEqual(b, norm))) list.push(norm);
-    f._manual_bboxes = list;
-  }
-  delete f._manual_bbox;
-}
+// Manual bbox helpers (roundCoord1, manualBboxIsValid, normalizeManualBbox,
+// migrateManualBboxesOnFrame, getManualBboxes, yoloDetToManualNorm,
+// bboxesNearlyEqual, addManualBboxFromUser) → training/geometry.js
 
 /** Remove YOLO boxes from frame data (GPS weed dots stay). Sets _ai_predictions_removed. */
 function stripYoloPredictionsFromFrame(f) {

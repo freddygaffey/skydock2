@@ -6,25 +6,39 @@
   {% include "partials/sd_theme_style.html" %}
   <style>
     #mainCanvas{border:1px solid var(--sd-border);border-radius:6px;display:block;background:#000;cursor:crosshair;max-width:100%;height:auto}
-    /* Filmstrip: 4-wide grid in the right rail (lg+); fluid columns when stacked */
-    .filmstrip-rail{width:100%}
+    /* Viewer + filmstrip: flex layout with draggable split */
+    #viewerSplit{display:flex;flex-direction:column;gap:12px}
     @media (min-width: 992px) {
-      .filmstrip-rail{width:min(100%,clamp(260px,24vw,380px));flex:0 0 auto}
+      #viewerSplit{flex-direction:row;align-items:flex-start}
+    }
+    #viewerMain{flex:1 1 0;min-width:0;overflow:hidden}
+    .filmstrip-rail{width:100%;position:relative}
+    @media (min-width: 992px) {
+      .filmstrip-rail{width:308px;flex:0 0 auto}
     }
     #filmstrip{
       display:grid;gap:6px;align-content:start;justify-items:stretch;
-      grid-template-columns:repeat(4,minmax(0,1fr));
+      grid-template-columns:repeat(auto-fill,minmax(60px,1fr));
       max-height:min(640px,calc(100vh - 140px));overflow-y:auto;overflow-x:hidden;padding:4px 2px;
     }
     @media (max-width: 991.98px) {
       .filmstrip-rail{max-width:none}
-      #filmstrip{
-        grid-template-columns:repeat(auto-fill,minmax(68px,1fr));
-        max-height:min(200px,38vh);
-      }
+      #filmstrip{max-height:min(200px,38vh)}
     }
     @media (max-width: 575.98px) {
       #filmstrip{grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:4px;max-height:min(180px,32vh)}
+    }
+    #filmstripResizeHandle{
+      display:none;position:absolute;left:-4px;top:0;bottom:0;width:8px;
+      cursor:col-resize;z-index:10;
+    }
+    #filmstripResizeHandle::after{
+      content:'';position:absolute;left:3px;top:0;bottom:0;width:2px;
+      background:var(--sd-border);border-radius:1px;transition:background .15s;
+    }
+    #filmstripResizeHandle:hover::after,#filmstripResizeHandle.active::after{background:var(--sd-accent)}
+    @media (min-width: 992px) {
+      #filmstripResizeHandle{display:block}
     }
     .fs-thumb{position:relative;cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden;min-width:0;aspect-ratio:1}
     .fs-thumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -183,23 +197,23 @@
 
     <!-- Right panel: frame viewer -->
     <div class="col-12 col-lg-9">
-      <div class="row g-2 align-items-start gx-lg-3">
-        <div class="col-12 col-lg min-w-0">
-      <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+      <div id="viewerSplit">
+        <div id="viewerMain">
+      <div class="d-flex gap-2 align-items-center mb-1 flex-wrap">
         <button id="prevBtn" class="btn btn-sm btn-outline-secondary" disabled title="Previous frame (←)">← Prev <span class="key-hint">←</span></button>
         <span id="frameCounter" class="muted small">— / —</span>
         <button id="nextBtn" class="btn btn-sm btn-outline-secondary" disabled title="Next frame (→)">Next → <span class="key-hint">→</span></button>
         <button id="nextReviewBtn" class="btn btn-sm btn-outline-warning" disabled title="Jump to next frame needing review (N)">Next ? <span class="key-hint">N</span></button>
         <button type="button" id="compareModelsBtn" class="btn btn-sm btn-outline-info" disabled
           title="Run each preset YOLO on this frame and compare boxes">Compare models</button>
-        <div class="ms-auto d-flex gap-2 flex-wrap align-items-center justify-content-end">
-          <button id="approveBtn" class="btn btn-sm btn-success" disabled title="Approve (A): boxes or good YOLO = positive; after Clear (D) = negative, empty label file">✓ Approve <span class="key-hint">A</span></button>
-          <button id="skipBtn" class="btn btn-sm btn-danger" disabled title="Skip (S)">✗ Skip <span class="key-hint">S</span></button>
-          <button id="undoBtn" class="btn btn-sm btn-outline-warning" type="button" disabled title="Undo last Approve or Skip (F)">Undo <span class="key-hint">F</span></button>
-          <button type="button" id="manualFromYoloBtn" class="btn btn-sm btn-outline-secondary" disabled title="Copy best-matched YOLO box as manual label">Use YOLO</button>
-          <button type="button" id="clearAiPredsBtn" class="btn btn-sm btn-outline-secondary" disabled title="Remove all YOLO predictions on this frame (matched + extra dets)">Clear AI <span class="key-hint">Del</span></button>
-          <button type="button" id="manualClearBtn" class="btn btn-sm btn-outline-warning" disabled title="Clear (D): remove manual boxes and all YOLO boxes on canvas; mark empty, then A for no-object">Clear <span class="key-hint">D</span></button>
-        </div>
+      </div>
+      <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+        <button id="approveBtn" class="btn btn-sm btn-success" disabled title="Approve (A): boxes or good YOLO = positive; after Clear (D) = negative, empty label file">✓ Approve <span class="key-hint">A</span></button>
+        <button id="skipBtn" class="btn btn-sm btn-danger" disabled title="Skip (S)">✗ Skip <span class="key-hint">S</span></button>
+        <button id="undoBtn" class="btn btn-sm btn-outline-warning" type="button" disabled title="Undo last Approve or Skip (F)">Undo <span class="key-hint">F</span></button>
+        <button type="button" id="manualFromYoloBtn" class="btn btn-sm btn-outline-secondary" disabled title="Copy best-matched YOLO box as manual label">Use YOLO</button>
+        <button type="button" id="clearAiPredsBtn" class="btn btn-sm btn-outline-secondary" disabled title="Remove all YOLO predictions on this frame (matched + extra dets)">Clear AI <span class="key-hint">Del</span></button>
+        <button type="button" id="manualClearBtn" class="btn btn-sm btn-outline-warning" disabled title="Clear (D): remove manual boxes and all YOLO boxes on canvas; mark empty, then A for no-object">Clear <span class="key-hint">D</span></button>
       </div>
 
       <canvas id="mainCanvas" width="640" height="640"></canvas>
@@ -235,7 +249,8 @@
         <p class="alert alert-warning small">Enable JavaScript — training analysis requires it.</p>
       </noscript>
         </div>
-        <div class="col-12 col-lg-auto filmstrip-rail">
+        <div class="filmstrip-rail" id="filmstripRail">
+          <div id="filmstripResizeHandle"></div>
           <div class="small fw-semibold mb-1 d-none d-lg-block" style="color:var(--sd-muted)">Frames</div>
           <div id="filmstrip" role="list" aria-label="Frame thumbnails"></div>
         </div>
@@ -255,6 +270,7 @@
   window.TRAINING_AUTO_SETUP = cfg.training_auto_setup != null ? String(cfg.training_auto_setup) : '';
 })();
 </script>
+<script src="{{ url_for('static', filename='training/geometry.js') }}?v=20260414k"></script>
 <script src="{{ url_for('static', filename='mission_training.js') }}?v=20260414k"
   onerror="(function(){var e=document.getElementById('errorBanner');if(e){e.style.display='block';e.textContent='Failed to load mission_training.js — check the Network tab (404?) and hard-refresh (Ctrl+Shift+R).';}})()"></script>
 {% include "partials/sd_theme_script.html" %}

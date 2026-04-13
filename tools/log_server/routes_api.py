@@ -772,6 +772,22 @@ def training_frame_count(mission_id: str):
     return jsonify({"ok": True, "n_frames": n, "frame_stride": stride})
 
 
+@bp.get("/missions/<mission_id>/training/frame_list")
+def training_frame_list(mission_id: str):
+    """Return sorted list of frame relative paths (``frames/NNNNN.jpg``) for filmstrip previews."""
+    if not mission_id.isdigit():
+        abort(400)
+    src = request.args.get("src", "rpi")
+    mission_dir = _missions_root(src) / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+    from services.training_data import collect_training_frame_files
+
+    all_files = collect_training_frame_files(mission_dir, stride=1)
+    paths = [f"frames/{p.name}" for _ts, p in all_files]
+    return jsonify({"ok": True, "paths": paths, "total": len(paths)})
+
+
 @bp.post("/missions/<mission_id>/training/analyze")
 def training_analyze(mission_id: str):
     """Run YOLO inference + GPS matching on all frames. Cached per frames-dir mtime.
