@@ -77,6 +77,72 @@ def detection_to_latlon(drone_state: DroneStateForHoming, detection: Detection) 
     dlon = E / (111320*np.cos(radians(gps.lat)))
     return gps.lat + dlat, gps.lon + dlon
     
+def latlon_to_pixel(drone_state, weed_lat: float, weed_lon: float, time_ns: int = 0) -> tuple[float, float] | None:
+    """Back-project a known GPS position to pixel (px, py) in the current frame.
+
+    Inverse of detection_to_ned(). Returns (px, py) if within the 640×640 image,
+    otherwise None (point not visible in this frame).
+    """
+    CAMERA_FOV_X = 27.4
+    CAMERA_FOV_Y = 21.0
+    NUM_OF_PIX_X = 640
+    NUM_OF_PIX_Y = 640
+
+    fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(CAMERA_FOV_X / 2)))
+    fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(CAMERA_FOV_Y / 2)))
+    cx = NUM_OF_PIX_X / 2
+    cy = NUM_OF_PIX_Y / 2
+
+    rot = drone_state.get_rotation_at_time(time_ns)
+    roll, pitch, yaw = rot.x, rot.y, rot.z
+
+    Rx = np.array([
+        [1, 0, 0],
+        [0,  np.cos(roll), -np.sin(roll)],
+        [0,  np.sin(roll),  np.cos(roll)],
+    ])
+    Ry = np.array([
+        [ np.cos(pitch), 0, np.sin(pitch)],
+        [0, 1, 0],
+        [-np.sin(pitch), 0, np.cos(pitch)],
+    ])
+    Rz = np.array([
+        [np.cos(yaw), -np.sin(yaw), 0],
+        [np.sin(yaw),  np.cos(yaw), 0],
+        [0, 0, 1],
+    ])
+    ray_to_ned = Rz @ Ry @ Rx
+
+    # NED offset from drone to weed (metres)
+    N = (weed_lat - drone_state.latitude) * 111320
+    E = (weed_lon - drone_state.longitude) * (111320 * np.cos(radians(drone_state.latitude)))
+
+    # Vertical component (positive-down in NED = altitude)
+    if drone_state.rangefinder_m > 0.3:
+        rng_ned = ray_to_ned @ np.array([0.0, 0.0, 1.0])
+        h = drone_state.rangefinder_m * rng_ned[2]
+    else:
+        h = drone_state.altitude_rel_home
+
+    if h <= 0:
+        return None
+
+    ned_vec = np.array([N, E, h])
+    ray_body = ray_to_ned.T @ ned_vec  # inverse rotation
+
+    if ray_body[2] <= 0:
+        return None  # behind the camera
+
+    x_cam = ray_body[0] / ray_body[2]
+    y_cam = ray_body[1] / ray_body[2]
+    px = cx + fx * x_cam
+    py = cy + fy * y_cam
+
+    if 0 <= px <= NUM_OF_PIX_X and 0 <= py <= NUM_OF_PIX_Y:
+        return float(px), float(py)
+    return None
+
+
 def haversine_distance(lat1, lon1, lat2, lon2) -> float:
     """Calculate the great-circle distance between two GPS points in meters."""
     R = 6371000  # Earth radius in meters

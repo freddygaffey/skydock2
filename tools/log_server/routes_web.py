@@ -10,8 +10,14 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 
 from services.mission_store import mission_paths, resolve_mission_log, sim_files as list_sim_files
 from services.mission_store import truth_files_for_ui
+from services.mission_store import list_real_mission_setups
 from services.mission_store import iter_events
 from services.mission_index import default_index_path, index_matches_log
+from services.training_data import (
+    default_model_path,
+    default_stream_batch_size,
+    training_yolo_models_for_ui,
+)
 from services.tile_cache import ESRI_URL, OSM_URL
 
 bp = Blueprint("log_web", __name__)
@@ -26,6 +32,7 @@ def _nav_urls_for_mission(mission_id: str, src: str) -> dict[str, str]:
         "log_url": url_for("log_web.mission_dashboard", mission_id=mission_id, src=src),
         "weed_url": url_for("log_web.mission_weed_marking_page", mission_id=mission_id, src=src),
         "gc_url": url_for("log_web.mission_gc_page", mission_id=mission_id, src=src),
+        "training_url": url_for("log_web.mission_training_page", mission_id=mission_id, src=src),
     }
 
 
@@ -157,6 +164,22 @@ def mission_weed_marking_page(mission_id: str):
     )
 
 
+@bp.get("/missions/<mission_id>/training")
+def mission_training_page(mission_id: str):
+    ctx = _mission_page_common(mission_id)
+    nav = _nav_urls_for_mission(mission_id, ctx["src"])
+    return render_template(
+        "mission_training.html",
+        nav_active="training",
+        real_mission_files=list_real_mission_setups(),
+        default_yolo_model=default_model_path(),
+        default_yolo_batch=default_stream_batch_size(),
+        **training_yolo_models_for_ui(),
+        **nav,
+        **ctx,
+    )
+
+
 @bp.get("/missions/<mission_id>/gc")
 def mission_gc_page(mission_id: str):
     ctx = _mission_page_common(mission_id)
@@ -228,6 +251,7 @@ def compare_page():
             "log_url": url_for("log_web.missions_list", src=src),
             "weed_url": url_for("log_web.weed_marking", src=src),
             "gc_url": url_for("log_web.gc_page", src=src),
+            "training_url": url_for("log_web.missions_list", src=src),
         }
     return render_template(
         "compare.html",

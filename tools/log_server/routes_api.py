@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, abort, jsonify, request, send_file, current_app
+from flask import Blueprint, abort, jsonify, request, send_file, current_app, Response, stream_with_context
 
 from services.analysis import (
     build_frame_events,
@@ -329,13 +329,18 @@ def mission_sim_vision(mission_id: str):
 
 @bp.get("/missions/<mission_id>/image")
 def mission_image(mission_id: str):
-    """Serve a real image file from within the mission directory."""
+    """Serve a real image file from within the mission directory.
+
+    Optional ``max_side`` (32–640): downscale JPEG/PNG in-process for thumbnails
+    and training main view (640). Falls back to the original file if OpenCV is unavailable.
+    """
     if not mission_id.isdigit():
         abort(400)
     rel = request.args.get("path", "")
     if not rel:
         abort(400)
     src = request.args.get("src", "sim")
+    max_side = request.args.get("max_side", type=int)
     missions_root = _missions_root(src)
     mission_dir = (missions_root / mission_id).resolve()
     try:
@@ -345,6 +350,40 @@ def mission_image(mission_id: str):
         abort(403)
     if not target.is_file():
         abort(404)
+
+    if max_side is not None and 32 <= max_side <= 640:
+        suf = target.suffix.lower()
+        if suf in (".jpg", ".jpeg", ".png", ".webp"):
+            try:
+                import cv2
+            except ImportError:
+                cv2 = None  # type: ignore[misc, assignment]
+            if cv2 is not None:
+                arr = cv2.imread(str(target))
+                if arr is not None and arr.size:
+                    h, w = arr.shape[:2]
+                    longest = max(h, w)
+                    if longest > max_side:
+                        scale = max_side / float(longest)
+                        arr = cv2.resize(
+                            arr,
+                            (int(w * scale), int(h * scale)),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    ok, enc = cv2.imencode(
+                        ".jpg",
+                        arr,
+                        (int(cv2.IMWRITE_JPEG_QUALITY), 72),
+                    )
+                    if ok:
+                        return Response(
+                            enc.tobytes(),
+                            mimetype="image/jpeg",
+                            headers={
+                                "Cache-Control": "public, max-age=604800",
+                            },
+                        )
+
     return send_file(target)
 
 
@@ -705,6 +744,410 @@ def rpi_push_real_missions():
         return jsonify({"status": "error", "output": "Timed out"}), 504
     except Exception as exc:
         return jsonify({"status": "error", "output": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Training data endpoints
+# ---------------------------------------------------------------------------
+
+# In-process cache: key → (results, inference_device) (avoids re-running inference)
+_TRAINING_ANALYSIS_CACHE: dict[str, tuple[list[dict], str]] = {}
+
+
+@bp.get("/missions/<mission_id>/training/frame_count")
+def training_frame_count(mission_id: str):
+    """How many analyzable JPEGs exist in ``frames/`` (numeric filename stem)."""
+    if not mission_id.isdigit():
+        abort(400)
+    src = request.args.get("src", "rpi")
+    mission_dir = _missions_root(src) / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+    from services.training_data import count_training_frames
+
+    stride_raw = request.args.get("stride", "1").strip()
+    stride = int(stride_raw) if stride_raw.isdigit() else 1
+    stride = max(1, min(stride, 500))
+    n = count_training_frames(mission_dir, stride=stride)
+    return jsonify({"ok": True, "n_frames": n, "frame_stride": stride})
+
+
+@bp.post("/missions/<mission_id>/training/analyze")
+def training_analyze(mission_id: str):
+    """Run YOLO inference + GPS matching on all frames. Cached per frames-dir mtime.
+
+    Body JSON: {real_mission, conf_thresh, dist_thresh, frame_stride,
+ optional model_path (.pt on server), optional batch_size 1–256,
+ optional focus_timestamp_ns (int; stream YOLO batches near this frame first),
+ optional focus_radius (int 0–2000, default 40; indices each side after stride)}.
+
+    Query ``stream=1``: ``application/x-ndjson`` — one JSON object per line:
+ ``meta`` (n_frames), repeated ``batch`` (frames, total_so_far), then ``done`` or ``error``.
+    """
+    if not mission_id.isdigit():
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    real_mission_name = str(body.get("real_mission", "")).strip()
+    conf_thresh = float(body.get("conf_thresh", 0.6))
+    dist_thresh = float(body.get("dist_thresh", 80.0))
+    stride_raw = body.get("frame_stride", 1)
+    try:
+        frame_stride = int(stride_raw)
+    except (TypeError, ValueError):
+        frame_stride = 1
+    frame_stride = max(1, min(frame_stride, 500))
+    stream_want = request.args.get("stream", "").lower() in ("1", "true", "yes")
+
+    focus_timestamp_ns: int | None = None
+    _raw_ft = body.get("focus_timestamp_ns")
+    if _raw_ft is not None and _raw_ft != "":
+        try:
+            focus_timestamp_ns = int(_raw_ft)
+        except (TypeError, ValueError):
+            focus_timestamp_ns = None
+    focus_radius = 40
+    _raw_fr = body.get("focus_radius")
+    if _raw_fr is not None and _raw_fr != "":
+        try:
+            focus_radius = max(0, min(2000, int(_raw_fr)))
+        except (TypeError, ValueError):
+            focus_radius = 40
+
+    if not real_mission_name or "/" in real_mission_name or "\\" in real_mission_name:
+        return jsonify({"ok": False, "error": "real_mission filename required"}), 400
+
+    src = request.args.get("src", "rpi")
+    missions_root = _missions_root(src)
+    mission_dir = missions_root / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+
+    log_path = _mission_log(mission_id, src)
+
+    # Load weed locations from real_missions/
+    try:
+        setup = load_real_mission_setup(real_mission_name)
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": f"Setup file not found: {real_mission_name}"}), 404
+    weed_locations = setup.get("weed_locations", [])
+
+    from services.training_data import (
+        analyze_mission,
+        collect_training_frame_files,
+        iter_analyze_mission_batches,
+        parse_request_batch_size,
+        resolve_training_model_path,
+        training_analysis_cache_key,
+        training_runtime_diagnostics,
+        yolo_loaded_device,
+        yolo_predict_device_kw,
+    )
+
+    try:
+        model_path = resolve_training_model_path(body.get("model_path"))
+    except FileNotFoundError:
+        mp_raw = body.get("model_path")
+        hint = str(mp_raw).strip() if mp_raw is not None else ""
+        return jsonify(
+            {"ok": False, "error": f"YOLO weights not found: {hint or '(empty)'}"}
+        ), 400
+
+    yolo_batch: int | None = None
+    if "batch_size" in body:
+        try:
+            yolo_batch = parse_request_batch_size(body.get("batch_size"))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+    cache_key = training_analysis_cache_key(
+        mission_dir,
+        real_mission_name,
+        model_path=model_path,
+        conf_thresh=conf_thresh,
+        dist_thresh=dist_thresh,
+        frame_stride=frame_stride,
+        yolo_batch=yolo_batch,
+    )
+    if cache_key in _TRAINING_ANALYSIS_CACHE:
+        results, inference_device = _TRAINING_ANALYSIS_CACHE[cache_key]
+        if stream_want:
+
+            def gen_cached():
+                n = len(results)
+                yield json.dumps(
+                    {
+                        "type": "meta",
+                        "n_frames": n,
+                        "frame_stride": frame_stride,
+                        "device_override": yolo_predict_device_kw(),
+                        "diagnostics": training_runtime_diagnostics(
+                            model_path,
+                            batch_size=yolo_batch,
+                            frame_stride=frame_stride,
+                        ),
+                    }
+                ) + "\n"
+                yield json.dumps(
+                    {
+                        "type": "batch",
+                        "frames": results,
+                        "total_so_far": n,
+                    }
+                ) + "\n"
+                yield json.dumps(
+                    {
+                        "type": "done",
+                        "ok": True,
+                        "inference_device": inference_device,
+                        "cached": True,
+                        "device_override": yolo_predict_device_kw(),
+                    }
+                ) + "\n"
+
+            return Response(
+                stream_with_context(gen_cached()),
+                mimetype="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Accel-Buffering": "no",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        return jsonify(
+            {
+                "ok": True,
+                "results": results,
+                "cached": True,
+                "inference_device": inference_device,
+                "device_override": yolo_predict_device_kw(),
+            }
+        )
+
+    if stream_want:
+        n_frames = len(
+            collect_training_frame_files(mission_dir, stride=frame_stride)
+        )
+
+        def gen_stream():
+            acc: list[dict] = []
+            try:
+                yield json.dumps(
+                    {
+                        "type": "meta",
+                        "n_frames": n_frames,
+                        "frame_stride": frame_stride,
+                        "device_override": yolo_predict_device_kw(),
+                        "diagnostics": training_runtime_diagnostics(
+                            model_path,
+                            batch_size=yolo_batch,
+                            frame_stride=frame_stride,
+                        ),
+                    }
+                ) + "\n"
+                for batch in iter_analyze_mission_batches(
+                    mission_dir=mission_dir,
+                    log_path=log_path,
+                    weed_locations=weed_locations,
+                    model_path=model_path,
+                    conf_thresh=conf_thresh,
+                    dist_thresh=dist_thresh,
+                    frame_stride=frame_stride,
+                    batch_size=yolo_batch,
+                    focus_timestamp_ns=focus_timestamp_ns,
+                    focus_radius=focus_radius,
+                ):
+                    acc.extend(batch)
+                    yield json.dumps(
+                        {
+                            "type": "batch",
+                            "frames": batch,
+                            "total_so_far": len(acc),
+                        }
+                    ) + "\n"
+                inference_device = yolo_loaded_device(model_path)
+                _TRAINING_ANALYSIS_CACHE[cache_key] = (acc, inference_device)
+                yield json.dumps(
+                    {
+                        "type": "done",
+                        "ok": True,
+                        "inference_device": inference_device,
+                        "cached": False,
+                        "device_override": yolo_predict_device_kw(),
+                    }
+                ) + "\n"
+            except Exception as exc:
+                yield json.dumps({"type": "error", "ok": False, "error": str(exc)}) + "\n"
+
+        return Response(
+            stream_with_context(gen_stream()),
+            mimetype="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    try:
+        results, inference_device = analyze_mission(
+            mission_dir=mission_dir,
+            log_path=log_path,
+            weed_locations=weed_locations,
+            model_path=model_path,
+            conf_thresh=conf_thresh,
+            dist_thresh=dist_thresh,
+            frame_stride=frame_stride,
+            batch_size=yolo_batch,
+            focus_timestamp_ns=focus_timestamp_ns,
+            focus_radius=focus_radius,
+        )
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    _TRAINING_ANALYSIS_CACHE[cache_key] = (results, inference_device)
+    device_override = yolo_predict_device_kw()
+    return jsonify(
+        {
+            "ok": True,
+            "results": results,
+            "cached": False,
+            "inference_device": inference_device,
+            "device_override": device_override,
+        }
+    )
+
+
+@bp.post("/missions/<mission_id>/training/compare_models")
+def training_compare_models(mission_id: str):
+    """Run YOLO on one frame with multiple weights (default = UI preset lists).
+
+    Body JSON: ``frame_path`` (e.g. ``frames/123.jpg``), optional ``models`` array of
+    hub names or server paths. Caps at ``SKYDOCK_TRAINING_COMPARE_MAX_MODELS`` (default 24).
+    """
+    if not mission_id.isdigit():
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    frame_path = str(body.get("frame_path", "")).strip()
+    raw_models = body.get("models")
+    src = request.args.get("src", "sim")
+    missions_root = _missions_root(src)
+    mission_dir = missions_root / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+
+    from services.training_data import (
+        compare_yolo_models_on_image,
+        safe_training_frame_image_path,
+        training_compare_default_model_specs,
+    )
+
+    abs_img = safe_training_frame_image_path(mission_dir, frame_path)
+    if abs_img is None:
+        return jsonify({"ok": False, "error": "invalid or missing frame_path"}), 400
+
+    if raw_models is not None:
+        if not isinstance(raw_models, list):
+            return jsonify({"ok": False, "error": "models must be a JSON array"}), 400
+        specs = [str(x).strip() for x in raw_models if str(x).strip()]
+    else:
+        specs = training_compare_default_model_specs()
+
+    if not specs:
+        return jsonify({"ok": False, "error": "no models to compare"}), 400
+
+    try:
+        rows = compare_yolo_models_on_image(abs_img, specs)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    return jsonify({"ok": True, "frame_path": frame_path, "results": rows})
+
+
+@bp.post("/training/yolo_prefetch")
+def training_yolo_prefetch():
+    """Download/cache Ultralytics hub weights (``~/.cache/ultralytics``).
+
+    Body JSON optional: ``{"models": ["yolov8n.pt", ...]}``. If omitted, prefetches
+    all hub names from training presets (auto-pick + default list + COCO list).
+    """
+    body = request.get_json(silent=True) or {}
+    raw_models = body.get("models")
+    from services.training_data import (
+        predownload_training_preset_weights,
+        predownload_ultralytics_weights,
+    )
+    if raw_models is not None:
+        if not isinstance(raw_models, list):
+            return jsonify({"ok": False, "error": "models must be a JSON array"}), 400
+        results = predownload_ultralytics_weights([str(x) for x in raw_models])
+    else:
+        results = predownload_training_preset_weights()
+    ok = all(v.get("ok") for v in results.values()) if results else True
+    return jsonify({"ok": ok, "results": results})
+
+
+@bp.post("/missions/<mission_id>/training/save_labels")
+def training_save_labels(mission_id: str):
+    """Write YOLO .txt label files next to approved frames and save metadata.
+
+    Body JSON: {
+        approved: [{timestamp_ns, yolo_bbox: {x1,y1,x2,y2}}, ...],
+        skipped: [timestamp_ns, ...],
+        thresholds: {conf_thresh, dist_thresh}
+    }
+    """
+    if not mission_id.isdigit():
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    approved = body.get("approved", [])
+    skipped = body.get("skipped", [])
+    thresholds = body.get("thresholds", {})
+
+    src = request.args.get("src", "rpi")
+    missions_root = _missions_root(src)
+    mission_dir = missions_root / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+
+    from services.training_data import save_labels, write_training_metadata
+    try:
+        count = save_labels(mission_dir, approved)
+        approved_ts = sorted({int(a["timestamp_ns"]) for a in approved})
+        skipped_ts = [int(s) for s in skipped]
+        write_training_metadata(mission_dir, approved_ts, skipped_ts, thresholds)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    return jsonify({"ok": True, "labels_written": count, "mission_dir": str(mission_dir)})
+
+
+@bp.post("/training/assemble_real_dataset")
+def training_assemble_real_dataset():
+    """Copy labeled frames from one or more missions into ``ai_train/real_data`` (train/valid + data.yaml).
+
+    Body JSON: ``{mission_ids: ["0042", ...], src: "rpi", dest: null}`` — ``dest`` optional absolute path override.
+    """
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("mission_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"ok": False, "error": "mission_ids (non-empty list) required"}), 400
+    mission_ids = [str(x).strip() for x in raw_ids if str(x).strip()]
+    src = str(body.get("src", "rpi")).strip().lower()
+    dest_raw = body.get("dest")
+    dest: Path | None
+    if dest_raw:
+        dest = Path(str(dest_raw)).expanduser()
+    else:
+        dest = None
+
+    missions_root = _missions_root(src if src in ("rpi", "sim") else "rpi")
+    from services.training_data import assemble_real_dataset
+
+    try:
+        root_str, n = assemble_real_dataset(mission_ids, missions_root, dest)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "dest": root_str, "files_copied": n})
 
 
 @bp.post("/api/rpi/pull_real_missions")
