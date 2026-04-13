@@ -61,6 +61,11 @@ def coco_model_presets() -> list[str]:
                 out.append(s)
         return out
     return [
+        "yolov5n.pt",
+        "yolov5s.pt",
+        "yolov5m.pt",
+        "yolov5l.pt",
+        "yolov5x.pt",
         "yolov8n.pt",
         "yolov8s.pt",
         "yolov8m.pt",
@@ -1070,6 +1075,27 @@ def write_training_metadata(
     (mission_dir / "training_labels.json").write_text(
         json.dumps(meta, indent=2)
     )
+
+
+TRAINING_REVIEW_PROGRESS_NAME = "training_review_progress.json"
+
+
+def save_review_progress(mission_dir: Path, data: dict[str, Any]) -> Path:
+    """Persist training UI snapshot (raw YOLO dets, matches, approvals, manual boxes).
+
+    Written next to ``mission.jsonl`` as ``training_review_progress.json``.
+    """
+    path = mission_dir / TRAINING_REVIEW_PROGRESS_NAME
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
+
+
+def load_review_progress(mission_dir: Path) -> dict[str, Any] | None:
+    """Return parsed progress JSON, or ``None`` if missing."""
+    path = mission_dir / TRAINING_REVIEW_PROGRESS_NAME
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def assemble_real_dataset(

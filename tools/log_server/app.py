@@ -40,6 +40,27 @@ def _env_truth(name: str) -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def _env_falsy(name: str) -> bool:
+    v = (os.environ.get(name) or "").strip().lower()
+    return v in ("0", "false", "no", "off")
+
+
+def _debug_mode_for_dev_server() -> bool:
+    """True → Flask debug + auto-reload on code changes.
+
+    Default **on** when running ``python app.py`` (local dev). Disable with
+    ``LOG_SERVER_DEBUG=0`` or ``FLASK_DEBUG=0``. Enable explicitly with
+    ``LOG_SERVER_DEBUG=1`` / ``FLASK_DEBUG=1`` (same as default when unset).
+    """
+    if _env_falsy("LOG_SERVER_DEBUG") or _env_falsy("FLASK_DEBUG"):
+        return False
+    ld = (os.environ.get("LOG_SERVER_DEBUG") or "").strip()
+    fd = (os.environ.get("FLASK_DEBUG") or "").strip()
+    if ld or fd:
+        return _env_truth("LOG_SERVER_DEBUG") or _env_truth("FLASK_DEBUG")
+    return True
+
+
 if __name__ == "__main__":
     from config import data_paths
 
@@ -57,7 +78,7 @@ if __name__ == "__main__":
         print("  Mission files : (none found)")
     print()
     # threaded=True: parallel API requests (map + summary + frame_events) on first dashboard load
-    debug = _env_truth("LOG_SERVER_DEBUG") or _env_truth("FLASK_DEBUG")
-    if not debug:
-        print("  Tip: set LOG_SERVER_DEBUG=1 for Flask debug/reloader (dev only).\n")
-    app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)
+    debug = _debug_mode_for_dev_server()
+    if debug:
+        print("  Dev: debug + auto-reload on code changes (set LOG_SERVER_DEBUG=0 to disable).\n")
+    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=debug, threaded=True)

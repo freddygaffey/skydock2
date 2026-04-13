@@ -43,6 +43,8 @@
     .fs-thumb{position:relative;cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden;min-width:0;aspect-ratio:1}
     .fs-thumb img{width:100%;height:100%;object-fit:cover;display:block}
     .fs-thumb.active{border-color:var(--sd-accent)}
+    .fs-thumb.fs-selected{box-shadow:inset 0 0 0 3px #4fc3f7}
+    .fs-thumb.fs-class-filter-off{opacity:0.2;filter:grayscale(0.65)}
     .fs-badge{position:absolute;top:2px;right:2px;font-size:10px;border-radius:4px;padding:1px 4px;font-weight:700}
     .badge-auto{background:#1a7a40;color:#fff}
     .badge-review{background:#b06010;color:#fff}
@@ -186,9 +188,38 @@
         <div id="progressHint" class="muted small mt-2" style="display:none;line-height:1.45"></div>
       </div>
 
+      <div class="stat-box mb-3">
+        <div class="fw-bold mb-2 small" style="color:var(--sd-muted)">Class filter</div>
+        <label class="form-label small mb-0" for="classFilterInput">Show / jump to labels containing (substring, case-insensitive)</label>
+        <div class="input-group input-group-sm mb-1">
+          <input type="text" class="form-control" id="classFilterInput" list="yoloClassDatalist"
+            placeholder="e.g. sports · empty = all classes" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-outline-secondary" id="classFilterClearBtn" title="Clear class filter">✕</button>
+        </div>
+        <datalist id="yoloClassDatalist"></datalist>
+        <div class="muted small mb-0">Thumbs that do not match are dimmed. <strong>Next ?</strong> (N) only visits review frames that match when this field is set.</div>
+      </div>
+
       <button id="saveBtn" class="btn btn-success btn-sm w-100" disabled>
         Save labels to mission dir
       </button>
+      <div class="d-flex gap-2 mt-2">
+        <button type="button" id="saveProgressBtn" class="btn btn-outline-primary btn-sm flex-grow-1" disabled
+          title="Save raw YOLO output, matches, your approvals/skips, and manual boxes to the mission dir">
+          Save progress
+        </button>
+        <button type="button" id="loadProgressBtn" class="btn btn-outline-primary btn-sm flex-grow-1"
+          title="Load training_review_progress.json from this mission (same src)">
+          Load from mission
+        </button>
+      </div>
+      <div class="d-flex gap-2 mt-1">
+        <button type="button" id="loadProgressFileBtn" class="btn btn-outline-secondary btn-sm w-100"
+          title="Restore from a JSON file (e.g. downloaded backup)">
+          Load JSON file…
+        </button>
+      </div>
+      <input type="file" id="loadProgressFile" accept="application/json,.json" class="d-none" aria-hidden="true">
       <button id="assembleBtn" class="btn btn-outline-success btn-sm w-100 mt-2" type="button">
         Copy labeled frames → ai_train/real_data
       </button>
@@ -203,7 +234,11 @@
         <button id="prevBtn" class="btn btn-sm btn-outline-secondary" disabled title="Previous frame (←)">← Prev <span class="key-hint">←</span></button>
         <span id="frameCounter" class="muted small">— / —</span>
         <button id="nextBtn" class="btn btn-sm btn-outline-secondary" disabled title="Next frame (→)">Next → <span class="key-hint">→</span></button>
-        <button id="nextReviewBtn" class="btn btn-sm btn-outline-warning" disabled title="Jump to next frame needing review (N)">Next ? <span class="key-hint">N</span></button>
+        <button id="nextReviewBtn" class="btn btn-sm btn-outline-warning" disabled title="Jump to next review frame (N). If a class filter is set (left panel), only frames whose labels match that substring.">Next ? <span class="key-hint">N</span></button>
+        <button type="button" id="selectAllReviewBtn" class="btn btn-sm btn-outline-primary" disabled title="Select every frame in review queue (orange ?)">Select all ?</button>
+        <button type="button" id="clearReviewSelectionBtn" class="btn btn-sm btn-outline-secondary" disabled title="Clear multi-select">Clear sel.</button>
+        <button type="button" id="approveSelectedReviewBtn" class="btn btn-sm btn-success" disabled title="Approve all selected review frames (Ctrl+Enter)">Approve selected</button>
+        <span id="reviewSelectionCount" class="muted small">0 sel.</span>
         <button type="button" id="compareModelsBtn" class="btn btn-sm btn-outline-info" disabled
           title="Run each preset YOLO on this frame and compare boxes">Compare models</button>
       </div>
@@ -214,6 +249,17 @@
         <button type="button" id="manualFromYoloBtn" class="btn btn-sm btn-outline-secondary" disabled title="Copy best-matched YOLO box as manual label">Use YOLO</button>
         <button type="button" id="clearAiPredsBtn" class="btn btn-sm btn-outline-secondary" disabled title="Remove all YOLO predictions on this frame (matched + extra dets)">Clear AI <span class="key-hint">Del</span></button>
         <button type="button" id="manualClearBtn" class="btn btn-sm btn-outline-warning" disabled title="Clear (D): remove manual boxes and all YOLO boxes on canvas; mark empty, then A for no-object">Clear <span class="key-hint">D</span></button>
+      </div>
+      <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+        <div class="form-check mb-0 me-1">
+          <input class="form-check-input" type="checkbox" id="strictAssistChk" checked>
+          <label class="form-check-label small" for="strictAssistChk">Strict assist mode</label>
+        </div>
+        <button id="approveStableBtn" class="btn btn-sm btn-outline-success" disabled title="Approve contiguous strict-stable run from current frame (Q)">Approve stable run <span class="key-hint">Q</span></button>
+        <button id="approveNextNBtn" class="btn btn-sm btn-outline-success" disabled title="Approve next N strict-stable frames (W)">Approve next N <span class="key-hint">W</span></button>
+        <button id="emptyNextNBtn" class="btn btn-sm btn-outline-secondary" disabled title="Mark next N strict-empty frames and approve (E)">Empty next N <span class="key-hint">E</span></button>
+        <label class="small muted mb-0">N</label>
+        <input id="bulkNInput" type="number" class="form-control form-control-sm" value="10" min="1" max="500" step="1" style="width:86px">
       </div>
 
       <canvas id="mainCanvas" width="640" height="640"></canvas>
@@ -270,8 +316,8 @@
   window.TRAINING_AUTO_SETUP = cfg.training_auto_setup != null ? String(cfg.training_auto_setup) : '';
 })();
 </script>
-<script src="{{ url_for('static', filename='training/geometry.js') }}?v=20260414k"></script>
-<script src="{{ url_for('static', filename='mission_training.js') }}?v=20260414k"
+<script src="{{ url_for('static', filename='training/geometry.js') }}?v=20260414q"></script>
+<script src="{{ url_for('static', filename='mission_training.js') }}?v=20260414q"
   onerror="(function(){var e=document.getElementById('errorBanner');if(e){e.style.display='block';e.textContent='Failed to load mission_training.js — check the Network tab (404?) and hard-refresh (Ctrl+Shift+R).';}})()"></script>
 {% include "partials/sd_theme_script.html" %}
 </body></html>

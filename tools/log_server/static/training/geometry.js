@@ -111,6 +111,44 @@ function latLonToPixel(ds, lat, lon) {
   return { px, py };
 }
 
+function _toRad(x) {
+  return Number(x) * Math.PI / 180;
+}
+
+/** Great-circle ground distance in meters. */
+function groundDistanceMeters(lat1, lon1, lat2, lon2) {
+  const a1 = _toRad(lat1 || 0);
+  const b1 = _toRad(lon1 || 0);
+  const a2 = _toRad(lat2 || 0);
+  const b2 = _toRad(lon2 || 0);
+  const dA = a2 - a1;
+  const dB = b2 - b1;
+  const s1 = Math.sin(dA / 2);
+  const s2 = Math.sin(dB / 2);
+  const h = s1 * s1 + Math.cos(a1) * Math.cos(a2) * s2 * s2;
+  return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(Math.max(0, h))));
+}
+
+function _yawWrapAbsDeg(degA, degB) {
+  let d = Math.abs(Number(degA || 0) - Number(degB || 0)) % 360;
+  if (d > 180) d = 360 - d;
+  return d;
+}
+
+/** Motion delta summary used by strict propagation guardrails. */
+function droneStateMotionDelta(dsA, dsB) {
+  if (!dsA || !dsB) return null;
+  const ground_m = groundDistanceMeters(dsA.latitude, dsA.longitude, dsB.latitude, dsB.longitude);
+  const alt_m = Math.abs(Number(dsA.altitude_rel_home || 0) - Number(dsB.altitude_rel_home || 0));
+  const ra = dsA.rotaion || {};
+  const rb = dsB.rotaion || {};
+  const dRoll = Math.abs(Number(ra.x || 0) - Number(rb.x || 0)) * 180 / Math.PI;
+  const dPitch = Math.abs(Number(ra.y || 0) - Number(rb.y || 0)) * 180 / Math.PI;
+  const dYaw = _yawWrapAbsDeg(Number(ra.z || 0) * 180 / Math.PI, Number(rb.z || 0) * 180 / Math.PI);
+  const rot_deg = Math.sqrt(dRoll * dRoll + dPitch * dPitch + dYaw * dYaw);
+  return { ground_m, alt_m, rot_deg, d_roll_deg: dRoll, d_pitch_deg: dPitch, d_yaw_deg: dYaw };
+}
+
 function scoreCandidateMatch(det, predCx, predCy, predicted) {
   const dx = det.cx - predCx;
   const dy = det.cy - predCy;

@@ -95,6 +95,8 @@ def make_ai_app():
     # Force RPi camera input so we don't need to pass -i rpi on the command line
     if "-i" not in sys.argv and "--input" not in sys.argv:
         sys.argv += ["-i", "rpi"]
+    if "--hef-path" not in sys.argv:
+        sys.argv += ["--hef-path", "/usr/local/hailo/resources/models/hailo8/yolov8m.hef"]
     user_data = user_app_callback_class()
     app = GStreamerDetectionApp(app_callback, user_data)
     return app

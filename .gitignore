@@ -6,6 +6,9 @@ mav.tlog.raw
 backups/
 missions/
 rpi_missions/
+# Training review UI (explicit: copies outside missions/ are not ignored by missions/)
+training_review_progress.json
+training_labels.json
 .next_mission_id
 
 # Local map tile caches (optional manual downloads; see tools/download_canberra_osm_tiles.py)
@@ -221,6 +224,7 @@ marimo/_lsp/
 __marimo__/
 
 # YOLO model weights
+yolov5*.pt
 yolo11l.pt
 yolo11m.pt
 yolo11n.pt

@@ -1137,6 +1137,44 @@ def training_save_labels(mission_id: str):
     return jsonify({"ok": True, "labels_written": count, "mission_dir": str(mission_dir)})
 
 
+@bp.get("/missions/<mission_id>/training/progress")
+def training_get_progress(mission_id: str):
+    """Return ``training_review_progress.json`` if present (saved review session)."""
+    if not mission_id.isdigit():
+        abort(400)
+    src = request.args.get("src", "rpi")
+    mission_dir = _missions_root(src) / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+    from services.training_data import load_review_progress
+
+    data = load_review_progress(mission_dir)
+    if data is None:
+        return jsonify({"ok": False, "error": "no_saved_progress"}), 404
+    return jsonify({"ok": True, "progress": data})
+
+
+@bp.post("/missions/<mission_id>/training/save_progress")
+def training_save_progress(mission_id: str):
+    """Write ``training_review_progress.json`` (body = full JSON document from the UI)."""
+    if not mission_id.isdigit():
+        abort(400)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "expected JSON object body"}), 400
+    src = request.args.get("src", "rpi")
+    mission_dir = _missions_root(src) / mission_id
+    if not mission_dir.is_dir():
+        abort(404)
+    from services.training_data import save_review_progress
+
+    try:
+        path = save_review_progress(mission_dir, body)
+    except (OSError, TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "path": str(path)})
+
+
 @bp.post("/training/assemble_real_dataset")
 def training_assemble_real_dataset():
     """Copy labeled frames from one or more missions into ``ai_train/real_data`` (train/valid + data.yaml).
