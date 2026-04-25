@@ -40,7 +40,7 @@ class Frame:
 
     def add_detection(self,det:Detection):
         # match "sports ball" or "sports_ball" depending on model format
-        if "ball" not in det.label and "frisbee" not in det.label: return
+        if "ball" not in det.label.lower() and "frisbee" not in det.label.lower(): return
         self.detection.append(det)
 
 
@@ -114,15 +114,15 @@ if __name__ == "__main__":
             last_frame = frame
             frame_count += 1
 
-            if frame.detection:
-                for det in frame.detection:
-                    cx, cy = det.get_center()
-                    print(f"  {det.label} conf={det.confidence:.2f} center=({cx:.0f},{cy:.0f})")
-
         if now - fps_start >= 1.0:
             fps = frame_count / (now - fps_start)
             frame_count = 0
             fps_start = now
             print(f"FPS: {fps:.1f}  |  {len(frame.detection)} detections")
+            for i, det in enumerate(frame.detection, 1):
+                cx, cy = det.get_center()
+                print(f"  det {i}: {det.label} conf={det.confidence:.2f} center=({cx:.0f},{cy:.0f})")
+            if frame.detection:
+                print()
 
         time.sleep(0.005)

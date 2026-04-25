@@ -107,7 +107,9 @@ def make_ai_app():
     if "-i" not in sys.argv and "--input" not in sys.argv:
         sys.argv += ["-i", "rpi"]
     if "--hef-path" not in sys.argv:
-        sys.argv += ["--hef-path", "/usr/local/hailo/resources/models/hailo8/yolov8m.hef"]
+        sys.argv += ["--hef-path", "/home/fred/skydock2/models/ball_detection.hef"]
+    if "--labels-json" not in sys.argv:
+        sys.argv += ["--labels-json", "/home/fred/skydock2/models/ball_labels.json"]
     user_data = user_app_callback_class()
     app = GStreamerDetectionApp(app_callback, user_data)
     return app
