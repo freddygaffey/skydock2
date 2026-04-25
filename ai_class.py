@@ -97,6 +97,8 @@ ai_storage_singleton = _AiStorage()
 
 
 if __name__ == "__main__":
+    import sys
+    sys.modules['ai_class'] = sys.modules['__main__']  # ai_callback imports ai_class — point it here so both share the same singleton
     ai_storage_singleton.start_sim_ai(None)
     print("Waiting for AI pipeline...")
 
