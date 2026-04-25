@@ -105,27 +105,22 @@ if __name__ == "__main__":
     fps_start = time.time()
 
     while True:
-        frame = ai_storage_singleton.get_latest_frame()
-        if frame is last_frame:
-            time.sleep(0.005)
-            continue
-
-        last_frame = frame
-        frame_count += 1
         now = time.time()
-        elapsed = now - fps_start
+        frame = ai_storage_singleton.get_latest_frame()
 
-        if elapsed >= 1.0:
-            fps = frame_count / elapsed
-            frame_count = 0
-            fps_start = now
+        if frame is not last_frame:
+            last_frame = frame
+            frame_count += 1
 
-            if not frame.detection:
-                print(f"FPS: {fps:.1f}  |  0 detections")
-            else:
-                print(f"FPS: {fps:.1f}  |  {len(frame.detection)} detections")
+            if frame.detection:
                 for det in frame.detection:
                     cx, cy = det.get_center()
                     print(f"  {det.label} conf={det.confidence:.2f} center=({cx:.0f},{cy:.0f})")
-        elif frame.detection:
-            print(f"  {len(frame.detection)} detections", end="\r")
+
+        if now - fps_start >= 1.0:
+            fps = frame_count / (now - fps_start)
+            frame_count = 0
+            fps_start = now
+            print(f"FPS: {fps:.1f}  |  {len(frame.detection)} detections")
+
+        time.sleep(0.005)
