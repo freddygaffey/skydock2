@@ -39,7 +39,8 @@ class Frame:
         self.drone_state = drone_state  # state at generation time, for correct back-projection
 
     def add_detection(self,det:Detection):
-        if det.label not in ["sports ball", "frisbee"]: return
+        # match "sports ball" or "sports_ball" depending on model format
+        if "ball" not in det.label and "frisbee" not in det.label: return
         self.detection.append(det)
 
 
@@ -95,5 +96,36 @@ class _AiStorage:
 ai_storage_singleton = _AiStorage()
 
 
+if __name__ == "__main__":
+    ai_storage_singleton.start_sim_ai(None)
+    print("Waiting for AI pipeline...")
 
+    last_frame = None
+    frame_count = 0
+    fps_start = time.time()
 
+    while True:
+        frame = ai_storage_singleton.get_latest_frame()
+        if frame is last_frame:
+            time.sleep(0.005)
+            continue
+
+        last_frame = frame
+        frame_count += 1
+        now = time.time()
+        elapsed = now - fps_start
+
+        if elapsed >= 1.0:
+            fps = frame_count / elapsed
+            frame_count = 0
+            fps_start = now
+
+            if not frame.detection:
+                print(f"FPS: {fps:.1f}  |  0 detections")
+            else:
+                print(f"FPS: {fps:.1f}  |  {len(frame.detection)} detections")
+                for det in frame.detection:
+                    cx, cy = det.get_center()
+                    print(f"  {det.label} conf={det.confidence:.2f} center=({cx:.0f},{cy:.0f})")
+        elif frame.detection:
+            print(f"  {len(frame.detection)} detections", end="\r")

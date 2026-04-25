@@ -1,4 +1,5 @@
 CLAUDE.md
+models/
 venv_wsl_no_hailo/
 droneDB.db
 mav.tlog
