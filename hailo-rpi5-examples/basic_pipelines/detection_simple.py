@@ -72,9 +72,8 @@ def app_callback(pad, info, user_data):
 
         confidence = float(detection.get_confidence())
         det = Detection(label=label,confidence=confidence,bbox=bbox)
-        print(f"'{det.label}'")
-        # if "ball" in det.label or "frisbee" in det.label:
-        #     _det_print_count += 1
+        if "ball" in det.label:
+            _det_print_count += 1
         frame.add_detection(det)
 
     ai_storage_singleton.set_latest_frame(frame)
