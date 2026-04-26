@@ -50,13 +50,27 @@ def save_mission(weed_locations, name="real_mission", out_dir="sim_data", params
         sum(w["lon"] for w in weed_locations) / len(weed_locations),
     ]
 
+    if params is None:
+        params = {
+            "scan_height_m": 10,
+            "scan_speed_ms": 1.0,
+            "min_dist_from_waypoint_m": 0,
+            "min_weed_spacing_m": 2,
+            "min_num_det": 3,
+            "goto_alt_m": 10,
+            "max_homing_dist_m": 10,
+            "min_alt_m": 5,
+            "max_homing_alt_m": 15,
+            "min_spray_error_m": 2,
+            "sim_ai_enable_imperfections": False,
+        }
+
     mission = {
         "field_center": field_center,
         "weed_locations": weed_locations,
         "scan_path": scan_path,
+        "params": params,
     }
-    if params is not None:
-        mission["params"] = params
 
     path = os.path.join(out_dir, f"{name}.json")
     with open(path, "w") as f:
