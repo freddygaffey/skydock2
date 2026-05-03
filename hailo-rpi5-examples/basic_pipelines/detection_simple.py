@@ -1,7 +1,7 @@
 # from ai_class import ai_storage, Frame, Detection
 from ai_class import ai_storage_singleton, Detection, Frame
 from mission_logging import get_mission_dir
-from telemetry import telemetry_singlton
+import telemetry  # lazy: telemetry.telemetry_singlton set by main.py at runtime
 
 import threading
 import time
@@ -61,8 +61,8 @@ def app_callback(pad, info, user_data):
     height = structure.get_value('height')
     
     frame = Frame([])
-    telemetry_singlton.drone_state.width = width
-    telemetry_singlton.drone_state.hight = height
+    telemetry.telemetry_singlton.drone_state.width = width
+    telemetry.telemetry_singlton.drone_state.hight = height
     for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  
         label = str(detection.get_label())
         # print(f"seen {label}")
