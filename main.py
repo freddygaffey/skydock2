@@ -131,6 +131,8 @@ def main():
     constants.MIN_ALT                = float(params["min_alt_m"])
     constants.MAX_HOMING_ALT         = float(params["max_homing_alt_m"])
     constants.MIN_SPRAY_ERROR        = float(params["min_spray_error_m"])
+    constants.TIME_WAIT_FOR_DET      = float(params["time_wait_for_det_s"])
+    constants.MAX_HOMING_TIME        = float(params["max_homing_time_s"])
 
     constants.SIM_AI_ENABLE_IMPERFECTIONS = (
         bool(params.get("sim_ai_enable_imperfections", False)) if is_sim else False

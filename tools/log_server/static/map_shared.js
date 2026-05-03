@@ -69,6 +69,26 @@
       return this.FOV_STATE_COLORS[k] || this.CAMERA_FRAME_COLOR;
     },
 
+    /**
+     * Extra popup HTML for camera FOV quads: link to open the nearest saved JPEG in the Frames tab.
+     * Requires <code>cfg.fovFrameViewer.missionId</code> and <code>row.time_ns</code> from the API.
+     */
+    fovPopupAppendFrameLink: function (cfg, timeNs) {
+      var fvv = cfg && cfg.fovFrameViewer;
+      if (!fvv || !fvv.missionId) return "";
+      if (timeNs == null || timeNs === "") return "";
+      var ns = Number(timeNs);
+      if (!Number.isFinite(ns)) return "";
+      return (
+        '<div class="mt-2 pt-2" style="font-size:11px;border-top:1px solid rgba(140,160,190,.35)">' +
+        '<a class="sd-fov-open-frame" href="#" data-time-ns="' +
+        String(Math.round(ns)) +
+        '">Open nearest frame (annotated)</a>' +
+        '<div class="muted mt-1" style="font-size:10px;line-height:1.35">Uses this fsm_tick’s <code>time_ns</code> vs <code>frames/*.jpg</code> stems.</div>' +
+        "</div>"
+      );
+    },
+
     /** Drone path polyline stroke: FSM segment colors; default blue when state missing (older logs). */
     pathStrokeForFsmState: function (state) {
       var k = this.normalizeFsmStateKey(state);
@@ -360,8 +380,9 @@
     /**
      * Popup HTML for a ground detection: frame image with canvas overlay (bbox) when available.
      * @param {object} o — { missionId, src, strokeColor?, tagPrefix?, tTag?, frameListIndex?: number }
-     *        <code>frameListIndex</code> — 0-based index of this frame in <code>/frame_events</code> (used for
-     *        “Open in frame viewer”); if omitted, falls back to <code>frame.frame_index</code> (mission counter).
+     *        <code>frameListIndex</code> — 0-based index of this frame in the <code>frames</code> array /
+     *        <code>/frame_events</code> list (used for “Open in frame viewer” and image click); if omitted,
+     *        falls back to <code>frame.frame_index</code> (often wrong — prefer passing the list index).
      */
     detectionPopupHtmlWithImage: function (esc, p, frame, o) {
       o = o || {};
@@ -404,6 +425,8 @@
         ">" +
         (fiOk ? "Open in frame viewer" : "Open full size") +
         "</a></div>";
+      var imgNavAttr = fiOk && photo ? ' data-sd-frame-index="' + String(navIdx) + '"' : "";
+      var imgPointerStyle = fiOk && photo ? ";cursor:pointer" : "";
       var annotationPlain = "";
       if (tTag) {
         annotationPlain = String(tTag)
@@ -419,13 +442,16 @@
           headline +
           '<br><span class="muted small">No pixel bbox</span>' +
           (photo ? "" : '<br><span class="muted small">No image in log</span>') +
-          '<br><img src="' +
+          '<br><img class="sd-det-img" src="' +
           imgUrl +
           '" alt="' +
           escAttr(altNb) +
           '" title="' +
           escAttr(altNb) +
-          '" style="max-width:min(320px,85vw);border-radius:4px;display:block"/>' +
+          imgNavAttr +
+          '" style="max-width:min(320px,85vw);border-radius:4px;display:block' +
+          imgPointerStyle +
+          '"/>' +
           openFullLink
         );
       }
@@ -460,7 +486,11 @@
         escAttr(imgAlt) +
         '" title="' +
         escAttr(imgAlt) +
-        '" style="width:100%;max-height:min(70vh,560px);height:auto;display:block;border-radius:4px"/>' +
+        '"' +
+        imgNavAttr +
+        ' style="width:100%;max-height:min(70vh,560px);height:auto;display:block;border-radius:4px' +
+        imgPointerStyle +
+        '"/>' +
         '<canvas class="sd-det-cv" style="position:absolute;left:0;top:0;z-index:2;pointer-events:none;border-radius:4px"></canvas>' +
         "</div>" +
         openFullLink +
@@ -800,8 +830,9 @@
             (st ? "<br>FSM: <b>" + esc(st) + "</b>" : "") +
             (ts ? "<br>" + esc(ts) : "");
         }
+        popup += self.fovPopupAppendFrameLink(cfg, row.time_ns) || "";
         var poly = self.footprintRingLayer(ring, col, layerCfg).addTo(g);
-        if ((rows || []).length <= 400) poly.bindPopup(popup);
+        poly.bindPopup(popup, { maxWidth: 360, className: "sd-fov-leaflet-popup" });
         camFp.forEach(function (q) {
           if (q.lat != null && q.lon != null) all.push([q.lat, q.lon]);
         });
@@ -876,7 +907,6 @@
           return;
         }
 
-        var skipPop = rowsArr.length > 400;
         var CHUNK = 32;
         var idx = 0;
         function addRowAt(fi) {
@@ -907,8 +937,9 @@
               (st ? "<br>FSM: <b>" + esc(st) + "</b>" : "") +
               (ts ? "<br>" + esc(ts) : "");
           }
+          popup += self.fovPopupAppendFrameLink(cfg, row.time_ns) || "";
           var poly = self.footprintRingLayer(ring, col, layerCfgAsync).addTo(g);
-          if (!skipPop) poly.bindPopup(popup);
+          poly.bindPopup(popup, { maxWidth: 360, className: "sd-fov-leaflet-popup" });
           camFp.forEach(function (q) {
             if (q.lat != null && q.lon != null) all.push([q.lat, q.lon]);
           });

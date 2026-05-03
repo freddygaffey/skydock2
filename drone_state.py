@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pymavlink import mavutil
 from collections import deque
+import math
 from math import cos, radians
 import time
 @dataclass
@@ -50,6 +51,24 @@ class DroneStateForHoming:
 
     # MAVLink DISTANCE_SENSOR.current_distance is centimeters (common.xml). Convert to metres here.
     rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, metres; 0 = no data
+
+    hight: int = 1280
+    width: int = 1280
+
+    # RPi Global Shutter Camera (IMX296, 3.45 µm pixel pitch) + 6mm CS lens.
+    # Assumes output pixels map 1:1 to sensor pixels (no rescaling).
+    SENSOR_PIXEL_PITCH_MM = 0.00345
+    LENS_FOCAL_LENGTH_MM = 6.0
+
+    @property
+    def fov_x_deg(self) -> float:
+        half = self.width * self.SENSOR_PIXEL_PITCH_MM / 2.0
+        return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
+
+    @property
+    def fov_y_deg(self) -> float:
+        half = self.hight * self.SENSOR_PIXEL_PITCH_MM / 2.0
+        return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
 
     def set_pass_message(self,msg):
         if msg is None:

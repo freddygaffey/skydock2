@@ -12,8 +12,6 @@ let frames = [];         // all frame result dicts from server
 let decisions = {};      // timestamp_ns -> 'approved' | 'skipped'
 let decisionHistory = []; // { ts, prev: 'approved'|'skipped'|null } for undo (null = had no decision)
 let currentIdx = -1;
-/** Filmstrip multi-select: frame indices still in the review queue (orange ?). */
-let reviewQueueSelection = new Set();
 
 // Thresholds (mirrored from sliders — re-evaluate locally without re-running inference)
 let confThresh = 0.60;
@@ -140,49 +138,8 @@ function setupFilmstripImageObserver() {
 /** @type {{ x0: number, y0: number, x1: number, y1: number } | null} */
 let dragSelect = null;
 const filmstrip   = document.getElementById('filmstrip');
-const filmstripRail = document.getElementById('filmstripRail');
-const filmstripResizeHandle = document.getElementById('filmstripResizeHandle');
-const LS_FILMSTRIP_WIDTH = 'sd_training_filmstrip_w';
 const frameCounter = document.getElementById('frameCounter');
 const frameInfo   = document.getElementById('frameInfo');
-
-function setFilmstripWidth(px) {
-  const w = Math.max(120, Math.min(800, Math.round(px)));
-  if (filmstripRail) filmstripRail.style.width = w + 'px';
-  try { localStorage.setItem(LS_FILMSTRIP_WIDTH, String(w)); } catch (_e) {}
-}
-
-(function initFilmstripWidth() {
-  try {
-    const saved = localStorage.getItem(LS_FILMSTRIP_WIDTH);
-    if (saved && filmstripRail) filmstripRail.style.width = Math.max(120, Math.min(800, parseInt(saved, 10) || 308)) + 'px';
-  } catch (_e) {}
-})();
-
-if (filmstripResizeHandle && filmstripRail) {
-  let dragging = false, startX = 0, startW = 0;
-  filmstripResizeHandle.addEventListener('mousedown', e => {
-    e.preventDefault();
-    dragging = true;
-    startX = e.clientX;
-    startW = filmstripRail.offsetWidth;
-    filmstripResizeHandle.classList.add('active');
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  });
-  window.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    const dx = startX - e.clientX;
-    setFilmstripWidth(startW + dx);
-  });
-  window.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    filmstripResizeHandle.classList.remove('active');
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  });
-}
 const runBtn      = document.getElementById('runBtn');
 const stopAnalyzeBtn = document.getElementById('stopAnalyzeBtn');
 const compareModelsBtn = document.getElementById('compareModelsBtn');
@@ -192,10 +149,6 @@ const modelCompareSummary = document.getElementById('modelCompareSummary');
 const runProgress = document.getElementById('runProgress');
 const saveBtn     = document.getElementById('saveBtn');
 const assembleBtn = document.getElementById('assembleBtn');
-const saveProgressBtn = document.getElementById('saveProgressBtn');
-const loadProgressBtn = document.getElementById('loadProgressBtn');
-const loadProgressFileBtn = document.getElementById('loadProgressFileBtn');
-const loadProgressFile = document.getElementById('loadProgressFile');
 const saveResult  = document.getElementById('saveResult');
 const approveBtn  = document.getElementById('approveBtn');
 const skipBtn     = document.getElementById('skipBtn');
@@ -203,10 +156,6 @@ const undoBtn     = document.getElementById('undoBtn');
 const prevBtn     = document.getElementById('prevBtn');
 const nextBtn     = document.getElementById('nextBtn');
 const nextReviewBtn = document.getElementById('nextReviewBtn');
-const selectAllReviewBtn = document.getElementById('selectAllReviewBtn');
-const clearReviewSelectionBtn = document.getElementById('clearReviewSelectionBtn');
-const approveSelectedReviewBtn = document.getElementById('approveSelectedReviewBtn');
-const reviewSelectionCount = document.getElementById('reviewSelectionCount');
 const confSlider  = document.getElementById('confSlider');
 const distSlider  = document.getElementById('distSlider');
 const strideSlider = document.getElementById('strideSlider');
@@ -228,45 +177,15 @@ const focusNearCurrentChk = document.getElementById('focusNearCurrentChk');
 const manualFromYoloBtn = document.getElementById('manualFromYoloBtn');
 const clearAiPredsBtn = document.getElementById('clearAiPredsBtn');
 const manualClearBtn = document.getElementById('manualClearBtn');
-const strictAssistChk = document.getElementById('strictAssistChk');
-const approveStableBtn = document.getElementById('approveStableBtn');
-const approveNextNBtn = document.getElementById('approveNextNBtn');
-const emptyNextNBtn = document.getElementById('emptyNextNBtn');
-const bulkNInput = document.getElementById('bulkNInput');
-const classFilterInput = document.getElementById('classFilterInput');
-const classFilterClearBtn = document.getElementById('classFilterClearBtn');
-const yoloClassDatalist = document.getElementById('yoloClassDatalist');
-// DEFAULT_MANUAL_LABEL, DEFAULT_MANUAL_CONF → training/geometry.js
+/** Default label/conf for canvas-drawn boxes (no form UI). */
+const DEFAULT_MANUAL_LABEL = 'sports ball';
+const DEFAULT_MANUAL_CONF = 0.99;
 
 const LS_YOLO_MODEL = 'sd_training_yolo_model';
 const LS_YOLO_SELECT = 'sd_training_yolo_select';
 const LS_YOLO_BATCH = 'sd_training_yolo_batch';
 const LS_PROGRESSIVE_STRIDE = 'sd_training_progressive_stride';
 const LS_FOCUS_NEAR_CURRENT = 'sd_training_focus_near_current';
-const LS_STRICT_ASSIST = 'sd_training_strict_assist';
-const LS_CLASS_FILTER = 'sd_training_class_filter';
-
-/** training_review_progress.json document version */
-const TRAINING_PROGRESS_SCHEMA = 1;
-
-let strictAssistMode = true;
-/** Lowercased substring; empty = no class filter. */
-let classFilterNeedle = '';
-
-const STRICT_MAX_GROUND_M = 1.0;
-const STRICT_MAX_ALT_M = 0.8;
-const STRICT_MAX_ROT_DEG = 7.0;
-const STRICT_MAX_DT_S = 3.0;
-const STRICT_MAX_LOG_SCALE = 0.55;
-const STRICT_MAX_SHIFT_PX = 36;
-
-function syncStrictAssistControls() {
-  const hasFrames = frames.length > 0;
-  const on = !!strictAssistMode;
-  if (approveStableBtn) approveStableBtn.disabled = !hasFrames || !on;
-  if (approveNextNBtn) approveNextNBtn.disabled = !hasFrames || !on;
-  if (emptyNextNBtn) emptyNextNBtn.disabled = !hasFrames || !on;
-}
 
 /** Set while a training analyze request is in flight (frame count + analyze fetch). */
 let trainingAnalyzeAbort = null;
@@ -586,58 +505,9 @@ function refreshIdleFrameInfo() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Idle filmstrip: show frame thumbnails before analysis runs
-// ---------------------------------------------------------------------------
-let _idleFilmstripToken = 0;
-
-function idleThumbSrc(framePath) {
-  return `/missions/${MISSION_ID}/image?path=${encodeURIComponent(framePath)}&src=${SRC}&max_side=${FILMSTRIP_MAX_SIDE}`;
-}
-
-function loadIdleFilmstrip() {
-  const token = ++_idleFilmstripToken;
-  if (frames.length > 0) return;
-  teardownFilmstripImageObserver();
-  filmstrip.innerHTML = '';
-  fetch(`/missions/${MISSION_ID}/training/frame_list?src=${SRC}`)
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(data => {
-      if (token !== _idleFilmstripToken) return;
-      if (frames.length > 0) return;
-      const paths = data.paths || [];
-      if (!paths.length) return;
-      filmstrip.innerHTML = '';
-      const obs = new IntersectionObserver(entries => {
-        for (const ent of entries) {
-          if (!ent.isIntersecting) continue;
-          const img = ent.target.querySelector('img');
-          const path = ent.target.dataset.path;
-          if (img && path && img.src === FILMSTRIP_IMG_PLACEHOLDER) {
-            img.src = idleThumbSrc(path);
-          }
-        }
-      }, { root: filmstrip, rootMargin: '120px', threshold: 0.01 });
-      for (let i = 0; i < paths.length; i++) {
-        const div = document.createElement('div');
-        div.className = 'fs-thumb';
-        div.dataset.path = paths[i];
-        const img = document.createElement('img');
-        img.alt = '';
-        img.src = FILMSTRIP_IMG_PLACEHOLDER;
-        div.appendChild(img);
-        filmstrip.appendChild(div);
-        obs.observe(div);
-      }
-      frameCounter.textContent = `— / ${paths.length}`;
-    })
-    .catch(() => {});
-}
-
 realMissionSelect.addEventListener('change', () => {
   syncRunBtnFromSelect();
   refreshIdleFrameInfo();
-  loadIdleFilmstrip();
 });
 
 const yoloTimeEstimate = document.getElementById('yoloTimeEstimate');
@@ -856,15 +726,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fn = localStorage.getItem(LS_FOCUS_NEAR_CURRENT);
     if (focusNearCurrentChk && fn === '0') focusNearCurrentChk.checked = false;
     if (focusNearCurrentChk && fn === '1') focusNearCurrentChk.checked = true;
-    const sa = localStorage.getItem(LS_STRICT_ASSIST);
-    if (strictAssistChk && sa === '0') strictAssistChk.checked = false;
-    if (strictAssistChk && sa === '1') strictAssistChk.checked = true;
-    const cf = localStorage.getItem(LS_CLASS_FILTER);
-    if (classFilterInput && cf != null) classFilterInput.value = cf;
   } catch (_e) { /* private mode */ }
-  strictAssistMode = strictAssistChk ? !!strictAssistChk.checked : true;
-  classFilterNeedle = (classFilterInput && classFilterInput.value ? classFilterInput.value : '').trim().toLowerCase();
-  syncStrictAssistControls();
   syncYoloCustomInputVisible();
   if (strideSlider && strideVal) {
     frameStride = Math.max(1, parseInt(strideSlider.value, 10) || 1);
@@ -877,36 +739,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   syncRunBtnFromSelect();
   refreshIdleFrameInfo();
-  loadIdleFilmstrip();
   syncManualBboxFormFromFrame();
   if (progressiveStrideChk) {
     progressiveStrideChk.addEventListener('change', persistYoloInputs);
   }
   if (focusNearCurrentChk) {
     focusNearCurrentChk.addEventListener('change', persistYoloInputs);
-  }
-  if (strictAssistChk) {
-    strictAssistChk.addEventListener('change', () => {
-      strictAssistMode = !!strictAssistChk.checked;
-      try { localStorage.setItem(LS_STRICT_ASSIST, strictAssistMode ? '1' : '0'); } catch (_e) {}
-      reEvaluateStatuses();
-      if (currentIdx >= 0) {
-        refreshFilmstripThumbBadge(currentIdx);
-        renderFrame(currentIdx);
-      }
-      updateCounts();
-      syncStrictAssistControls();
-    });
-  }
-  if (classFilterInput) {
-    classFilterInput.addEventListener('input', () => setClassFilterNeedleFromInput());
-    classFilterInput.addEventListener('change', () => setClassFilterNeedleFromInput());
-  }
-  if (classFilterClearBtn) {
-    classFilterClearBtn.addEventListener('click', () => {
-      if (classFilterInput) classFilterInput.value = '';
-      setClassFilterNeedleFromInput();
-    });
   }
 });
 
@@ -992,10 +830,9 @@ function reEvaluateFrameStatus(f) {
     has_weed = true;
     const bbox = m.yolo_bbox && !isIgnoredTrainingDet(m.yolo_bbox) ? m.yolo_bbox : null;
     if (!bbox) {
-      // No YOLO det — if strict-eligible prediction exists, keep in review queue.
-      const ts = Number(f.timestamp_ns) || 0;
-      const pred = predictBboxForWeed(m.weed_id, f.drone_state, ts);
-      if (pred && strictPropagationEligible(f, m.weed_id, pred)) {
+      // No YOLO det — but if a confident prediction exists, surface as review
+      const streak = weedSkipStreak.get(m.weed_id) || 0;
+      if (streak < 2 && weedDetIndex.has(m.weed_id) && f.drone_state) {
         m._status_live = 'review';
         any_review = true;
       } else {
@@ -1274,91 +1111,7 @@ function refreshAllFilmstripBadges() {
     const st = effectiveStatus(frames[i]);
     badge.className = `fs-badge badge-${st}`;
     badge.textContent = st === 'auto' ? 'A' : st === 'review' ? '?' : st === 'approved' ? '\u2713' : st === 'skipped' ? '\u2717' : '\u2014';
-    const inSel = reviewQueueSelection.has(i) && st === 'review';
-    t.classList.toggle('fs-selected', inSel);
-    applyClassFilterVisualToThumb(i);
   });
-}
-
-/** Labels from raw YOLO dets, match boxes, and manual boxes (for class filter). */
-function yoloLabelsOnFrame(f) {
-  if (!f) return [];
-  const out = [];
-  const pushDet = det => {
-    if (!det || det.label == null) return;
-    const s = String(det.label).trim();
-    if (s !== '') out.push(s);
-  };
-  for (const det of f.all_yolo_dets || []) pushDet(det);
-  for (const m of f.matches || []) {
-    if (m.yolo_bbox) pushDet(m.yolo_bbox);
-  }
-  for (const mb of getManualBboxes(f)) pushDet(mb);
-  return out;
-}
-
-function frameMatchesClassFilter(f) {
-  if (!classFilterNeedle) return true;
-  const needle = classFilterNeedle;
-  for (const lab of yoloLabelsOnFrame(f)) {
-    if (lab.toLowerCase().includes(needle)) return true;
-  }
-  return false;
-}
-
-function populateYoloClassDatalist() {
-  if (!yoloClassDatalist) return;
-  yoloClassDatalist.innerHTML = '';
-  const seen = new Set();
-  for (const f of frames) {
-    for (const lab of yoloLabelsOnFrame(f)) {
-      const k = lab.toLowerCase();
-      if (seen.has(k)) continue;
-      seen.add(k);
-      const opt = document.createElement('option');
-      opt.value = lab;
-      yoloClassDatalist.appendChild(opt);
-    }
-  }
-}
-
-function applyClassFilterVisualToThumb(idx) {
-  if (idx < 0 || idx >= frames.length) return;
-  const t = filmstrip.children[idx];
-  if (!t) return;
-  const f = frames[idx];
-  const dim = classFilterNeedle && !frameMatchesClassFilter(f);
-  t.classList.toggle('fs-class-filter-off', !!dim);
-}
-
-function refreshFilmstripClassFilterVisuals() {
-  for (let i = 0; i < frames.length; i++) applyClassFilterVisualToThumb(i);
-}
-
-function setClassFilterNeedleFromInput() {
-  classFilterNeedle = (classFilterInput && classFilterInput.value ? classFilterInput.value : '').trim().toLowerCase();
-  try {
-    if (classFilterInput) localStorage.setItem(LS_CLASS_FILTER, classFilterInput.value || '');
-  } catch (_e) {
-    /* ignore */
-  }
-  for (const i of [...reviewQueueSelection]) {
-    if (i >= 0 && i < frames.length && effectiveStatus(frames[i]) === 'review' && !frameMatchesClassFilter(frames[i])) {
-      reviewQueueSelection.delete(i);
-    }
-  }
-  refreshFilmstripClassFilterVisuals();
-  syncReviewQueueSelectionButtons();
-}
-
-function countReviewFramesMatchingFilter() {
-  let n = 0;
-  for (let fi = 0; fi < frames.length; fi++) {
-    if (effectiveStatus(frames[fi]) !== 'review') continue;
-    if (!frameMatchesClassFilter(frames[fi])) continue;
-    n++;
-  }
-  return n;
 }
 
 function undoLastDecision() {
@@ -1376,7 +1129,114 @@ function undoLastDecision() {
   else if (currentIdx >= 0) renderFrame(currentIdx);
 }
 
-// Label helpers, camera geometry, scoreCandidateMatch, manual bbox helpers → training/geometry.js
+// ---------------------------------------------------------------------------
+// Frame ordering: only COCO weed-proxy names (exact match); giraffe etc. never count.
+// ---------------------------------------------------------------------------
+const TRAINING_WEED_PROXY_LABELS = new Set(['sports ball', 'frisbee']);
+/** Detections with these COCO labels are ignored for matching, counts, and drawing (aerial FPs). */
+const TRAINING_IGNORE_DET_LABELS = new Set(['dog']);
+
+function isIgnoredTrainingDet(det) {
+  if (!det) return false;
+  const s = det.label != null ? String(det.label).trim().toLowerCase() : '';
+  return TRAINING_IGNORE_DET_LABELS.has(s);
+}
+
+function isWeedProxyTrainingDet(det) {
+  if (!det) return false;
+  const s = det.label != null ? String(det.label).trim().toLowerCase() : '';
+  return TRAINING_WEED_PROXY_LABELS.has(s);
+}
+
+/** Draw any model output at least this confident (matches typical NMS floor); conf slider only gates auto/review. */
+const YOLO_DISPLAY_CONF_MIN = 0.05;
+
+// ---------------------------------------------------------------------------
+// Camera geometry (mirrors utils.py detection_to_ned / latlon_to_pixel)
+// ---------------------------------------------------------------------------
+const CAM_FOV_X = 27.4, CAM_FOV_Y = 21.0, CAM_PIX = 640;
+const CAM_FX = CAM_PIX / (2 * Math.tan(CAM_FOV_X * Math.PI / 360));
+const CAM_FY = CAM_PIX / (2 * Math.tan(CAM_FOV_Y * Math.PI / 360));
+const CAM_CX = CAM_PIX / 2, CAM_CY = CAM_PIX / 2;
+
+function _dsRot(ds) {
+  const rot = ds.rotaion || {};
+  return { roll: rot.x || 0, pitch: rot.y || 0, yaw: rot.z || 0 };
+}
+
+function _buildR(roll, pitch, yaw) {
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  // Rz @ Ry @ Rx  (row-major 3x3 flattened)
+  return [
+    cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr,
+    sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr,
+    -sp,    cp*sr,             cp*cr,
+  ];
+}
+
+function _mv3(R, v) {
+  return [
+    R[0]*v[0] + R[1]*v[1] + R[2]*v[2],
+    R[3]*v[0] + R[4]*v[1] + R[5]*v[2],
+    R[6]*v[0] + R[7]*v[1] + R[8]*v[2],
+  ];
+}
+
+function _transposeR(R) {
+  return [R[0],R[3],R[6], R[1],R[4],R[7], R[2],R[5],R[8]];
+}
+
+function _dsAltitude(ds, R) {
+  if (ds.rangefinder_m > 0.3) {
+    const rng = _mv3(R, [0, 0, 1]);
+    return ds.rangefinder_m * rng[2];
+  }
+  return ds.altitude_rel_home || 0;
+}
+
+/** Back-project pixel (px,py) to ground lat/lon using drone state dict. */
+function pixelToLatLon(ds, px, py) {
+  if (!ds) return null;
+  const { roll, pitch, yaw } = _dsRot(ds);
+  const R = _buildR(roll, pitch, yaw);
+  const h = _dsAltitude(ds, R);
+  if (h <= 0) return null;
+
+  const xc = (px - CAM_CX) / CAM_FX;
+  const yc = (py - CAM_CY) / CAM_FY;
+  const ray = [xc, yc, 1];
+  const len = Math.sqrt(xc*xc + yc*yc + 1);
+  ray[0] /= len; ray[1] /= len; ray[2] /= len;
+  const rNED = _mv3(R, ray);
+  if (rNED[2] <= 0.01) return null;
+  const t = h / rNED[2];
+  const N = t * rNED[0];
+  const E = t * rNED[1];
+  const lat = (ds.latitude || 0) + N / 111320;
+  const lon = (ds.longitude || 0) + E / (111320 * Math.cos((ds.latitude || 0) * Math.PI / 180));
+  return { lat, lon };
+}
+
+/** Project ground lat/lon to pixel (px,py) using drone state dict. null if behind camera or out of frame. */
+function latLonToPixel(ds, lat, lon) {
+  if (!ds) return null;
+  const { roll, pitch, yaw } = _dsRot(ds);
+  const R = _buildR(roll, pitch, yaw);
+  const h = _dsAltitude(ds, R);
+  if (h <= 0) return null;
+
+  const N = (lat - (ds.latitude || 0)) * 111320;
+  const E = (lon - (ds.longitude || 0)) * (111320 * Math.cos((ds.latitude || 0) * Math.PI / 180));
+  const ned = [N, E, h];
+  const rb = _mv3(_transposeR(R), ned);
+  if (rb[2] <= 0) return null;
+  const px = CAM_CX + CAM_FX * (rb[0] / rb[2]);
+  const py = CAM_CY + CAM_FY * (rb[1] / rb[2]);
+  if (px < -50 || px > CAM_PIX + 50 || py < -50 || py > CAM_PIX + 50) return null;
+  return { px, py };
+}
 
 // ---------------------------------------------------------------------------
 // Cross-frame weed prediction index (uses camera geometry, not GPS dot)
@@ -1398,6 +1258,7 @@ function buildWeedDetectionIndex(onlyWeedIds) {
 
   for (let fi = 0; fi < frames.length; fi++) {
     const f = frames[fi];
+    // Quick skip: if scoped, only process frames that contain a relevant weed
     if (onlyWeedIds) {
       let relevant = false;
       for (const m of f.matches || []) { if (onlyWeedIds.has(m.weed_id)) { relevant = true; break; } }
@@ -1443,6 +1304,7 @@ function buildWeedDetectionIndex(onlyWeedIds) {
   }
   weedDetIndex = idx;
 
+  // Skip-streak: only rebuild for affected weeds if scoped
   const weedFrames = new Map();
   for (const f of frames) {
     const ts = Number(f.timestamp_ns) || 0;
@@ -1463,6 +1325,7 @@ function buildWeedDetectionIndex(onlyWeedIds) {
     weedSkipStreak.set(wid, streak);
   }
   if (!onlyWeedIds) {
+    // Full rebuild: clear streaks for weeds not found
     const newStreaks = new Map();
     for (const [wid, s] of weedSkipStreak) {
       if (weedFrames.has(wid)) newStreaks.set(wid, s);
@@ -1475,21 +1338,15 @@ function buildWeedDetectionIndex(onlyWeedIds) {
  * Predict bbox in current frame for a weed by re-projecting the nearest
  * detected bbox through camera geometry: prev-pixel → ground lat/lon → cur-pixel.
  */
-function bestWeedEntryForTs(weedId, curTs) {
+function predictBboxForWeed(weedId, curDs, curTs) {
   const entries = weedDetIndex.get(weedId);
-  if (!entries || !entries.length) return null;
+  if (!entries || !entries.length || !curDs) return null;
   let best = null, bestDt = Infinity;
   for (const e of entries) {
     const dt = Math.abs(e.ts - curTs);
     const better = dt < bestDt || (dt === bestDt && e.manual && (!best || !best.manual));
     if (better) { bestDt = dt; best = e; }
   }
-  return best;
-}
-
-function predictBboxForWeed(weedId, curDs, curTs) {
-  if (!curDs) return null;
-  const best = bestWeedEntryForTs(weedId, curTs);
   if (!best || !best.ds) return null;
 
   const corners = [
@@ -1519,35 +1376,22 @@ function predictBboxForWeed(weedId, curDs, curTs) {
   };
 }
 
-function strictPropagationEligible(f, weedId, pred) {
-  if (!strictAssistMode) return true;
-  if (!f || !f.drone_state || !pred) return false;
-  const streak = weedSkipStreak.get(weedId) || 0;
-  if (streak >= 2) return false;
-  const curTs = Number(f.timestamp_ns) || 0;
-  const src = bestWeedEntryForTs(weedId, curTs);
-  if (!src || !src.ds || !src.bbox) return false;
+function scoreCandidateMatch(det, predCx, predCy, predicted) {
+  const dx = det.cx - predCx;
+  const dy = det.cy - predCy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (!predicted) return dist;
 
-  const dtS = Math.abs((Number(src.ts) || 0) - curTs) / 1e9;
-  if (!Number.isFinite(dtS) || dtS > STRICT_MAX_DT_S) return false;
+  const detW = det.x2 - det.x1, detH = det.y2 - det.y1;
+  const sizeRatio = Math.max(detW, 1) / Math.max(predicted.w, 1);
+  const sizeScore = Math.abs(Math.log(Math.max(sizeRatio, 0.01)));
 
-  const motion = droneStateMotionDelta(src.ds, f.drone_state);
-  if (!motion) return false;
-  if (motion.ground_m > STRICT_MAX_GROUND_M) return false;
-  if (motion.alt_m > STRICT_MAX_ALT_M) return false;
-  if (motion.rot_deg > STRICT_MAX_ROT_DEG) return false;
+  const labelMatch = predicted.label &&
+    det.label != null &&
+    String(det.label).trim().toLowerCase() === String(predicted.label).trim().toLowerCase();
+  const labelPenalty = labelMatch ? 0 : 1;
 
-  const srcW = Math.max(2, Number(src.bbox.x2) - Number(src.bbox.x1));
-  const srcH = Math.max(2, Number(src.bbox.y2) - Number(src.bbox.y1));
-  const sW = Math.abs(Math.log(Math.max(pred.w, 2) / srcW));
-  const sH = Math.abs(Math.log(Math.max(pred.h, 2) / srcH));
-  if (sW > STRICT_MAX_LOG_SCALE || sH > STRICT_MAX_LOG_SCALE) return false;
-
-  const dx = Number(pred.cx) - Number(src.bbox.cx);
-  const dy = Number(pred.cy) - Number(src.bbox.cy);
-  if (Math.sqrt(dx * dx + dy * dy) > STRICT_MAX_SHIFT_PX) return false;
-
-  return true;
+  return dist * 0.6 + sizeScore * 80 * 0.25 + labelPenalty * 40 * 0.15;
 }
 
 function buildPredictedBoxesForFrame(f) {
@@ -1560,8 +1404,7 @@ function buildPredictedBoxesForFrame(f) {
     const pred = predictBboxForWeed(m.weed_id, curDs, ts);
     if (!pred) continue;
     const streak = weedSkipStreak.get(m.weed_id) || 0;
-    const strictOk = strictPropagationEligible(f, m.weed_id, pred);
-    const uncertain = streak >= 2 || !strictOk;
+    const uncertain = streak >= 2;
     currentPredictedBoxes.push({
       weed_id: m.weed_id,
       x1: pred.x1, y1: pred.y1,
@@ -1571,7 +1414,6 @@ function buildPredictedBoxesForFrame(f) {
       label: pred.label || DEFAULT_MANUAL_LABEL,
       conf: DEFAULT_MANUAL_CONF,
       skipStreak: streak,
-      strictOk,
       uncertain,
     });
   }
@@ -1663,9 +1505,110 @@ function autoReassignMatches(onlyWeedIds) {
   }
 }
 
-// Manual bbox helpers (roundCoord1, manualBboxIsValid, normalizeManualBbox,
-// migrateManualBboxesOnFrame, getManualBboxes, yoloDetToManualNorm,
-// bboxesNearlyEqual, addManualBboxFromUser) → training/geometry.js
+// ---------------------------------------------------------------------------
+// Manual bbox override (640×640, same as canvas).
+// ---------------------------------------------------------------------------
+function roundCoord1(x) {
+  return Math.round(Number(x) * 10) / 10;
+}
+
+function manualBboxIsValid(m) {
+  if (!m) return false;
+  const x1 = Number(m.x1), y1 = Number(m.y1), x2 = Number(m.x2), y2 = Number(m.y2);
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return false;
+  if (x2 - x1 < 2 || y2 - y1 < 2) return false;
+  if (x1 < 0 || y1 < 0 || x2 > 640 || y2 > 640) return false;
+  return true;
+}
+
+function normalizeManualBbox(m) {
+  let x1 = Number(m.x1), y1 = Number(m.y1), x2 = Number(m.x2), y2 = Number(m.y2);
+  if (x2 < x1) {
+    const t = x1;
+    x1 = x2;
+    x2 = t;
+  }
+  if (y2 < y1) {
+    const t = y1;
+    y1 = y2;
+    y2 = t;
+  }
+  x1 = Math.max(0, Math.min(640, x1));
+  x2 = Math.max(0, Math.min(640, x2));
+  y1 = Math.max(0, Math.min(640, y1));
+  y2 = Math.max(0, Math.min(640, y2));
+  if (x2 - x1 < 2) x2 = Math.min(640, x1 + 2);
+  if (y2 - y1 < 2) y2 = Math.min(640, y1 + 2);
+  const label =
+    m.label != null && String(m.label).trim() !== '' ? String(m.label).trim() : 'sports ball';
+  let conf = Number(m.conf);
+  if (!Number.isFinite(conf)) conf = 0.99;
+  conf = Math.min(1, Math.max(0, conf));
+  return {
+    x1: roundCoord1(x1),
+    y1: roundCoord1(y1),
+    x2: roundCoord1(x2),
+    y2: roundCoord1(y2),
+    cx: roundCoord1((x1 + x2) / 2),
+    cy: roundCoord1((y1 + y2) / 2),
+    label,
+    conf,
+  };
+}
+
+function migrateManualBboxesOnFrame(f) {
+  if (!f._manual_bboxes) {
+    if (f._manual_bbox && manualBboxIsValid(f._manual_bbox)) {
+      f._manual_bboxes = [normalizeManualBbox(f._manual_bbox)];
+    } else {
+      f._manual_bboxes = [];
+    }
+  }
+  if (f._manual_bbox) delete f._manual_bbox;
+}
+
+function getManualBboxes(f) {
+  if (!f) return [];
+  migrateManualBboxesOnFrame(f);
+  return f._manual_bboxes && f._manual_bboxes.length ? f._manual_bboxes : [];
+}
+
+function yoloDetToManualNorm(det) {
+  if (!det) return null;
+  return normalizeManualBbox({
+    x1: det.x1,
+    y1: det.y1,
+    x2: det.x2,
+    y2: det.y2,
+    label: det.label,
+    conf: det.conf,
+  });
+}
+
+function bboxesNearlyEqual(a, b) {
+  if (!a || !b) return false;
+  const tol = 1.5;
+  return (
+    Math.abs(a.x1 - b.x1) < tol &&
+    Math.abs(a.y1 - b.y1) < tol &&
+    Math.abs(a.x2 - b.x2) < tol &&
+    Math.abs(a.y2 - b.y2) < tol
+  );
+}
+
+function addManualBboxFromUser(f, norm, append) {
+  if (!f || !norm) return;
+  f._explicit_empty = false;
+  migrateManualBboxesOnFrame(f);
+  if (!append) {
+    f._manual_bboxes = [norm];
+  } else {
+    const list = (f._manual_bboxes || []).slice();
+    if (!list.some(b => bboxesNearlyEqual(b, norm))) list.push(norm);
+    f._manual_bboxes = list;
+  }
+  delete f._manual_bbox;
+}
 
 /** Remove YOLO boxes from frame data (GPS weed dots stay). Sets _ai_predictions_removed. */
 function stripYoloPredictionsFromFrame(f) {
@@ -1889,9 +1832,6 @@ function enableTrainingNavButtons() {
   syncCompareModelsBtn();
   syncManualBboxFormFromFrame();
   ensureLabelerSessionClock();
-  syncStrictAssistControls();
-  syncReviewQueueSelectionButtons();
-  syncSaveProgressButtons();
 }
 
 // ---------------------------------------------------------------------------
@@ -1916,7 +1856,6 @@ runBtn.addEventListener('click', async () => {
   runProgress.style.display = '';
   errorBanner.style.display = 'none';
   frames = [];
-  reviewQueueSelection.clear();
   canvasImageCacheClear();
   decisions = {};
   decisionHistory = [];
@@ -1927,7 +1866,6 @@ runBtn.addEventListener('click', async () => {
   filmstrip.innerHTML = '';
   ctx2d.clearRect(0, 0, 640, 640);
   frameCounter.textContent = '— / —';
-  syncSaveProgressButtons();
 
   const targetStride = Math.max(1, Math.min(500, parseInt(String(frameStride), 10) || 1));
   const useProgressiveStride = !progressiveStrideChk || progressiveStrideChk.checked;
@@ -2332,14 +2270,10 @@ function finishAnalyzeSuccess(t0, inferDev, deviceOverride, cached, progressiveO
   saveBtn.disabled = false;
   approveBtn.disabled = false;
   skipBtn.disabled = false;
-  if (approveStableBtn) approveStableBtn.disabled = false;
-  if (approveNextNBtn) approveNextNBtn.disabled = false;
-  if (emptyNextNBtn) emptyNextNBtn.disabled = false;
   if (undoBtn) undoBtn.disabled = decisionHistory.length === 0;
   prevBtn.disabled = false;
   nextBtn.disabled = false;
   syncCompareModelsBtn();
-  syncStrictAssistControls();
 
   buildWeedDetectionIndex();
   autoReassignMatches();
@@ -2352,76 +2286,7 @@ function finishAnalyzeSuccess(t0, inferDev, deviceOverride, cached, progressiveO
 // ---------------------------------------------------------------------------
 // Filmstrip
 // ---------------------------------------------------------------------------
-function pruneReviewQueueSelection() {
-  for (const i of [...reviewQueueSelection]) {
-    if (i < 0 || i >= frames.length || effectiveStatus(frames[i]) !== 'review') {
-      reviewQueueSelection.delete(i);
-    }
-  }
-}
-
-function syncReviewQueueSelectionButtons() {
-  pruneReviewQueueSelection();
-  const hasFrames = frames.length > 0;
-  const reviewMatchCount = countReviewFramesMatchingFilter();
-  const n = reviewQueueSelection.size;
-  if (selectAllReviewBtn) selectAllReviewBtn.disabled = !hasFrames || reviewMatchCount === 0;
-  if (clearReviewSelectionBtn) clearReviewSelectionBtn.disabled = n === 0;
-  if (approveSelectedReviewBtn) approveSelectedReviewBtn.disabled = n === 0;
-  if (reviewSelectionCount) reviewSelectionCount.textContent = n ? `${n} sel.` : '0 sel.';
-}
-
-function toggleReviewThumbSelection(idx) {
-  if (idx < 0 || idx >= frames.length) return;
-  if (effectiveStatus(frames[idx]) !== 'review') {
-    if (saveResult) saveResult.textContent = 'Only review (?) frames can be added to the selection.';
-    return;
-  }
-  if (reviewQueueSelection.has(idx)) reviewQueueSelection.delete(idx);
-  else reviewQueueSelection.add(idx);
-  refreshFilmstripThumbBadge(idx);
-  syncReviewQueueSelectionButtons();
-}
-
-function selectAllReviewInQueue() {
-  if (frames.length === 0) return;
-  reviewQueueSelection.clear();
-  for (let i = 0; i < frames.length; i++) {
-    if (effectiveStatus(frames[i]) !== 'review') continue;
-    if (!frameMatchesClassFilter(frames[i])) continue;
-    reviewQueueSelection.add(i);
-  }
-  refreshAllFilmstripBadges();
-  syncReviewQueueSelectionButtons();
-  if (saveResult) saveResult.textContent = `Selected ${reviewQueueSelection.size} review frame(s). Ctrl+click thumbs to toggle.`;
-}
-
-function clearReviewQueueSelection() {
-  reviewQueueSelection.clear();
-  refreshAllFilmstripBadges();
-  syncReviewQueueSelectionButtons();
-}
-
-function approveSelectedReviewQueue() {
-  pruneReviewQueueSelection();
-  const idxs = [...reviewQueueSelection].sort((a, b) => a - b);
-  const reviewIdxs = idxs.filter(i => i >= 0 && i < frames.length && effectiveStatus(frames[i]) === 'review');
-  if (reviewIdxs.length === 0) {
-    if (saveResult) saveResult.textContent = 'No selected review frames to approve.';
-    return;
-  }
-  const affected = new Set();
-  for (const idx of reviewIdxs) {
-    const part = approveFrameAtIndex(idx);
-    for (const wid of part) affected.add(wid);
-  }
-  reviewQueueSelection.clear();
-  finalizeDecisionBatch(affected, reviewIdxs.length);
-  if (saveResult) saveResult.textContent = `Approved ${reviewIdxs.length} selected frame(s).`;
-}
-
 function renderFilmstrip() {
-  pruneReviewQueueSelection();
   teardownFilmstripImageObserver();
   filmstrip.innerHTML = '';
   for (let i = 0; i < frames.length; i++) {
@@ -2429,7 +2294,6 @@ function renderFilmstrip() {
     const st = effectiveStatus(f);
     const div = document.createElement('div');
     div.className = 'fs-thumb' + (i === currentIdx ? ' active' : '');
-    if (reviewQueueSelection.has(i) && st === 'review') div.classList.add('fs-selected');
     div.dataset.idx = String(i);
 
     const img = document.createElement('img');
@@ -2442,20 +2306,10 @@ function renderFilmstrip() {
     badge.textContent = st === 'auto' ? 'A' : st === 'review' ? '?' : st === 'approved' ? '✓' : st === 'skipped' ? '✗' : '—';
     div.appendChild(badge);
 
-    div.addEventListener('click', e => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        toggleReviewThumbSelection(i);
-        return;
-      }
-      jumpTo(i);
-    });
+    div.addEventListener('click', () => jumpTo(i));
     filmstrip.appendChild(div);
   }
   setupFilmstripImageObserver();
-  populateYoloClassDatalist();
-  refreshFilmstripClassFilterVisuals();
-  syncReviewQueueSelectionButtons();
 }
 
 function setFilmstripActive(prevIdx, nextIdx) {
@@ -2476,8 +2330,6 @@ function refreshFilmstripThumbBadge(idx) {
   const st = effectiveStatus(frames[idx]);
   badge.className = `fs-badge badge-${st}`;
   badge.textContent = st === 'auto' ? 'A' : st === 'review' ? '?' : st === 'approved' ? '✓' : st === 'skipped' ? '✗' : '—';
-  t.classList.toggle('fs-selected', reviewQueueSelection.has(idx) && st === 'review');
-  applyClassFilterVisualToThumb(idx);
 }
 
 // ---------------------------------------------------------------------------
@@ -2935,118 +2787,37 @@ function updateFrameInfo(f) {
 // ---------------------------------------------------------------------------
 // Approve / Skip
 // ---------------------------------------------------------------------------
-function parsedBulkN() {
-  const n = bulkNInput ? parseInt(String(bulkNInput.value || ''), 10) : 10;
-  if (!Number.isFinite(n)) return 10;
-  return Math.max(1, Math.min(500, n));
-}
-
-function predictedForMatchInFrame(f, m) {
-  if (!f || !m || !f.drone_state) return null;
-  const ts = Number(f.timestamp_ns) || 0;
-  const pred = predictBboxForWeed(m.weed_id, f.drone_state, ts);
-  if (!pred) return null;
-  return strictPropagationEligible(f, m.weed_id, pred) ? pred : null;
-}
-
-function frameStrictStableForApprove(f) {
-  if (!f || !Array.isArray(f.matches) || f.matches.length === 0) return false;
-  for (const m of f.matches) {
-    const bbox = m.yolo_bbox && !isIgnoredTrainingDet(m.yolo_bbox) ? m.yolo_bbox : null;
-    if (bbox) {
-      const streak = weedSkipStreak.get(m.weed_id) || 0;
-      const yoloOk = isWeedProxyTrainingDet(bbox) && bbox.conf >= confThresh && m.dist_px <= distThresh && streak < 2;
-      if (yoloOk) continue;
-    }
-    if (predictedForMatchInFrame(f, m)) continue;
-    return false;
-  }
-  return true;
-}
-
-function frameStrictStableForEmpty(f) {
-  if (!f || !Array.isArray(f.matches) || f.matches.length === 0) return true;
-  for (const m of f.matches) {
-    const bbox = m.yolo_bbox && !isIgnoredTrainingDet(m.yolo_bbox) ? m.yolo_bbox : null;
-    if (bbox && isWeedProxyTrainingDet(bbox) && bbox.conf >= confThresh * 0.8) return false;
-    if (predictedForMatchInFrame(f, m)) return false;
-  }
-  return true;
-}
-
-function collectContiguousStableIndices(kind, maxCount) {
-  const out = [];
-  if (currentIdx < 0) return out;
-  for (let i = currentIdx; i < frames.length; i++) {
-    const f = frames[i];
-    if (decisions[f.timestamp_ns]) {
-      if (out.length > 0) break;
-      continue;
-    }
-    const ok = kind === 'empty' ? frameStrictStableForEmpty(f) : frameStrictStableForApprove(f);
-    if (!ok) break;
-    out.push(i);
-    if (out.length >= maxCount) break;
-  }
-  return out;
-}
-
-function approveFrameAtIndex(idx) {
-  if (idx < 0 || idx >= frames.length) return new Set();
-  const f = frames[idx];
+function approve() {
+  if (currentIdx < 0) return;
+  const f = frames[currentIdx];
   migrateManualBboxesOnFrame(f);
   let manualList = getManualBboxes(f).filter(m => manualBboxIsValid(m));
   const yoloBb = manualList.length === 0 ? getYoloFallbackApproveBbox(f) : null;
 
-  if (manualList.length === 0 && !yoloBb) {
-    const strictPreds = [];
-    for (const m of f.matches || []) {
-      const pred = predictedForMatchInFrame(f, m);
-      if (pred) strictPreds.push(pred);
+  // No manual box and no YOLO match — adopt predicted boxes if available
+  if (manualList.length === 0 && !yoloBb && currentPredictedBoxes.length > 0) {
+    for (const pb of currentPredictedBoxes) {
+      if (pb.uncertain) continue;
+      addManualBboxFromUser(f, normalizeManualBbox(pb), true);
     }
-    for (const pb of strictPreds) addManualBboxFromUser(f, normalizeManualBbox(pb), true);
     manualList = getManualBboxes(f).filter(m => manualBboxIsValid(m));
   }
 
-  if (manualList.length === 0 && !yoloBb) f._explicit_empty = true;
-  pushDecisionHistory(f.timestamp_ns);
-  decisions[f.timestamp_ns] = 'approved';
-  return new Set((f.matches || []).map(m => m.weed_id));
-}
-
-function markEmptyApprovedAtIndex(idx) {
-  if (idx < 0 || idx >= frames.length) return new Set();
-  const f = frames[idx];
-  f._manual_bboxes = [];
-  delete f._manual_bbox;
-  f._explicit_empty = true;
-  stripYoloPredictionsFromFrame(f);
-  pushDecisionHistory(f.timestamp_ns);
-  decisions[f.timestamp_ns] = 'approved';
-  return new Set((f.matches || []).map(m => m.weed_id));
-}
-
-function finalizeDecisionBatch(affectedWeedIds, noteSteps = 1) {
-  if (affectedWeedIds.size > 0) {
-    buildWeedDetectionIndex(affectedWeedIds);
-    autoReassignMatches(affectedWeedIds);
-    reEvaluateStatuses(affectedWeedIds);
-  } else {
-    reEvaluateStatuses();
+  if (manualList.length === 0 && !yoloBb) {
+    f._explicit_empty = true;
   }
-  const n = Math.max(1, Math.floor(Number(noteSteps)) || 1);
-  for (let s = 0; s < n; s++) noteLabelerAction();
-  if (currentIdx >= 0) renderFrame(currentIdx);
-  refreshAllFilmstripBadges();
+  const affectedWeedIds = new Set((f.matches || []).map(m => m.weed_id));
+  pushDecisionHistory(f.timestamp_ns);
+  decisions[f.timestamp_ns] = 'approved';
+  buildWeedDetectionIndex(affectedWeedIds);
+  autoReassignMatches(affectedWeedIds);
+  reEvaluateStatuses(affectedWeedIds);
+  noteLabelerAction();
+  renderFrame(currentIdx);
+  refreshFilmstripThumbBadge(currentIdx);
   updateCounts();
   const next = nextFrameAfterDecision();
   if (next >= 0) jumpTo(next);
-}
-
-function approve() {
-  if (currentIdx < 0) return;
-  const affected = approveFrameAtIndex(currentIdx);
-  finalizeDecisionBatch(affected);
 }
 
 function skip() {
@@ -3066,70 +2837,11 @@ function skip() {
   if (next >= 0) jumpTo(next);
 }
 
-function approveContiguousStable() {
-  if (!strictAssistMode) {
-    if (saveResult) saveResult.textContent = 'Enable Strict assist mode first.';
-    return;
-  }
-  const idxs = collectContiguousStableIndices('approve', 5000);
-  if (idxs.length === 0) {
-    if (saveResult) saveResult.textContent = 'No strict-stable run from current frame.';
-    return;
-  }
-  const affected = new Set();
-  for (const idx of idxs) {
-    const part = approveFrameAtIndex(idx);
-    for (const wid of part) affected.add(wid);
-  }
-  finalizeDecisionBatch(affected);
-  if (saveResult) saveResult.textContent = `Approved ${idxs.length} stable frame(s).`;
-}
-
-function approveNextNStable() {
-  if (!strictAssistMode) {
-    if (saveResult) saveResult.textContent = 'Enable Strict assist mode first.';
-    return;
-  }
-  const n = parsedBulkN();
-  const idxs = collectContiguousStableIndices('approve', n);
-  if (idxs.length === 0) {
-    if (saveResult) saveResult.textContent = 'No strict-stable frame in next range.';
-    return;
-  }
-  const affected = new Set();
-  for (const idx of idxs) {
-    const part = approveFrameAtIndex(idx);
-    for (const wid of part) affected.add(wid);
-  }
-  finalizeDecisionBatch(affected);
-  if (saveResult) saveResult.textContent = `Approved ${idxs.length} stable frame(s).`;
-}
-
-function emptyNextNStable() {
-  if (!strictAssistMode) {
-    if (saveResult) saveResult.textContent = 'Enable Strict assist mode first.';
-    return;
-  }
-  const n = parsedBulkN();
-  const idxs = collectContiguousStableIndices('empty', n);
-  if (idxs.length === 0) {
-    if (saveResult) saveResult.textContent = 'No strict-empty frame in next range.';
-    return;
-  }
-  const affected = new Set();
-  for (const idx of idxs) {
-    const part = markEmptyApprovedAtIndex(idx);
-    for (const wid of part) affected.add(wid);
-  }
-  finalizeDecisionBatch(affected);
-  if (saveResult) saveResult.textContent = `Marked ${idxs.length} frame(s) empty + approved.`;
-}
-
-/** Next frame still in the review queue (if any). Respects class filter when set. */
+/** Next frame still in the review queue (if any). */
 function nextReviewIdx() {
   for (let i = currentIdx + 1; i < frames.length; i++) {
     const st = effectiveStatus(frames[i]);
-    if (st === 'review' && frameMatchesClassFilter(frames[i])) return i;
+    if (st === 'review') return i;
   }
   return -1;
 }
@@ -3144,9 +2856,6 @@ function nextFrameAfterDecision() {
 
 approveBtn.addEventListener('click', approve);
 skipBtn.addEventListener('click', skip);
-if (approveStableBtn) approveStableBtn.addEventListener('click', approveContiguousStable);
-if (approveNextNBtn) approveNextNBtn.addEventListener('click', approveNextNStable);
-if (emptyNextNBtn) emptyNextNBtn.addEventListener('click', emptyNextNStable);
 if (undoBtn) undoBtn.addEventListener('click', undoLastDecision);
 prevBtn.addEventListener('click', () => jumpTo(currentIdx - 1));
 nextBtn.addEventListener('click', () => jumpTo(currentIdx + 1));
@@ -3154,9 +2863,6 @@ if (nextReviewBtn) nextReviewBtn.addEventListener('click', () => {
   const r = nextReviewIdx();
   if (r >= 0) jumpTo(r);
 });
-if (selectAllReviewBtn) selectAllReviewBtn.addEventListener('click', selectAllReviewInQueue);
-if (clearReviewSelectionBtn) clearReviewSelectionBtn.addEventListener('click', clearReviewQueueSelection);
-if (approveSelectedReviewBtn) approveSelectedReviewBtn.addEventListener('click', approveSelectedReviewQueue);
 
 function trainingKeydownFieldContext(e) {
   const t = e.target;
@@ -3208,21 +2914,6 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const r = nextReviewIdx();
     if (r >= 0) jumpTo(r);
-  } else if (k === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    approveSelectedReviewQueue();
-  } else if (k === 'q' || k === 'Q') {
-    if (mod) return;
-    e.preventDefault();
-    approveContiguousStable();
-  } else if (k === 'w' || k === 'W') {
-    if (mod) return;
-    e.preventDefault();
-    approveNextNStable();
-  } else if (k === 'e' || k === 'E') {
-    if (mod) return;
-    e.preventDefault();
-    emptyNextNStable();
   } else if (k === 'Delete') {
     e.preventDefault();
     clearAiPredictionsOnCurrentFrame();
@@ -3251,139 +2942,6 @@ function updateCounts() {
   document.getElementById('cntSkip').textContent = skip;
   document.getElementById('cntNoDet').textContent = no_det;
   refreshTrainingAnalytics();
-  syncStrictAssistControls();
-  syncReviewQueueSelectionButtons();
-  syncSaveProgressButtons();
-}
-
-function syncSaveProgressButtons() {
-  const has = frames.length > 0;
-  if (saveProgressBtn) saveProgressBtn.disabled = !has;
-}
-
-function buildTrainingProgressPayload() {
-  const framesOut = frames.map(f => JSON.parse(JSON.stringify(f)));
-  const decisionsOut = { ...decisions };
-  const historyOut = decisionHistory.map(h => ({ ts: h.ts, prev: h.prev }));
-  return {
-    schema_version: TRAINING_PROGRESS_SCHEMA,
-    mission_id: MISSION_ID,
-    src: SRC,
-    saved_at: new Date().toISOString(),
-    real_mission: realMissionSelect ? String(realMissionSelect.value || '') : '',
-    yolo_model: yoloModelSelect ? yoloModelSelect.value : null,
-    yolo_model_custom: yoloModelInput ? String(yoloModelInput.value || '').trim() : null,
-    thresholds: {
-      conf_thresh: confThresh,
-      dist_thresh: distThresh,
-      frame_stride: frameStride,
-    },
-    strict_assist: strictAssistMode,
-    decisions: decisionsOut,
-    decision_history: historyOut,
-    frames: framesOut,
-  };
-}
-
-function downloadTrainingProgressJson(obj) {
-  const name = `training_review_progress_${MISSION_ID}_${SRC}.json`;
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
-}
-
-/**
- * @param {object} wrapped — either full progress doc or `{ progress: doc }` from GET API
- */
-function applyTrainingProgressPayload(wrapped) {
-  const data = wrapped && wrapped.progress != null ? wrapped.progress : wrapped;
-  if (!data || typeof data !== 'object') {
-    showError('Invalid progress file: expected a JSON object.');
-    return false;
-  }
-  if (!Array.isArray(data.frames) || data.frames.length === 0) {
-    showError('Invalid progress: missing or empty frames array.');
-    return false;
-  }
-  const mid = String(data.mission_id || '');
-  const src = String(data.src || 'sim');
-  if (mid !== MISSION_ID || src !== SRC) {
-    const ok = window.confirm(
-      `This file is for mission ${mid} (${src}). Current page is ${MISSION_ID} (${SRC}). Load anyway?`
-    );
-    if (!ok) return false;
-  }
-  if (frames.length > 0) {
-    const ok = window.confirm(
-      'Replace the current review session with this saved progress? Any in-memory changes not saved to this file will be lost.'
-    );
-    if (!ok) return false;
-  }
-
-  frames = JSON.parse(JSON.stringify(data.frames));
-  decisions = { ...(data.decisions || {}) };
-  decisionHistory = Array.isArray(data.decision_history)
-    ? data.decision_history.map(h => ({ ts: h.ts, prev: h.prev }))
-    : [];
-
-  const th = data.thresholds || {};
-  if (typeof th.conf_thresh === 'number' && confSlider) {
-    confThresh = th.conf_thresh;
-    confSlider.value = String(confThresh);
-    if (confVal) confVal.textContent = confThresh.toFixed(2);
-  }
-  if (typeof th.dist_thresh === 'number' && distSlider) {
-    distThresh = th.dist_thresh;
-    distSlider.value = String(distThresh);
-    if (distVal) distVal.textContent = String(Math.round(distThresh));
-  }
-  if (typeof th.frame_stride === 'number' && strideSlider) {
-    frameStride = Math.max(1, Math.min(500, Math.floor(th.frame_stride) || 1));
-    strideSlider.value = String(frameStride);
-    if (strideVal) strideVal.textContent = String(frameStride);
-  }
-
-  if (typeof data.strict_assist === 'boolean') {
-    strictAssistMode = data.strict_assist;
-    if (strictAssistChk) strictAssistChk.checked = strictAssistMode;
-  }
-
-  reviewQueueSelection.clear();
-  _frameTsIndex = null;
-  currentIdx = -1;
-  syncUndoButton();
-  resetLabelerMetrics();
-  ensureLabelerSessionClock();
-
-  sortFramesProxyFirst(frames);
-  renderFilmstrip();
-  buildWeedDetectionIndex();
-  autoReassignMatches();
-  reEvaluateStatuses();
-  updateCounts();
-
-  enableTrainingNavButtons();
-
-  const firstReview = frames.findIndex(f => (f._status_live || f.status) === 'review');
-  jumpTo(firstReview >= 0 ? firstReview : 0);
-
-  if (frameInfo) {
-    const when = data.saved_at ? escapeHtml(String(data.saved_at)) : '';
-    frameInfo.innerHTML =
-      '<div class="small" style="line-height:1.5;max-width:820px">' +
-      '<span class="fw-semibold" style="color:var(--sd-better)">Progress restored.</span> ' +
-      frames.length +
-      ' frame(s).' +
-      (when ? ' <span class="muted">Saved at ' + when + '</span>' : '') +
-      '</div>';
-  }
-  errorBanner.style.display = 'none';
-  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -3478,95 +3036,6 @@ saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = false;
   }
 });
-
-if (saveProgressBtn) {
-  saveProgressBtn.addEventListener('click', async () => {
-    if (frames.length === 0) return;
-    const payload = buildTrainingProgressPayload();
-    saveProgressBtn.disabled = true;
-    const prev = saveResult ? saveResult.textContent : '';
-    if (saveResult) saveResult.textContent = 'Saving progress…';
-    try {
-      const resp = await fetch(
-        `/missions/${MISSION_ID}/training/save_progress?src=${encodeURIComponent(SRC)}`,
-        {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(payload),
-        }
-      );
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data.ok) {
-        showError(data.error || 'Save progress failed');
-        if (saveResult) saveResult.textContent = prev;
-      } else {
-        if (saveResult) {
-          saveResult.textContent =
-            '✓ Progress saved to mission dir (' +
-            escapeHtml(String(data.path || 'training_review_progress.json')) +
-            '). A copy was downloaded.';
-        }
-        errorBanner.style.display = 'none';
-        downloadTrainingProgressJson(payload);
-      }
-    } catch (e) {
-      showError(String(e));
-      if (saveResult) saveResult.textContent = prev;
-    } finally {
-      if (saveProgressBtn) saveProgressBtn.disabled = frames.length === 0;
-    }
-  });
-}
-
-if (loadProgressBtn) {
-  loadProgressBtn.addEventListener('click', async () => {
-    if (saveResult) saveResult.textContent = 'Loading progress…';
-    try {
-      const resp = await fetch(
-        `/missions/${MISSION_ID}/training/progress?src=${encodeURIComponent(SRC)}`
-      );
-      const data = await resp.json().catch(() => ({}));
-      if (resp.status === 404 || !data.ok) {
-        if (saveResult) {
-          saveResult.textContent =
-            'No training_review_progress.json for this mission yet. Save progress first, or use Load JSON file.';
-        }
-        errorBanner.style.display = 'none';
-        return;
-      }
-      if (applyTrainingProgressPayload(data)) {
-        if (saveResult) saveResult.textContent = '✓ Restored from mission dir (training_review_progress.json).';
-      }
-    } catch (e) {
-      showError(String(e));
-    }
-  });
-}
-
-if (loadProgressFileBtn && loadProgressFile) {
-  loadProgressFileBtn.addEventListener('click', () => {
-    loadProgressFile.click();
-  });
-  loadProgressFile.addEventListener('change', () => {
-    const file = loadProgressFile.files && loadProgressFile.files[0];
-    loadProgressFile.value = '';
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const obj = JSON.parse(String(reader.result || 'null'));
-        if (applyTrainingProgressPayload(obj)) {
-          if (saveResult) saveResult.textContent = '✓ Restored from ' + escapeHtml(file.name);
-          errorBanner.style.display = 'none';
-        }
-      } catch (e) {
-        showError('Could not parse progress JSON: ' + String(e));
-      }
-    };
-    reader.onerror = () => showError('Could not read file.');
-    reader.readAsText(file, 'utf-8');
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Assemble dataset (copy mission frames + labels into ai_train/real_data)

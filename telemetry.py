@@ -202,12 +202,12 @@ class Telemetry:
             0,
             self.connection.target_system,
             self.connection.target_component,
-            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
-                bitmask,  # ignore velocity, acceleration, yaw/yaw_rate (position only)
-            0, 0, 0,  
-            mx, my, mz,     # velocity 
-            0, 0, 0,     
-            0, 0         # TODO: yaw and yaw_rate 
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            bitmask,
+            0, 0, 0,
+            mx, my, mz,     # velocity in world NED (vN, vE, vD)
+            0, 0, 0,
+            0, 0            # TODO: yaw and yaw_rate
         )
     def send_e_stop_command(self):
         old_mode = self.get_mode()

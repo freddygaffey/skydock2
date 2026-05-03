@@ -28,6 +28,10 @@ MAX_HOMING_ALT = None       # max_homing_alt_m
 # Spray state
 MIN_SPRAY_ERROR = None      # min_spray_error_m
 
+# Homing timeouts (real-time seconds; states/homing.py divides by SIM_SPEED)
+TIME_WAIT_FOR_DET = None    # time_wait_for_det_s
+MAX_HOMING_TIME = None      # max_homing_time_s
+
 
 ###########################
 ###### sim ai #############

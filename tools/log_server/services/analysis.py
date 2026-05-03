@@ -272,6 +272,12 @@ def camera_fov_polygons_from_fsm_ticks(
             "lat": float(d.get("latitude") or 0.0),
             "lon": float(d.get("longitude") or 0.0),
         }
+        tn = ev.get("time_ns")
+        if tn is not None:
+            try:
+                row["time_ns"] = int(tn)
+            except (TypeError, ValueError):
+                pass
         row["_tick_index"] = count  # internal: used to de-dup first/last sampling endpoints
         if st:
             row["state"] = st
@@ -598,7 +604,7 @@ def _make_frame_row(
 
     footprint: list[dict[str, float]] = []
     if ds_obj and ds_obj.altitude_rel_home > 0:
-        w, h = 640, 640
+        w, h = ds_obj.width, ds_obj.hight
         for u, v in [(0, 0), (w, 0), (w, h), (0, h)]:
             try:
                 pt = Detection(label="", confidence=0.0, bbox=[(u, v), (u, v)])

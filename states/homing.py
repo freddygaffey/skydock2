@@ -2,66 +2,92 @@ import time
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
-from ai_class import Frame
-from utils import detection_to_latlon, haversine_distance, detection_to_dist, detection_to_ned
-from constants import MAX_HOMING_DIST, MIN_ALT, MAX_HOMING_ALT, MIN_SPRAY_ERROR, SIM_SPEED
+from ai_class import Frame, Detection
+from utils import detection_to_dist, detection_to_ned
+from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME
 from states.enum import DroneStateEnum
-import states.shared_data as shared_data
-from DB_abstraction import db_abstraction
 from mission_logging import log_event
 
-last_det_time = time.time()
+last_det_time = None
+start_homing_time = None
 
+
+def calc_speed(drone_state:DroneStateForHoming,det:Detection):
+    N, E = detection_to_ned(drone_state, det)
+    vN = max(-0.75, min(0.75, N))
+    vE = max(-0.75, min(0.75, E))
+    vD = 1.0 if drone_state.altitude_rel_home > MIN_ALT else 0.0
+    return (vN, vE, vD)
+
+    
 def homing(drone_state:DroneStateForHoming,frame:Frame):
-    min_actual = float("inf")
-    closest_det = None
-    for i in frame.detection:
-        dist = detection_to_dist(drone_state,i)
-        if dist < min_actual:
-            min_actual = dist
-            closest_det = i
-    if min_actual <= MIN_SPRAY_ERROR:
-        if (weed := db_abstraction.get_closest_weed(drone_state)):
-            log_event(
-                "spray_ready",
-                logger="spray",
-                level="INFO",
-                drone_state=drone_state,
-                frame=frame,
-                dist_horizontal_m=float(min_actual),
-                min_spray_error_m=float(MIN_SPRAY_ERROR),
-                target_weed={"id": weed.id, "lat": weed.lat, "lon": weed.lon},
-                closest_detection={"time_detected": closest_det.time_ns if closest_det else None},
-            )
-            db_abstraction.mark_weed_sprayed(weed)
-        else: return DroneStateEnum.RTL
-
-        return DroneStateEnum.SPRAY
-
+    # intate last_det_time
     global last_det_time
-    if closest_det:
+    if last_det_time is None:
         last_det_time = time.time()
 
-    # if (time.time() - shared_data.last_goto_time) > 10 / SIM_SPEED and (time.time() - last_det_time) > 1 / SIM_SPEED:
-    #     return DroneStateEnum.GOTO
-    
-    if closest_det is None:
-        # Ascend to widen FOV, but don't exceed max homing altitude
-        vz = 1 if drone_state.altitude_rel_home >= MAX_HOMING_ALT else -1
-        telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, vz)
+    # intate total time homing
+    global start_homing_time
+    if start_homing_time is None:
+        start_homing_time = time.time()
+
+    # calulate closet detecion
+    min_det = None
+    min_dist = float('inf')
+    for i in frame.detection:
+        d = detection_to_dist(drone_state, i)
+        if d < min_dist:
+            min_dist = d
+            min_det = i
+
+    if min_det is not None:
+        last_det_time = time.time()
+
+    # check if weed still there was ever there
+    if min_det is None and (time.time() - last_det_time) > TIME_WAIT_FOR_DET / SIM_SPEED:
+        log_event("homing_give_up_no_det", logger="homing", level="WARN",
+                  drone_state=drone_state, frame=frame,
+                  elapsed_no_det_s=float(time.time() - last_det_time))
+        last_det_time = None
+        start_homing_time = None
+        return DroneStateEnum.GOTO
+
+    # move up to try and find weed
+    elif min_det is None:
+        telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -1) # move up
         return DroneStateEnum.HOMING
 
-    # Choose altitude change based on how recently we saw a detection
-    if (time.time() - last_det_time) > 1 / SIM_SPEED:
-        dalt = 1 if drone_state.altitude_rel_home < MAX_HOMING_ALT else 0
-    elif drone_state.altitude_rel_home < MIN_ALT:
-        dalt = 0
-    else:
-        dalt = -1
+    # stop it just sitting there
+    if (time.time() - start_homing_time) > MAX_HOMING_TIME / SIM_SPEED:
+        log_event("homing_give_up_timeout", logger="homing", level="WARN",
+                  drone_state=drone_state, frame=frame,
+                  elapsed_total_s=float(time.time() - start_homing_time),
+                  min_dist_m=float(min_dist))
+        last_det_time = None
+        start_homing_time = None
+        return DroneStateEnum.GOTO
 
-    ned = detection_to_ned(drone_state, closest_det)
-    telemetry_singlton.send_displacement_command_yaw_stay_same(ned[0], ned[1], dalt)
+    # spray weed
+    if min_dist <= MIN_SPRAY_ERROR:
+        # check alt
+        if drone_state.altitude_rel_home > MIN_ALT + 1:
+            log_event("spray_ready", logger="spray", level="INFO",
+                      drone_state=drone_state, frame=frame,
+                      dist_horizontal_m=float(min_dist),
+                      min_spray_error_m=float(MIN_SPRAY_ERROR),
+                      closest_detection={"time_detected": min_det.time_ns})
+            last_det_time = None
+            start_homing_time = None
+            return DroneStateEnum.SPRAY
+        else:
+            # the homing funcatin will handle this move the drone closer to the weed and down
+            pass
+    vel = calc_speed(drone_state, min_det)
+    log_event("homing_tick", logger="homing", level="DEBUG",
+              drone_state=drone_state, frame=frame,
+              min_dist_m=float(min_dist), velocity_ned=list(vel),
+              elapsed_total_s=float(time.time() - start_homing_time),
+              elapsed_no_det_s=float(time.time() - last_det_time))
+    telemetry_singlton.send_volocity_command_yaw_stay_same(*vel)
     return DroneStateEnum.HOMING
-    
-    
-    
+

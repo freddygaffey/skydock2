@@ -18,9 +18,9 @@ gap (minimum 0.05s).
 
 **Fixed FPS:** pass ``--fps N`` to use equal time per frame (legacy behaviour).
 
-Output is saved as ``mission_video.mp4``. Encoding always writes to a unique ``*.mp4.work``
-file in the mission folder first, then atomically replaces ``mission_video.mp4`` so browsers
-never see a half-written MP4. Real-time mode renders frames in parallel (see
+Output is saved as ``mission_video.mp4``. Encoding always writes to a unique ``*.work.mp4``
+temp file in the mission folder first, then atomically replaces ``mission_video.mp4`` so browsers
+never see a half-written MP4. (Suffix must end in ``.mp4`` or OpenCV's ``VideoWriter`` may not open.) Real-time mode renders frames in parallel (see
 ``SKYDOCK_VIDEO_WORKERS``), writes temp JPEGs (not PNG), and encodes with FFmpeg ``libx264``
 ``-preset veryfast``. Fixed-FPS mode uses OpenCV ``mp4v`` then FFmpeg transcode to H.264.
 
@@ -455,7 +455,7 @@ def _allocate_work_mp4(dir_path: Path) -> Path:
     """Reserve a unique path under *dir_path* for encoder output (atomic publish later)."""
     t = tempfile.NamedTemporaryFile(
         prefix="mission_video_",
-        suffix=".mp4.work",
+        suffix=".work.mp4",
         dir=str(dir_path.resolve()),
         delete=False,
     )
@@ -545,6 +545,10 @@ def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
     try:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(work), fourcc, fps, (w, h))
+        if not writer.isOpened():
+            raise RuntimeError(
+                f"OpenCV VideoWriter could not open {work} (check path ends in .mp4 and codec support)"
+            )
 
         for i, (ts_ns, img_path) in enumerate(frame_images):
             frame = compose_frame(img_path, ts_ns, data, start_ns, truth)

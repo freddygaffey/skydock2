@@ -5,13 +5,11 @@ import math
 import numpy as np
 
 def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
-    CAMERA_FOV_X = 27.4
-    CAMERA_FOV_Y = 21.0
-    NUM_OF_PIX_X = 640
-    NUM_OF_PIX_Y = 640
+    NUM_OF_PIX_X = drone_state.width
+    NUM_OF_PIX_Y = drone_state.hight
 
-    fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(CAMERA_FOV_X/2)))
-    fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(CAMERA_FOV_Y/2)))
+    fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(drone_state.fov_x_deg/2)))
+    fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(drone_state.fov_y_deg/2)))
     cx = NUM_OF_PIX_X/2
     cy = NUM_OF_PIX_Y/2
 
@@ -80,16 +78,14 @@ def detection_to_latlon(drone_state: DroneStateForHoming, detection: Detection) 
 def latlon_to_pixel(drone_state, weed_lat: float, weed_lon: float, time_ns: int = 0) -> tuple[float, float] | None:
     """Back-project a known GPS position to pixel (px, py) in the current frame.
 
-    Inverse of detection_to_ned(). Returns (px, py) if within the 640×640 image,
+    Inverse of detection_to_ned(). Returns (px, py) if within the image,
     otherwise None (point not visible in this frame).
     """
-    CAMERA_FOV_X = 27.4
-    CAMERA_FOV_Y = 21.0
-    NUM_OF_PIX_X = 640
-    NUM_OF_PIX_Y = 640
+    NUM_OF_PIX_X = drone_state.width
+    NUM_OF_PIX_Y = drone_state.hight
 
-    fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(CAMERA_FOV_X / 2)))
-    fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(CAMERA_FOV_Y / 2)))
+    fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(drone_state.fov_x_deg / 2)))
+    fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(drone_state.fov_y_deg / 2)))
     cx = NUM_OF_PIX_X / 2
     cy = NUM_OF_PIX_Y / 2
 

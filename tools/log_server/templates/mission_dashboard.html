@@ -611,7 +611,7 @@ function filterCamFovPolygonsByStatesParam(rows, param){
   });
 }
 function fovSessionCacheKey(){
-  return `fov:${MID}:${SRC}:${getCamFovStride()}:uncapped`;
+  return `fov:v2:${MID}:${SRC}:${getCamFovStride()}:uncapped`;
 }
 function clearCamFovStateLayerCache(){
   _camFovStateLayerCache = null;
@@ -649,6 +649,7 @@ async function ensureCamFovStateLayerGroups(full){
     strokeOpacity: vis.strokeOpacity,
     weight: 1,
     outerHullOnly: false,
+    fovFrameViewer: { missionId: MID, src: SRC },
   };
   const pairs = await Promise.all(states.map(async st => {
     const { group } = await SdMap.cameraFrameOverlayFromFootprintRowsAsync(byState[st], cfg);
@@ -833,6 +834,7 @@ async function applyMissionCameraFovLayerBuildAsync(data){
     strokeOpacity: vis.strokeOpacity,
     weight: 1,
     outerHullOnly: vis.outerHullOnly,
+    fovFrameViewer: { missionId: MID, src: SRC },
   });
   const hasDrawable = (bounds && bounds.length > 0);
   applyMissionCameraFovNotesAndLegend(data, rows, polyCount, hasDrawable);
@@ -1698,6 +1700,49 @@ function selectFrameIndex(i, opts){
   framesNavUpdateUi();
 }
 
+/** Best <code>/frame_events</code> row for an <code>fsm_tick</code> <code>time_ns</code> (matches <code>frames/&lt;ns&gt;.jpg</code> stems). */
+async function resolveFrameIndexFromTimeNs(tnsStr){
+  const target = parseInt(String(tnsStr || ""), 10);
+  if(!Number.isFinite(target)) return null;
+  await loadFrames();
+  const frames = _frameEventsAll || [];
+  let bestIdx = null, bestDt = Infinity;
+  for(let i = 0; i < frames.length; i++){
+    const f = frames[i];
+    const p = f.photo_path || "";
+    if(!p || p === "No photo taken") continue;
+    const base = p.split("/").pop() || "";
+    const stem = parseInt(base.replace(/\.[^.]+$/, ""), 10);
+    if(Number.isFinite(stem)){
+      const dt = Math.abs(stem - target);
+      if(dt < bestDt){ bestDt = dt; bestIdx = i; }
+      continue;
+    }
+    const ms = Date.parse(f.ts || "");
+    if(Number.isFinite(ms)){
+      const tframe = Math.round(ms * 1e6);
+      const dt = Math.abs(tframe - target);
+      if(dt < bestDt){ bestDt = dt; bestIdx = i; }
+    }
+  }
+  if(bestIdx == null) return null;
+  const maxSkewNs = 15e9;
+  if(bestDt > maxSkewNs) return null;
+  return bestIdx;
+}
+
+async function openNearestFrameFromFovTimeNs(tnsStr){
+  const idx = await resolveFrameIndexFromTimeNs(tnsStr);
+  if(idx == null){
+    console.warn("No saved frame near this fsm_tick time_ns (sync frames/ or check JPEG stems).", tnsStr);
+    return;
+  }
+  try{
+    if(typeof map !== "undefined" && map && typeof map.closePopup === "function") map.closePopup();
+  }catch(err){}
+  await openMissionFrameViewerFromPopup(idx);
+}
+
 /** Detection popup "Open in frame viewer" → Frames tab + 640× canvas; idx is 0-based index in full <code>/frame_events</code> (not mission frame_index). */
 async function openMissionFrameViewerFromPopup(idx){
   await loadFrames();
@@ -1733,13 +1778,24 @@ async function openMissionFrameViewerFromPopup(idx){
 }
 
 document.addEventListener("click", (e)=>{
-  const a = e.target.closest("a.sd-det-open-full");
-  if(!a || !a.hasAttribute("data-sd-frame-index")) return;
-  /* Allow ctrl/meta/shift/middle-click to open the image URL in a new tab. */
+  const fovA = e.target.closest("a.sd-fov-open-frame[data-time-ns]");
+  if(fovA){
+    if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const tns = fovA.getAttribute("data-time-ns");
+    openNearestFrameFromFovTimeNs(tns).catch((err)=> console.warn(err));
+    return;
+  }
+  const a = e.target.closest("a.sd-det-open-full[data-sd-frame-index]");
+  const img = e.target.closest("img.sd-det-img[data-sd-frame-index]");
+  const el = a || img;
+  if(!el) return;
+  /* Allow ctrl/meta/shift/middle-click to open the image URL in a new tab (link only). */
   if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   e.stopPropagation();
-  const idx = parseInt(a.getAttribute("data-sd-frame-index"), 10);
+  const idx = parseInt(el.getAttribute("data-sd-frame-index"), 10);
   if(!Number.isFinite(idx)) return;
   openMissionFrameViewerFromPopup(idx).catch((err)=> console.warn(err));
 }, true);
@@ -1916,32 +1972,56 @@ function renderFrame(f){
     if(rawHint) rawHint.classList.toggle("d-none", !!(f.raw_detections && f.raw_detections.length));
   }
 
-  function drawDetList(list, opts){
+  /** Scale from detection pixel space (model / saved JPEG, e.g. 1280) to canvas W×H (640). */
+  function drawDetList(list, opts, sx, sy){
+    sx = sx != null && sx > 0 ? sx : 1;
+    sy = sy != null && sy > 0 ? sy : sx;
     const dashed = opts && opts.dashed;
     const overrideColor = opts && opts.color;
     for(const det of (list||[])){
       if(!det.bbox||det.bbox.length<2) continue;
       const [[x0,y0],[x1,y1]] = det.bbox;
+      const x0s = x0 * sx, y0s = y0 * sy, x1s = x1 * sx, y1s = y1 * sy;
       const color = overrideColor || labelColor(det.label||"?");
       ctx.strokeStyle=color;
       ctx.lineWidth= dashed ? 2 : 2;
       ctx.setLineDash(dashed ? [6,4] : []);
-      ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+      ctx.strokeRect(x0s,y0s,x1s-x0s,y1s-y0s);
       ctx.setLineDash([]);
       if(dashed) continue;
       const lbl=`${det.label||"?"} ${((det.confidence||0)*100).toFixed(0)}%`;
       ctx.font="12px monospace";
       const tw=ctx.measureText(lbl).width;
-      ctx.fillStyle=color+"cc"; ctx.fillRect(x0,y0-16,tw+6,16);
-      ctx.fillStyle="#fff";     ctx.fillText(lbl,x0+3,y0-3);
+      ctx.fillStyle=color+"cc"; ctx.fillRect(x0s,y0s-16,tw+6,16);
+      ctx.fillStyle="#fff";     ctx.fillText(lbl,x0s+3,y0s-3);
     }
   }
 
-  function drawBoxes(){
-    if(f.raw_detections && f.raw_detections.length){
-      drawDetList(f.raw_detections, {dashed:true, color:"#ff9a4a"});
+  function maxBboxExtent(list){
+    let mx = 0, my = 0;
+    for(const det of (list||[])){
+      if(!det.bbox||det.bbox.length<2) continue;
+      const [[x0,y0],[x1,y1]] = det.bbox;
+      mx = Math.max(mx, x0, x1);
+      my = Math.max(my, y0, y1);
     }
-    drawDetList(f.detections||[], null);
+    return [mx, my];
+  }
+
+  function drawBoxes(sx, sy){
+    if(sx == null){
+      const lists = [].concat(f.raw_detections||[], f.detections||[]);
+      const [mx, my] = maxBboxExtent(lists);
+      if(mx <= W - 0.5 && my <= H - 0.5){
+        sx = sy = 1;
+      } else {
+        sx = sy = Math.min(W / Math.max(mx, 1), H / Math.max(my, 1));
+      }
+    }
+    if(f.raw_detections && f.raw_detections.length){
+      drawDetList(f.raw_detections, {dashed:true, color:"#ff9a4a"}, sx, sy);
+    }
+    drawDetList(f.detections||[], null, sx, sy);
   }
 
   if(hasPhoto){
@@ -1949,18 +2029,20 @@ function renderFrame(f){
     const url = `/missions/${MID}/image?path=${encodeURIComponent(f.photo_path)}&src=${encodeURIComponent(SRC)}`;
     img.onload = function(){
       if(seq !== _frameRenderSeq) return;
+      const nw = img.naturalWidth || W, nh = img.naturalHeight || H;
+      const sx = W / Math.max(1, nw), sy = H / Math.max(1, nh);
       ctx.drawImage(img, 0, 0, W, H);
-      drawBoxes();
+      drawBoxes(sx, sy);
     };
     img.onerror = function(){
       if(seq !== _frameRenderSeq) return;
       drawSyntheticBg(ctx, W, H);
-      drawBoxes();
+      drawBoxes(null, null);
     };
     img.src = url;
   } else {
     drawSyntheticBg(ctx, W, H);
-    drawBoxes();
+    drawBoxes(null, null);
   }
   const tgf = document.getElementById("toggleFrameGround");
   if(tgf && tgf.checked) renderFrameGround(f);
@@ -2664,15 +2746,15 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
 
     // Detection markers (popup: annotated frame image when photo + bbox_px exist)
     const detItems = [];
-    const apiFrameIdx = f.frame_index != null ? f.frame_index : idx;
-    const fPop = Object.assign({}, f, { frame_index: apiFrameIdx });
+    const displayFrameNum = f.frame_index != null ? f.frame_index : idx;
+    const fPop = Object.assign({}, f, { frame_index: displayFrameNum });
     (f.ground_projections||[]).forEach(gp=>{
       if(!gp.center) return;
       const c = gp.center;
       const truthTag = gp.truth_id != null ? `truth #${gp.truth_id}` : `false positive`;
       const popHtml = SdMap.detectionPopupHtmlWithImage(escHtml, gp, fPop, {
         missionId: MID, src: SRC, strokeColor: "#ff9a4a", tagPrefix: "", tTag: ` — ${truthTag}`,
-        frameListIndex: apiFrameIdx,
+        frameListIndex: idx,
       }) + `<div class="small muted mt-1">${c.lat.toFixed(6)}, ${c.lon.toFixed(6)} · ground</div>`;
       const hasPoly = gp.corners && gp.corners.length >= 3;
       if(hasPoly){
@@ -2848,6 +2930,9 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
       .then(r => r.json())
       .then(d => {
         if(d.ok){
+          if(genMsgEl && d.log){
+            genMsgEl.textContent = 'Video job started (PID ' + (d.pid || '?') + '). Log: ' + d.log + ' — checking every 3s.';
+          }
           startPolling(false);
         } else {
           setGenError(d.error || 'Request failed');

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 from typing import Any
 
 from ai_class import Detection
+from drone_state import DroneStateForHoming
 from utils import detection_to_latlon
+
+
+_DEFAULT_W = DroneStateForHoming.__dataclass_fields__["width"].default
+_DEFAULT_H = DroneStateForHoming.__dataclass_fields__["hight"].default
+_PITCH_MM = DroneStateForHoming.SENSOR_PIXEL_PITCH_MM
+_FOCAL_MM = DroneStateForHoming.LENS_FOCAL_LENGTH_MM
 
 
 def drone_state_from_dict(ds: dict | None) -> Any | None:
@@ -37,6 +45,8 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
             "altitude_rel_home",
             "rangefinder_m",
             "rotaion",
+            "width",
+            "hight",
             "_rx",
             "_ry",
             "_rz",
@@ -47,8 +57,18 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
             self.longitude = float(ds.get("longitude") or 0.0)
             self.altitude_rel_home = float(ds.get("altitude_rel_home") or 0.0)
             self.rangefinder_m = float(ds.get("rangefinder_m") or 0.0)
+            self.width = int(ds.get("width") or _DEFAULT_W)
+            self.hight = int(ds.get("hight") or _DEFAULT_H)
             self._rx, self._ry, self._rz = rx, ry, rz
             self.rotaion = SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)
+
+        @property
+        def fov_x_deg(self) -> float:
+            return 2.0 * math.degrees(math.atan(self.width * _PITCH_MM / 2.0 / _FOCAL_MM))
+
+        @property
+        def fov_y_deg(self) -> float:
+            return 2.0 * math.degrees(math.atan(self.hight * _PITCH_MM / 2.0 / _FOCAL_MM))
 
         def get_rotation_at_time(self, _time_ns: Any) -> Any:
             return SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)
@@ -104,14 +124,15 @@ def ground_project_one(det: dict, ds: Any) -> dict | None:
 
 
 def camera_fov_footprint_from_drone_dict(ds_dict: dict | None) -> list[dict[str, float]] | None:
-    """Project the four 640×640 image corners to ground using ``utils.detection_to_latlon`` (CAMERA_FOV 27.4°×21°).
+    """Project the four image corners to ground using ``utils.detection_to_latlon``.
 
-    Same geometry as ``frame_footprint`` in ``build_frame_events`` — shows where the camera looks from ``drone_state``.
+    Resolution and FOV come from the logged ``drone_state`` (``width``/``hight``
+    + lens specs), matching the live geometry in ``utils.detection_to_ned``.
     """
     ds_obj = drone_state_from_dict(ds_dict)
     if ds_obj is None or ds_obj.altitude_rel_home <= 0:
         return None
-    w, h = 640, 640
+    w, h = ds_obj.width, ds_obj.hight
     footprint: list[dict[str, float]] = []
     for u, v in ((0, 0), (w, 0), (w, h), (0, h)):
         try:

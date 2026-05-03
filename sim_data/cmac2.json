@@ -105,7 +105,9 @@
     "max_homing_dist_m": 10,
     "min_alt_m": 5,
     "min_spray_error_m": 2,
-    "max_homing_alt_m": 15
+    "max_homing_alt_m": 15,
+    "time_wait_for_det_s": 10,
+    "max_homing_time_s": 40
   },
   "is_sim": true
 }

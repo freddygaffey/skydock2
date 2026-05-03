@@ -5,46 +5,31 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   {% include "partials/sd_theme_style.html" %}
   <style>
+    html,body{height:100%}
     #mainCanvas{border:1px solid var(--sd-border);border-radius:6px;display:block;background:#000;cursor:crosshair;max-width:100%;height:auto}
-    /* Viewer + filmstrip: flex layout with draggable split */
-    #viewerSplit{display:flex;flex-direction:column;gap:12px}
+    /* Filmstrip: 4-wide grid in the right rail (lg+); fluid columns when stacked */
+    .filmstrip-rail{width:100%}
     @media (min-width: 992px) {
-      #viewerSplit{flex-direction:row;align-items:flex-start}
-    }
-    #viewerMain{flex:1 1 0;min-width:0;overflow:hidden}
-    .filmstrip-rail{width:100%;position:relative}
-    @media (min-width: 992px) {
-      .filmstrip-rail{width:308px;flex:0 0 auto}
+      .filmstrip-rail{width:min(100%,clamp(260px,24vw,380px));flex:0 0 auto}
     }
     #filmstrip{
       display:grid;gap:6px;align-content:start;justify-items:stretch;
-      grid-template-columns:repeat(auto-fill,minmax(60px,1fr));
+      grid-template-columns:repeat(4,minmax(0,1fr));
       max-height:min(640px,calc(100vh - 140px));overflow-y:auto;overflow-x:hidden;padding:4px 2px;
     }
     @media (max-width: 991.98px) {
       .filmstrip-rail{max-width:none}
-      #filmstrip{max-height:min(200px,38vh)}
+      #filmstrip{
+        grid-template-columns:repeat(auto-fill,minmax(68px,1fr));
+        max-height:min(200px,38vh);
+      }
     }
     @media (max-width: 575.98px) {
       #filmstrip{grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:4px;max-height:min(180px,32vh)}
     }
-    #filmstripResizeHandle{
-      display:none;position:absolute;left:-4px;top:0;bottom:0;width:8px;
-      cursor:col-resize;z-index:10;
-    }
-    #filmstripResizeHandle::after{
-      content:'';position:absolute;left:3px;top:0;bottom:0;width:2px;
-      background:var(--sd-border);border-radius:1px;transition:background .15s;
-    }
-    #filmstripResizeHandle:hover::after,#filmstripResizeHandle.active::after{background:var(--sd-accent)}
-    @media (min-width: 992px) {
-      #filmstripResizeHandle{display:block}
-    }
     .fs-thumb{position:relative;cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden;min-width:0;aspect-ratio:1}
     .fs-thumb img{width:100%;height:100%;object-fit:cover;display:block}
     .fs-thumb.active{border-color:var(--sd-accent)}
-    .fs-thumb.fs-selected{box-shadow:inset 0 0 0 3px #4fc3f7}
-    .fs-thumb.fs-class-filter-off{opacity:0.2;filter:grayscale(0.65)}
     .fs-badge{position:absolute;top:2px;right:2px;font-size:10px;border-radius:4px;padding:1px 4px;font-weight:700}
     .badge-auto{background:#1a7a40;color:#fff}
     .badge-review{background:#b06010;color:#fff}
@@ -56,9 +41,14 @@
     .key-hint{font-size:11px;color:var(--sd-muted);margin-left:6px}
     #errorBanner{display:none}
     #trainingAnalyticsBar .stat-pill{font-size:12px}
+    .training-top-tabs .nav-link{font-weight:600}
+    .training-top-tabs .nav-link.active{background:var(--sd-accent);border-color:var(--sd-accent);color:#fff}
+    .tab-pane-wrap{display:none}
+    .tab-pane-wrap.active{display:block}
+    .review-canvas-wrap{max-width:100%;overflow:auto}
   </style>
 </head><body>
-<div class="container-fluid py-3 px-2 px-md-3" style="max-width:min(1800px,100%)">
+<div class="container-fluid py-2 px-2 px-md-3" style="max-width:100%">
 
   <div class="d-flex align-items-start justify-content-between mb-2 flex-wrap gap-2">
     <div>
@@ -79,10 +69,78 @@
 
   <div id="trainingAnalyticsBar" class="stat-box py-2 px-3 mb-2" style="display:none" aria-live="polite"></div>
 
-  <div class="row g-3 mt-1">
+  <ul class="nav nav-pills training-top-tabs mb-2" id="trainingTopTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" type="button" data-training-tab="review">Review (almost full screen)</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" type="button" data-training-tab="setup">Setup / Progress / Save</button>
+    </li>
+  </ul>
 
-    <!-- Left panel: setup + controls -->
-    <div class="col-12 col-lg-3">
+  <div id="trainingTabReview" class="tab-pane-wrap active">
+    <div class="row g-2 mt-1">
+      <div class="col-12">
+        <div class="row g-2 align-items-start gx-lg-3">
+          <div class="col-12 col-xl min-w-0">
+            <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+              <button id="prevBtn" class="btn btn-sm btn-outline-secondary" disabled title="Previous frame (←)">← Prev <span class="key-hint">←</span></button>
+              <span id="frameCounter" class="muted small">— / —</span>
+              <button id="nextBtn" class="btn btn-sm btn-outline-secondary" disabled title="Next frame (→)">Next → <span class="key-hint">→</span></button>
+              <button id="nextReviewBtn" class="btn btn-sm btn-outline-warning" disabled title="Jump to next frame needing review (N)">Next ? <span class="key-hint">N</span></button>
+              <button type="button" id="compareModelsBtn" class="btn btn-sm btn-outline-info" disabled
+                title="Run each preset YOLO on this frame and compare boxes">Compare models</button>
+              <div class="ms-auto d-flex gap-2 flex-wrap align-items-center justify-content-end">
+                <button id="approveBtn" class="btn btn-sm btn-success" disabled title="Approve (A): boxes or good YOLO = positive; after Clear (D) = negative, empty label file">✓ Approve <span class="key-hint">A</span></button>
+                <button id="skipBtn" class="btn btn-sm btn-danger" disabled title="Skip (S)">✗ Skip <span class="key-hint">S</span></button>
+                <button id="undoBtn" class="btn btn-sm btn-outline-warning" type="button" disabled title="Undo last Approve or Skip (F)">Undo <span class="key-hint">F</span></button>
+                <button type="button" id="manualFromYoloBtn" class="btn btn-sm btn-outline-secondary" disabled title="Copy best-matched YOLO box as manual label">Use YOLO</button>
+                <button type="button" id="clearAiPredsBtn" class="btn btn-sm btn-outline-secondary" disabled title="Remove all YOLO predictions on this frame (matched + extra dets)">Clear AI <span class="key-hint">Del</span></button>
+                <button type="button" id="manualClearBtn" class="btn btn-sm btn-outline-warning" disabled title="Clear (D): remove manual boxes and all YOLO boxes on canvas; mark empty, then A for no-object">Clear <span class="key-hint">D</span></button>
+              </div>
+            </div>
+            <div class="review-canvas-wrap">
+              <canvas id="mainCanvas" width="640" height="640"></canvas>
+            </div>
+            <p class="muted small mt-2 mb-0" style="line-height:1.5;max-width:900px">
+              <strong>Training pairs:</strong>
+              <span class="text-success">Positive</span> — approve when boxes are right (draw, <strong>Use YOLO</strong>, or <kbd>A</kbd> on a good auto match).
+              <span class="text-secondary">Negative</span> — bad YOLO (false positive): <kbd>D</kbd> removes manual + all predicted boxes on the canvas and <em>marks empty</em>, then <kbd>A</kbd> saves an empty label file (no boxes) for that frame.
+            </p>
+            <div id="modelComparePanel" class="stat-box mt-2" style="display:none">
+              <div class="fw-bold mb-2 small" style="color:var(--sd-accent)">Model comparison (this frame)</div>
+              <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                <label class="small mb-0 text-nowrap">Canvas overlay</label>
+                <select id="compareOverlaySelect" class="form-select form-select-sm" style="max-width:min(420px,100%)" disabled>
+                  <option value="main">Analysis (current run)</option>
+                </select>
+              </div>
+              <div id="modelCompareSummary" class="small font-monospace" style="max-height:240px;overflow:auto;line-height:1.35"></div>
+            </div>
+            <div class="d-flex flex-wrap gap-3 mt-2 small" id="frameInfo">
+              {% if not real_mission_files %}
+              <span class="muted">No <code>real_missions/*.json</code> on this machine — sync from the Pi, then hard-refresh (<kbd>Ctrl+Shift+R</kbd>).</span>
+              {% elif auto_truth and auto_truth not in real_mission_files %}
+              <span class="muted">Log references <code>{{ auto_truth }}</code> but that file is missing locally — add it under <code>real_missions/</code>.</span>
+              {% elif auto_truth %}
+              <span class="muted">Setup <code>{{ auto_truth }}</code> should be selected — click <strong>Run analysis</strong> (needs JavaScript). If the button does nothing, hard-refresh and check the browser console (F12).</span>
+              {% else %}
+              <span class="muted">Pick a real mission JSON above, then <strong>Run analysis</strong>. Enable JavaScript. Hard-refresh (<kbd>Ctrl+Shift+R</kbd>) if the page looks outdated.</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-12 col-xl-auto filmstrip-rail">
+            <div class="small fw-semibold mb-1 d-none d-lg-block" style="color:var(--sd-muted)">Frames</div>
+            <div id="filmstrip" role="list" aria-label="Frame thumbnails"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="trainingTabSetup" class="tab-pane-wrap">
+    <div class="row g-3 mt-1">
+    <div class="col-12 col-xl-4">
       <div class="stat-box mb-3">
         <div class="fw-bold mb-2" style="color:var(--sd-accent)">Setup</div>
 
@@ -188,121 +246,33 @@
         <div id="progressHint" class="muted small mt-2" style="display:none;line-height:1.45"></div>
       </div>
 
-      <div class="stat-box mb-3">
-        <div class="fw-bold mb-2 small" style="color:var(--sd-muted)">Class filter</div>
-        <label class="form-label small mb-0" for="classFilterInput">Show / jump to labels containing (substring, case-insensitive)</label>
-        <div class="input-group input-group-sm mb-1">
-          <input type="text" class="form-control" id="classFilterInput" list="yoloClassDatalist"
-            placeholder="e.g. sports · empty = all classes" autocomplete="off" spellcheck="false">
-          <button type="button" class="btn btn-outline-secondary" id="classFilterClearBtn" title="Clear class filter">✕</button>
-        </div>
-        <datalist id="yoloClassDatalist"></datalist>
-        <div class="muted small mb-0">Thumbs that do not match are dimmed. <strong>Next ?</strong> (N) only visits review frames that match when this field is set.</div>
-      </div>
-
       <button id="saveBtn" class="btn btn-success btn-sm w-100" disabled>
         Save labels to mission dir
       </button>
-      <div class="d-flex gap-2 mt-2">
-        <button type="button" id="saveProgressBtn" class="btn btn-outline-primary btn-sm flex-grow-1" disabled
-          title="Save raw YOLO output, matches, your approvals/skips, and manual boxes to the mission dir">
-          Save progress
-        </button>
-        <button type="button" id="loadProgressBtn" class="btn btn-outline-primary btn-sm flex-grow-1"
-          title="Load training_review_progress.json from this mission (same src)">
-          Load from mission
-        </button>
-      </div>
-      <div class="d-flex gap-2 mt-1">
-        <button type="button" id="loadProgressFileBtn" class="btn btn-outline-secondary btn-sm w-100"
-          title="Restore from a JSON file (e.g. downloaded backup)">
-          Load JSON file…
-        </button>
-      </div>
-      <input type="file" id="loadProgressFile" accept="application/json,.json" class="d-none" aria-hidden="true">
       <button id="assembleBtn" class="btn btn-outline-success btn-sm w-100 mt-2" type="button">
         Copy labeled frames → ai_train/real_data
       </button>
       <div class="muted small mt-1" id="saveResult"></div>
     </div>
 
-    <!-- Right panel: frame viewer -->
-    <div class="col-12 col-lg-9">
-      <div id="viewerSplit">
-        <div id="viewerMain">
-      <div class="d-flex gap-2 align-items-center mb-1 flex-wrap">
-        <button id="prevBtn" class="btn btn-sm btn-outline-secondary" disabled title="Previous frame (←)">← Prev <span class="key-hint">←</span></button>
-        <span id="frameCounter" class="muted small">— / —</span>
-        <button id="nextBtn" class="btn btn-sm btn-outline-secondary" disabled title="Next frame (→)">Next → <span class="key-hint">→</span></button>
-        <button id="nextReviewBtn" class="btn btn-sm btn-outline-warning" disabled title="Jump to next review frame (N). If a class filter is set (left panel), only frames whose labels match that substring.">Next ? <span class="key-hint">N</span></button>
-        <button type="button" id="selectAllReviewBtn" class="btn btn-sm btn-outline-primary" disabled title="Select every frame in review queue (orange ?)">Select all ?</button>
-        <button type="button" id="clearReviewSelectionBtn" class="btn btn-sm btn-outline-secondary" disabled title="Clear multi-select">Clear sel.</button>
-        <button type="button" id="approveSelectedReviewBtn" class="btn btn-sm btn-success" disabled title="Approve all selected review frames (Ctrl+Enter)">Approve selected</button>
-        <span id="reviewSelectionCount" class="muted small">0 sel.</span>
-        <button type="button" id="compareModelsBtn" class="btn btn-sm btn-outline-info" disabled
-          title="Run each preset YOLO on this frame and compare boxes">Compare models</button>
-      </div>
-      <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
-        <button id="approveBtn" class="btn btn-sm btn-success" disabled title="Approve (A): boxes or good YOLO = positive; after Clear (D) = negative, empty label file">✓ Approve <span class="key-hint">A</span></button>
-        <button id="skipBtn" class="btn btn-sm btn-danger" disabled title="Skip (S)">✗ Skip <span class="key-hint">S</span></button>
-        <button id="undoBtn" class="btn btn-sm btn-outline-warning" type="button" disabled title="Undo last Approve or Skip (F)">Undo <span class="key-hint">F</span></button>
-        <button type="button" id="manualFromYoloBtn" class="btn btn-sm btn-outline-secondary" disabled title="Copy best-matched YOLO box as manual label">Use YOLO</button>
-        <button type="button" id="clearAiPredsBtn" class="btn btn-sm btn-outline-secondary" disabled title="Remove all YOLO predictions on this frame (matched + extra dets)">Clear AI <span class="key-hint">Del</span></button>
-        <button type="button" id="manualClearBtn" class="btn btn-sm btn-outline-warning" disabled title="Clear (D): remove manual boxes and all YOLO boxes on canvas; mark empty, then A for no-object">Clear <span class="key-hint">D</span></button>
-      </div>
-      <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
-        <div class="form-check mb-0 me-1">
-          <input class="form-check-input" type="checkbox" id="strictAssistChk" checked>
-          <label class="form-check-label small" for="strictAssistChk">Strict assist mode</label>
+    <div class="col-12 col-xl-8">
+      <div class="stat-box mb-3">
+        <div class="fw-bold mb-2" style="color:var(--sd-accent)">Progress</div>
+        <div class="d-flex flex-wrap gap-2">
+          <span class="stat-pill">✓ Auto <span class="val" id="cntAutoSetup">0</span></span>
+          <span class="stat-pill">✓ Manual <span class="val" id="cntManualSetup">0</span></span>
+          <span class="stat-pill">? Review <span class="val" id="cntReviewSetup">0</span></span>
+          <span class="stat-pill">✗ Skip <span class="val" id="cntSkipSetup">0</span></span>
+          <span class="stat-pill">— No det <span class="val" id="cntNoDetSetup">0</span></span>
         </div>
-        <button id="approveStableBtn" class="btn btn-sm btn-outline-success" disabled title="Approve contiguous strict-stable run from current frame (Q)">Approve stable run <span class="key-hint">Q</span></button>
-        <button id="approveNextNBtn" class="btn btn-sm btn-outline-success" disabled title="Approve next N strict-stable frames (W)">Approve next N <span class="key-hint">W</span></button>
-        <button id="emptyNextNBtn" class="btn btn-sm btn-outline-secondary" disabled title="Mark next N strict-empty frames and approve (E)">Empty next N <span class="key-hint">E</span></button>
-        <label class="small muted mb-0">N</label>
-        <input id="bulkNInput" type="number" class="form-control form-control-sm" value="10" min="1" max="500" step="1" style="width:86px">
-      </div>
-
-      <canvas id="mainCanvas" width="640" height="640"></canvas>
-      <p class="muted small mt-2 mb-0" style="line-height:1.5;max-width:900px">
-        <strong>Training pairs:</strong>
-        <span class="text-success">Positive</span> — approve when boxes are right (draw, <strong>Use YOLO</strong>, or <kbd>A</kbd> on a good auto match).
-        <span class="text-secondary">Negative</span> — bad YOLO (false positive): <kbd>D</kbd> removes manual + all predicted boxes on the canvas and <em>marks empty</em>, then <kbd>A</kbd> saves an empty label file (no boxes) for that frame.
-      </p>
-
-      <div id="modelComparePanel" class="stat-box mt-2" style="display:none">
-        <div class="fw-bold mb-2 small" style="color:var(--sd-accent)">Model comparison (this frame)</div>
-        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
-          <label class="small mb-0 text-nowrap">Canvas overlay</label>
-          <select id="compareOverlaySelect" class="form-select form-select-sm" style="max-width:min(420px,100%)" disabled>
-            <option value="main">Analysis (current run)</option>
-          </select>
-        </div>
-        <div id="modelCompareSummary" class="small font-monospace" style="max-height:240px;overflow:auto;line-height:1.35"></div>
-      </div>
-
-      <div class="d-flex flex-wrap gap-3 mt-2 small" id="frameInfo">
-        {% if not real_mission_files %}
-        <span class="muted">No <code>real_missions/*.json</code> on this machine — sync from the Pi, then hard-refresh (<kbd>Ctrl+Shift+R</kbd>).</span>
-        {% elif auto_truth and auto_truth not in real_mission_files %}
-        <span class="muted">Log references <code>{{ auto_truth }}</code> but that file is missing locally — add it under <code>real_missions/</code>.</span>
-        {% elif auto_truth %}
-        <span class="muted">Setup <code>{{ auto_truth }}</code> should be selected — click <strong>Run analysis</strong> (needs JavaScript). If the button does nothing, hard-refresh and check the browser console (F12).</span>
-        {% else %}
-        <span class="muted">Pick a real mission JSON above, then <strong>Run analysis</strong>. Enable JavaScript. Hard-refresh (<kbd>Ctrl+Shift+R</kbd>) if the page looks outdated.</span>
-        {% endif %}
-      </div>
-      <noscript>
-        <p class="alert alert-warning small">Enable JavaScript — training analysis requires it.</p>
-      </noscript>
-        </div>
-        <div class="filmstrip-rail" id="filmstripRail">
-          <div id="filmstripResizeHandle"></div>
-          <div class="small fw-semibold mb-1 d-none d-lg-block" style="color:var(--sd-muted)">Frames</div>
-          <div id="filmstrip" role="list" aria-label="Frame thumbnails"></div>
-        </div>
+        <div class="muted small mt-2">Use the <strong>Review</strong> tab for frame-by-frame labeling with almost full-screen canvas.</div>
       </div>
     </div>
   </div>
+</div>
+  <noscript>
+    <p class="alert alert-warning small mt-2">Enable JavaScript — training analysis requires it.</p>
+  </noscript>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
@@ -316,8 +286,26 @@
   window.TRAINING_AUTO_SETUP = cfg.training_auto_setup != null ? String(cfg.training_auto_setup) : '';
 })();
 </script>
-<script src="{{ url_for('static', filename='training/geometry.js') }}?v=20260414q"></script>
-<script src="{{ url_for('static', filename='mission_training.js') }}?v=20260414q"
+<script src="{{ url_for('static', filename='mission_training.js') }}?v=20260414k"
   onerror="(function(){var e=document.getElementById('errorBanner');if(e){e.style.display='block';e.textContent='Failed to load mission_training.js — check the Network tab (404?) and hard-refresh (Ctrl+Shift+R).';}})()"></script>
+<script>
+(function () {
+  var tabBtns = Array.prototype.slice.call(document.querySelectorAll('[data-training-tab]'));
+  var review = document.getElementById('trainingTabReview');
+  var setup = document.getElementById('trainingTabSetup');
+  var map = { review: review, setup: setup };
+  function setTab(name) {
+    tabBtns.forEach(function (b) { b.classList.toggle('active', b.dataset.trainingTab === name); });
+    Object.keys(map).forEach(function (k) {
+      if (!map[k]) return;
+      map[k].classList.toggle('active', k === name);
+    });
+  }
+  tabBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () { setTab(btn.dataset.trainingTab); });
+  });
+  setTab('review');
+})();
+</script>
 {% include "partials/sd_theme_script.html" %}
 </body></html>

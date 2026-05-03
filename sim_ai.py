@@ -14,8 +14,8 @@ import constants
 # Camera parameters – must match utils.detection_to_ned
 CAMERA_FOV_X = 27.4  # degrees
 CAMERA_FOV_Y = 21.0  # degrees
-NUM_OF_PIX_X = 640
-NUM_OF_PIX_Y = 640
+NUM_OF_PIX_X = 1280
+NUM_OF_PIX_Y = 1280
 SIM_AI_FPS = 30.0
 
 # Pixel jitter (Gaussian std-dev in pixels) applied to bbox center.
@@ -102,10 +102,17 @@ def _visible_weed_detections(
     lon0 = drone_state.longitude
     alt = drone_state.altitude_rel_home
 
+    # Use the same intrinsics utils.detection_to_ned will use, derived from
+    # drone_state.width/hight + lens specs. Keeps sim/projection round-trip exact.
+    fov_x = drone_state.fov_x_deg
+    fov_y = drone_state.fov_y_deg
+    fx = NUM_OF_PIX_X / (2 * math.tan(math.radians(fov_x / 2)))
+    fy = NUM_OF_PIX_Y / (2 * math.tan(math.radians(fov_y / 2)))
+
     # Bounding circle of the full image footprint: use half-diagonal FOV
     # so weeds at the corners of the wider X-axis aren't culled early.
     # The pixel-bounds check below handles precise clipping.
-    half_diag_deg = math.sqrt((CAMERA_FOV_X / 2) ** 2 + (CAMERA_FOV_Y / 2) ** 2)
+    half_diag_deg = math.sqrt((fov_x / 2) ** 2 + (fov_y / 2) ** 2)
     max_ground_radius = alt * math.tan(math.radians(half_diag_deg))
 
     detections: list[Detection] = []
@@ -155,8 +162,8 @@ def _visible_weed_detections(
         x_cam = ray_body[0] / ray_body[2]
         y_cam = ray_body[1] / ray_body[2]
 
-        u = FX * x_cam + CX
-        v = FY * y_cam + CY
+        u = fx * x_cam + CX
+        v = fy * y_cam + CY
 
         # Skip if outside image
         if not (0 <= u < NUM_OF_PIX_X and 0 <= v < NUM_OF_PIX_Y):
@@ -198,6 +205,14 @@ def run_sim_ai(weed_locations: list[dict]):
     - Computes visible weeds
     - Updates ai_storage_singleton with Frame(detections)
     """
+
+    # Sim renders detections in NUM_OF_PIX_X × NUM_OF_PIX_Y pixel space — make
+    # the live drone_state advertise the same resolution so utils.detection_to_ned
+    # uses matching intrinsics.
+    ds = getattr(telemetry_singlton, "drone_state", None)
+    if ds is not None:
+        ds.width = NUM_OF_PIX_X
+        ds.hight = NUM_OF_PIX_Y
 
     # Log sim vision parameters once per mission
     try:
