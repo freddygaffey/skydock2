@@ -19,7 +19,7 @@ import cv2
 import queue as queue_module  # rename to avoid shadowing
 
 # Frame saving queue
-frame_queue = queue_module.Queue(maxsize=2000)
+frame_queue = queue_module.Queue(maxsize=200)
 
 def frame_saver_thread():
     """Background thread - saves frames as JPEG"""
