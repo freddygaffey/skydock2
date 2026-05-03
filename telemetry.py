@@ -335,9 +335,9 @@ class Telemetry:
         for i in new_array:print(i)
         return new_array
 
+telemetry_singlton = Telemetry()
+
 if __name__ == "__main__":
-    telemetry_singlton = Telemetry()
     while 1:
         print(telemetry_singlton.drone_state)
         time.sleep(1)
-    pass
