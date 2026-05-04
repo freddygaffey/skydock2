@@ -4,7 +4,7 @@ from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import Frame, Detection
 from utils import detection_to_dist, detection_to_ned
-from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME
+from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
@@ -52,9 +52,16 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
         start_homing_time = None
         return DroneStateEnum.GOTO
 
-    # move up to try and find weed
+    # move up to try and find weed (cap at MAX_HOMING_ALT)
     elif min_det is None:
-        telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -1) # move up
+        if drone_state.altitude_rel_home >= MAX_HOMING_ALT:
+            log_event("homing_alt_cap", logger="homing", level="WARN",
+                      drone_state=drone_state, frame=frame,
+                      altitude_rel_home=float(drone_state.altitude_rel_home),
+                      max_homing_alt=float(MAX_HOMING_ALT))
+            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, 0)  # hold alt
+        else:
+            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -1) # move up
         return DroneStateEnum.HOMING
 
     # stop it just sitting there
