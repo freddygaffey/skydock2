@@ -62,6 +62,8 @@ def save_mission(weed_locations, name="real_mission", out_dir="sim_data", params
             "min_alt_m": 5,
             "max_homing_alt_m": 15,
             "min_spray_error_m": 2,
+            "time_wait_for_det_s": 10,
+            "max_homing_time_s": 40,
             "sim_ai_enable_imperfections": False,
         }
 

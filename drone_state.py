@@ -55,19 +55,21 @@ class DroneStateForHoming:
     hight: int = 1280
     width: int = 1280
 
-    # RPi Global Shutter Camera (IMX296, 3.45 µm pixel pitch) + 6mm CS lens.
-    # Assumes output pixels map 1:1 to sensor pixels (no rescaling).
+    # RPi Global Shutter Camera (IMX296, 3.45 µm pixel pitch, 1456x1088 active) + 6mm CS lens.
+    # FOV is a physical property of sensor+lens; independent of buffer downscaling.
     SENSOR_PIXEL_PITCH_MM = 0.00345
     LENS_FOCAL_LENGTH_MM = 6.0
+    SENSOR_W_PX = 1456
+    SENSOR_H_PX = 1088
 
     @property
     def fov_x_deg(self) -> float:
-        half = self.width * self.SENSOR_PIXEL_PITCH_MM / 2.0
+        half = self.SENSOR_W_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
         return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
 
     @property
     def fov_y_deg(self) -> float:
-        half = self.hight * self.SENSOR_PIXEL_PITCH_MM / 2.0
+        half = self.SENSOR_H_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
         return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
 
     def set_pass_message(self,msg):

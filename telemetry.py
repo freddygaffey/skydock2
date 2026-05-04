@@ -196,7 +196,7 @@ class Telemetry:
             logger="telemetry",
             level="INFO",
             drone_state=self.drone_state,
-            command={"type": "velocity_body_offset_ned", "vx": mx, "vy": my, "vz": mz, "bitmask": bitmask},
+            command={"type": "velocity_local_ned", "vx": mx, "vy": my, "vz": mz, "bitmask": bitmask},
         )
         self.connection.mav.set_position_target_local_ned_send(
             0,
@@ -334,6 +334,8 @@ class Telemetry:
 
         for i in new_array:print(i)
         return new_array
+
+telemetry_singlton: "Telemetry|None" = None
 
 if __name__ == "__main__":
     telemetry_singlton = Telemetry()

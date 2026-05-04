@@ -70,7 +70,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     # spray weed
     if min_dist <= MIN_SPRAY_ERROR:
         # check alt
-        if drone_state.altitude_rel_home > MIN_ALT + 1:
+        if drone_state.altitude_rel_home <= MIN_ALT + 1:
             log_event("spray_ready", logger="spray", level="INFO",
                       drone_state=drone_state, frame=frame,
                       dist_horizontal_m=float(min_dist),
