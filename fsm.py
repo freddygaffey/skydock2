@@ -23,6 +23,8 @@ class StateMachine:
     def update(self):
         frame = ai_storage_singleton.get_latest_frame()
         drone_state = telemetry_singlton.drone_state
+        if not drone_state.is_telemetry_ready:
+            return
         prev_state = self.current_state
         match self.current_state:
             case DroneStateEnum.OVERRIDE:

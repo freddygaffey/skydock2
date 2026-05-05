@@ -46,8 +46,8 @@ class DroneStateForHoming:
     heading: float = 0
     
     rotaion:Rotation = field(default_factory=lambda: Rotation(0,0,0,0))
-    rotaion_history: deque = field(default_factory=lambda: deque(maxlen=10))
-    gps_history: deque = field(default_factory=lambda: deque(maxlen=10))
+    rotaion_history: deque = field(default_factory=lambda: deque(maxlen=100))
+    gps_history: deque = field(default_factory=lambda: deque(maxlen=100))
 
     # MAVLink DISTANCE_SENSOR.current_distance is centimeters (common.xml). Convert to metres here.
     rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, metres; 0 = no data
@@ -71,6 +71,12 @@ class DroneStateForHoming:
     def fov_y_deg(self) -> float:
         half = self.SENSOR_H_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
         return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
+
+    @property
+    def is_telemetry_ready(self) -> bool:
+        # First ATTITUDE message populates rotaion_history; before that, projections
+        # would assume zero attitude and produce wildly wrong NED offsets.
+        return len(self.rotaion_history) > 0
 
     def set_pass_message(self,msg):
         if msg is None:

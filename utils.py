@@ -5,6 +5,8 @@ import math
 import numpy as np
 
 def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
+    if not drone_state.is_telemetry_ready:
+        return float('inf'), float('inf')
     NUM_OF_PIX_X = drone_state.width
     NUM_OF_PIX_Y = drone_state.hight
 
