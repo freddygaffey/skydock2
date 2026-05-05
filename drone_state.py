@@ -55,12 +55,15 @@ class DroneStateForHoming:
     hight: int = 1280
     width: int = 1280
 
-    # RPi Global Shutter Camera (IMX296, 3.45 µm pixel pitch, 1456x1088 active) + 6mm CS lens.
-    # FOV is a physical property of sensor+lens; independent of buffer downscaling.
-    SENSOR_PIXEL_PITCH_MM = 0.00345
+    # RPi HQ Camera (IMX477, 1.55 µm pixel pitch, 4056x3040 active) + 6mm CS lens.
+    # Active Picamera2 sensor mode is 2028x1080 (binned), crop_limits (0, 440, 4056, 2160) -
+    # full sensor width, top/bottom 440 px cropped by the sensor mode. The lores stream
+    # stretches that area into 640x640 with preserve_ar=False, so buffer pixels are
+    # non-square and per-axis FOV must reflect each axis's sensor coverage independently.
+    SENSOR_PIXEL_PITCH_MM = 0.00155
     LENS_FOCAL_LENGTH_MM = 6.0
-    SENSOR_W_PX = 1456
-    SENSOR_H_PX = 1088
+    SENSOR_W_PX = 4056
+    SENSOR_H_PX = 2160
 
     @property
     def fov_x_deg(self) -> float:
