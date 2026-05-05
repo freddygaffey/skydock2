@@ -59,13 +59,25 @@ def app_callback(pad, info, user_data):
     structure = caps.get_structure(0)
     width = structure.get_value('width')
     height = structure.get_value('height')
-    
+
+    # Capture wall-clock time = now - (pipeline_now - buffer.pts). buffer.pts is in
+    # pipeline clock ns at sensor capture; subtracting from current pipeline clock
+    # gives buffer age, then offset from time.time_ns() recovers true capture time.
+    capture_time_ns = time.time_ns()
+    if buffer.pts != Gst.CLOCK_TIME_NONE:
+        elem = pad.get_parent_element()
+        clock = elem.get_clock() if elem is not None else None
+        if clock is not None:
+            pipeline_now = clock.get_time()
+            if pipeline_now != Gst.CLOCK_TIME_NONE and pipeline_now >= buffer.pts:
+                capture_time_ns = time.time_ns() - (pipeline_now - buffer.pts)
+
     frame = Frame([])
     ts = getattr(telemetry, "telemetry_singlton", None)
     if ts is not None:
         ts.drone_state.width = width
         ts.drone_state.hight = height
-    for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  
+    for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):
         label = str(detection.get_label())
         # print(f"seen {label}")
         # if label not in ["sports_ball","frisby","person"]: continue
@@ -76,7 +88,7 @@ def app_callback(pad, info, user_data):
                 (bbox.xmax() * width, bbox.ymax() * height)]
 
         confidence = float(detection.get_confidence())
-        det = Detection(label=label,confidence=confidence,bbox=bbox)
+        det = Detection(label=label,confidence=confidence,bbox=bbox,time_ns=capture_time_ns)
         if "ball" in det.label:
             _det_print_count += 1
         frame.add_detection(det)
@@ -96,7 +108,7 @@ def app_callback(pad, info, user_data):
         success, map_info = buffer.map(Gst.MapFlags.READ)
         if success:
             try:
-                frame_queue.put_nowait((time.time_ns(), bytes(map_info.data), width, height))
+                frame_queue.put_nowait((capture_time_ns, bytes(map_info.data), width, height))
             except queue_module.Full:
                 pass
             buffer.unmap(map_info)
