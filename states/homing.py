@@ -1,12 +1,47 @@
 import time
+import math
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import Frame, Detection
 from utils import detection_to_dist, detection_to_ned
-from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT
+from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT, MAX_HOMING_DIST
 from states.enum import DroneStateEnum
 from mission_logging import log_event
+
+# Detection scoring knobs (tune in code, not JSON)
+SCORE_CONF_MIDPOINT = 0.3      # sigmoid midpoint: confidence at this value scores ~0.5
+SCORE_CONF_STEEPNESS = 10.0    # sigmoid steepness around midpoint
+SCORE_CONF_FLOOR = 0.1         # ignore detections below this raw confidence
+SCORE_BBOX_FRAC = 0.1          # bbox sqrt-area as fraction of image diag = full size_term
+SCORE_ASPECT_MAX = 2.0         # bboxes more elongated than this are penalized
+SCORE_ASPECT_PENALTY = 0.5     # multiplier applied when aspect ratio exceeds threshold
+MIN_HOMING_SCORE = 0.05        # detections below this score are treated as no-detection
+
+
+def score_detection(drone_state: DroneStateForHoming, det: Detection, max_dist_m: float) -> tuple[float, float]:
+    """Multi-factor credibility score. Returns (score, dist_m). score in 0..~1.
+    Combines confidence (sigmoid around SCORE_CONF_MIDPOINT), proximity (exp decay
+    over max_dist_m), bbox size relative to image, and aspect-ratio sanity."""
+    dist_m = detection_to_dist(drone_state, det)
+    if det.confidence < SCORE_CONF_FLOOR or not math.isfinite(dist_m):
+        return 0.0, dist_m
+
+    conf_term = 1.0 / (1.0 + math.exp(-SCORE_CONF_STEEPNESS * (det.confidence - SCORE_CONF_MIDPOINT)))
+    decay = max(max_dist_m / 3.0, 1.0)
+    dist_term = math.exp(-dist_m / decay)
+
+    p1, p2 = det.bbox
+    bw = abs(p2[0] - p1[0])
+    bh = abs(p2[1] - p1[1])
+    image_diag_px = math.sqrt(drone_state.width**2 + drone_state.hight**2)
+    size_term = min(1.0, math.sqrt(bw * bh) / max(image_diag_px * SCORE_BBOX_FRAC, 1.0))
+
+    ar = max(bw, bh) / max(min(bw, bh), 1e-6)
+    aspect_term = 1.0 if ar < SCORE_ASPECT_MAX else SCORE_ASPECT_PENALTY
+
+    return conf_term * dist_term * size_term * aspect_term, dist_m
+
 
 last_det_time = None
 start_homing_time = None
@@ -31,14 +66,19 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     if start_homing_time is None:
         start_homing_time = time.time()
 
-    # calulate closet detecion
+    # pick highest-scoring detection (combines confidence, proximity, bbox size, aspect)
     min_det = None
     min_dist = float('inf')
+    best_score = 0.0
     for i in frame.detection:
-        d = detection_to_dist(drone_state, i)
-        if d < min_dist:
+        s, d = score_detection(drone_state, i, MAX_HOMING_DIST)
+        if s > best_score:
+            best_score = s
             min_dist = d
             min_det = i
+    if best_score < MIN_HOMING_SCORE:
+        min_det = None
+        min_dist = float('inf')
 
     if min_det is not None:
         last_det_time = time.time()
