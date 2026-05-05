@@ -47,18 +47,18 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     ray_to_ned = Rz @ Ry @ Rx
     ray_NED = ray_to_ned @ ray_body
 
-    if drone_state.rangefinder_m > 0.3:
-        # Rangefinder is body-fixed (parallel to camera, pointing down in body frame).
-        # At non-zero attitude it measures slant range along body-down, not vertical height.
-        # Rotate body-down [0,0,1] into NED to get the rangefinder's NED direction,
-        # then multiply by its NED[2] component to recover vertical altitude,
-        # then divide by ray_NED[2] to get the factor for the camera ray.
+    # Reject geometry where camera ray points up or sideways: ray_NED[2] near zero or negative
+    # means the ray does not intersect the ground plane ahead of the drone. max() would otherwise
+    # silently flip a negative ray to a phantom forward projection.
+    if ray_NED[2] < 0.3:
+        return float('inf'), float('inf')
+
+    if 0.3 < drone_state.rangefinder_m < 100:
         rng_NED = ray_to_ned @ np.array([0.0, 0.0, 1.0])
         h = drone_state.rangefinder_m * rng_NED[2]
-        multiply_factor = h / max(ray_NED[2], 0.1)
+        multiply_factor = h / ray_NED[2]
     else:
-        # Fall back: use ArduPilot EKF altitude to find where ray hits the ground plane.
-        multiply_factor = drone_state.altitude_rel_home / max(ray_NED[2], 0.1)
+        multiply_factor = drone_state.altitude_rel_home / ray_NED[2]
 
     N = multiply_factor * ray_NED[0]
     E = multiply_factor * ray_NED[1]
@@ -114,7 +114,7 @@ def latlon_to_pixel(drone_state, weed_lat: float, weed_lon: float, time_ns: int 
     E = (weed_lon - drone_state.longitude) * (111320 * np.cos(radians(drone_state.latitude)))
 
     # Vertical component (positive-down in NED = altitude)
-    if drone_state.rangefinder_m > 0.3:
+    if 0.3 < drone_state.rangefinder_m < 100:
         rng_ned = ray_to_ned @ np.array([0.0, 0.0, 1.0])
         h = drone_state.rangefinder_m * rng_ned[2]
     else:
