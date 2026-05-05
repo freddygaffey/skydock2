@@ -18,8 +18,54 @@ import numpy as np
 import cv2
 import queue as queue_module  # rename to avoid shadowing
 
+TARGET_FPS = 60
+SAVE_EVERY_N_FRAMES = 2  # at 60fps -> save 30 jpgs/sec
+
 # Frame saving queue
-frame_queue = queue_module.Queue(maxsize=200)
+frame_queue = queue_module.Queue(maxsize=500)
+
+
+# Hailo's bundled picamera_thread hardcodes FrameRate=30. Patch it before app starts so the
+# Picamera2 lores stream and downstream caps both run at TARGET_FPS.
+def _patched_picamera_thread(pipeline, video_width, video_height, video_format, picamera_config=None):
+    from picamera2 import Picamera2
+    appsrc = pipeline.get_by_name("app_source")
+    appsrc.set_property("is-live", True)
+    appsrc.set_property("format", Gst.Format.TIME)
+    with Picamera2() as picam2:
+        if picamera_config is None:
+            main = {"size": (1280, 720), "format": "RGB888"}
+            lores = {"size": (video_width, video_height), "format": "RGB888"}
+            controls = {"FrameRate": TARGET_FPS}
+            config = picam2.create_preview_configuration(main=main, lores=lores, controls=controls)
+        else:
+            config = picamera_config
+        picam2.configure(config)
+        lores_stream = config["lores"]
+        format_str = "RGB" if lores_stream["format"] == "RGB888" else video_format
+        width, height = lores_stream["size"]
+        appsrc.set_property("caps", Gst.Caps.from_string(
+            f"video/x-raw, format={format_str}, width={width}, height={height}, framerate={TARGET_FPS}/1, pixel-aspect-ratio=1/1"
+        ))
+        picam2.start()
+        frame_count = 0
+        while True:
+            frame_data = picam2.capture_array("lores")
+            if frame_data is None:
+                break
+            frame = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
+            buffer = Gst.Buffer.new_wrapped(frame.tobytes())
+            buffer_duration = Gst.util_uint64_scale_int(1, Gst.SECOND, TARGET_FPS)
+            buffer.pts = frame_count * buffer_duration
+            buffer.duration = buffer_duration
+            ret = appsrc.emit("push-buffer", buffer)
+            if ret == Gst.FlowReturn.FLUSHING or ret != Gst.FlowReturn.OK:
+                break
+            frame_count += 1
+
+
+import hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app as _hga
+_hga.picamera_thread = _patched_picamera_thread
 
 def frame_saver_thread():
     """Background thread - saves frames as JPEG"""
@@ -50,7 +96,7 @@ _det_print_count = 0
 
 def app_callback(pad, info, user_data):
     global _det_print_last, _det_print_count
-    save_frames_per_frame = 1 # save x frames out of y frames
+    save_frames_per_frame = SAVE_EVERY_N_FRAMES
     buffer = info.get_buffer()  # Get the GstBuffer from the probe info
     if buffer is None:  # Check if the buffer is valid
         return Gst.PadProbeReturn.OK
@@ -127,6 +173,8 @@ def make_ai_app():
         sys.argv += ["--hef-path", "/home/fred/skydock2/models/ball_detection.hef"]
     if "--labels-json" not in sys.argv:
         sys.argv += ["--labels-json", "/home/fred/skydock2/models/ball_labels.json"]
+    if "--frame-rate" not in sys.argv and "-r" not in sys.argv:
+        sys.argv += ["--frame-rate", str(TARGET_FPS)]
     user_data = user_app_callback_class()
     app = GStreamerDetectionApp(app_callback, user_data)
     return app
