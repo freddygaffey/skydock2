@@ -51,7 +51,12 @@ def calc_speed(drone_state:DroneStateForHoming,det:Detection):
     N, E = detection_to_ned(drone_state, det)
     vN = max(-0.75, min(0.75, N))
     vE = max(-0.75, min(0.75, E))
-    vD = 1.0 if drone_state.altitude_rel_home > MIN_ALT else 0.0
+    if drone_state.altitude_rel_home > MAX_HOMING_ALT:
+        vD = 0.3
+    elif drone_state.altitude_rel_home < MIN_ALT:
+        vD = -0.3
+    else:
+        vD = 0.0
     return (vN, vE, vD)
 
     
@@ -95,13 +100,14 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     # move up to try and find weed (cap at MAX_HOMING_ALT)
     elif min_det is None:
         if drone_state.altitude_rel_home >= MAX_HOMING_ALT:
+            print("exceed max alt")
             log_event("homing_alt_cap", logger="homing", level="WARN",
                       drone_state=drone_state, frame=frame,
                       altitude_rel_home=float(drone_state.altitude_rel_home),
                       max_homing_alt=float(MAX_HOMING_ALT))
-            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, 0)  # hold alt
+            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, 0.1)  # move down
         else:
-            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -1) # move up
+            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -0.2) # move up
         return DroneStateEnum.HOMING
 
     # stop it just sitting there
