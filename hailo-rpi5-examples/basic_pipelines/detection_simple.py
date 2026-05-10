@@ -18,7 +18,7 @@ import numpy as np
 import cv2
 import queue as queue_module  # rename to avoid shadowing
 
-TARGET_FPS = 60
+TARGET_FPS = 30
 SAVE_EVERY_N_FRAMES = 2  # at 60fps -> save 30 jpgs/sec
 
 # Frame saving queue
