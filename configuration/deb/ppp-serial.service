@@ -1,0 +1,13 @@
+[Unit]
+Description=PPP Serial Link
+BindsTo=dev-ttyUSB0.device
+After=dev-ttyUSB0.device
+
+[Service]
+ExecStartPre=/bin/rm -f /var/lock/LCK..ttyUSB0
+ExecStart=/usr/sbin/pppd call ubuntu-serial
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=dev-ttyUSB0.device

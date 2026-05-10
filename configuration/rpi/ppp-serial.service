@@ -1,0 +1,12 @@
+[Unit]
+Description=PPP Serial Link
+After=dev-serial0.device
+
+[Service]
+ExecStartPre=/bin/rm -f /var/lock/LCK..serial0
+ExecStart=/usr/sbin/pppd call pi-serial
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

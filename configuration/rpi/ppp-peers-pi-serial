@@ -1,0 +1,12 @@
+/dev/serial0 57600
+local
+noauth
+nocrtscts
+debug
+nodetach
+10.0.0.1:10.0.0.2
+persist
+holdoff 5
+maxfail 0
+defaultroute
+replacedefaultroute

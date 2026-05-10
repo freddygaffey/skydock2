@@ -1,0 +1,10 @@
+/dev/ttyUSB0 57600
+local
+noauth
+nocrtscts
+debug
+nodetach
+10.0.0.2:10.0.0.1
+persist
+holdoff 5
+maxfail 0
