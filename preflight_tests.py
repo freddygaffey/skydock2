@@ -144,7 +144,7 @@ def test_flight_mode(results: TestResults, telem, state):
         results.ok("Drone is disarmed")
 
     # Autonomy switch
-    autonomy = state.enable_homing_and_autonomy
+    autonomy = state.autonomy_enabled
     print(f"  Autonomy switch: {'ENABLED' if autonomy else 'DISABLED'}")
     if autonomy:
         results.warn("Autonomy is ENABLED - disable before flight prep")

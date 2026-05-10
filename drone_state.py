@@ -40,7 +40,8 @@ class DroneStateForHoming:
     velocity_y: float = 0.0
     velocity_z: float = 0.0
 
-    enable_homing_and_autonomy: bool = True
+    autonomy_enabled: bool = True
+    force_homing: bool = False
     mode: str = 'STABILIZE'
 
     heading: float = 0
@@ -133,11 +134,20 @@ class DroneStateForHoming:
         if msg._type == "RC_CHANNELS":
             import sys
             if "-s" in sys.argv or "--sim" in sys.argv:
-                self.enable_homing_and_autonomy = True
-            elif msg.chan16_raw > 1500:  # high (~2099) = enable, low (~900) = disable
-                self.enable_homing_and_autonomy = True
+                self.autonomy_enabled = True
+                self.force_homing = True
             else:
-                self.enable_homing_and_autonomy = False
+                # 3-pos switch on chan16: up (~2099) = force_homing, mid (~1500) = disable, down (~900) = autonomy
+                pwm = msg.chan16_raw
+                if pwm > 1700:
+                    self.force_homing = True
+                    self.autonomy_enabled = True
+                elif pwm < 1300:
+                    self.autonomy_enabled = True
+                    self.force_homing = False
+                else:
+                    self.autonomy_enabled = False
+                    self.force_homing = False
 
             # # TODO: remove
             # self.rotaion_x = 0.0
@@ -167,7 +177,7 @@ class DroneStateForHoming:
                 self.latitude,
                 self.altitude_rel_home,
                 self.heading,
-                self.enable_homing_and_autonomy,
+                self.autonomy_enabled,
                 self.rotaion.x,
                 self.rotaion.y,
                 self.rotaion.z,

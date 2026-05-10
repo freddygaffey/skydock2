@@ -93,7 +93,7 @@ def main():
     set_db_path(str(mission_dir / "droneDB.db"))
     configure_mission_dir(mission_dir)
 
-    # Select mission file BEFORE importing FSM so constants can be set from JSON
+    # Select mission file
     if is_sim:
         from sitl import get_sim_files
         mission_file = get_sim_files()[0]
@@ -102,7 +102,6 @@ def main():
         if mission_file is None:
             return
 
-    # Load params from mission JSON and set constants before FSM/state modules are imported
     mission_path = mission_file if os.path.exists(mission_file) else f"sim_data/{mission_file}"
     with open(mission_path) as f:
         _mission_data = json.load(f)
@@ -118,27 +117,7 @@ def main():
         if input("Continue anyway? (y to confirm): ").strip().lower() != "y":
             return
 
-    params = _mission_data["params"]
-
     import constants
-    constants.SCAN_HIGHT             = float(params["scan_height_m"])
-    constants.SCAN_SPEED_MS          = float(params["scan_speed_ms"])
-    constants.MIN_DIST_FROM_WAYPOINT = float(params["min_dist_from_waypoint_m"])
-    constants.MIN_WEED_SPACING       = float(params["min_weed_spacing_m"])
-    constants.MIN_NUM_DET            = int(params["min_num_det"])
-    constants.GOTO_ALT               = float(params["goto_alt_m"])
-    constants.MAX_HOMING_DIST        = float(params["max_homing_dist_m"])
-    constants.MIN_ALT                = float(params["min_alt_m"])
-    constants.MAX_HOMING_ALT         = float(params["max_homing_alt_m"])
-    constants.MIN_SPRAY_ERROR        = float(params["min_spray_error_m"])
-    constants.TIME_WAIT_FOR_DET      = float(params["time_wait_for_det_s"])
-    constants.MAX_HOMING_TIME        = float(params["max_homing_time_s"])
-
-    constants.SIM_AI_ENABLE_IMPERFECTIONS = (
-        bool(params.get("sim_ai_enable_imperfections", False)) if is_sim else False
-    )
-
-    # Now import FSM — state modules will capture the correct values from constants
     from ai_class import ai_storage_singleton
     from fsm import StateMachine
 

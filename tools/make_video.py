@@ -165,7 +165,7 @@ def draw_overlay(
         vy   = drone_state.get("velocity_y", 0.0)
         rng  = drone_state.get("rangefinder_m")
         speed = math.sqrt(vx ** 2 + vy ** 2)
-        auto = drone_state.get("enable_homing_and_autonomy", False)
+        auto = drone_state.get("autonomy_enabled", False)
 
         cv2.putText(frame, f"Mode: {mode}  {'ARMED' if armed else 'DISARMED'}", (8, y), font, fs, white, th)
         auto_c = (0, 255, 0) if auto else (0, 0, 255)

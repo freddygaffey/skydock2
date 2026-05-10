@@ -72,8 +72,11 @@ def iter_events_of_kind(path: Path, event: str) -> Iterator[dict[str, Any]]:
 def mission_paths(missions_root: Path) -> list[Path]:
     if not missions_root.exists():
         return []
-    dirs = [p for p in missions_root.iterdir() if p.is_dir() and p.name.isdigit()]
-    return sorted(dirs, key=lambda p: int(p.name))
+    dirs = [
+        p for p in missions_root.iterdir()
+        if p.is_dir() and p.name.isdigit() and (p / "mission.jsonl").is_file()
+    ]
+    return sorted(dirs, key=lambda p: (p / "mission.jsonl").stat().st_mtime, reverse=True)
 
 
 def sim_files(sim_data_root: Path) -> list[str]:

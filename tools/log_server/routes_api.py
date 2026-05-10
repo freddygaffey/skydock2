@@ -206,7 +206,10 @@ def mission_path(mission_id: str):
     stride = max(1, int(request.args.get("stride", "1")))
     source = (request.args.get("source") or "telemetry").strip().lower()
     if source in ("fsm", "fsm_tick", "tick"):
-        return jsonify(fsm_tick_path_points(p, stride))
+        pts = fsm_tick_path_points(p, stride)
+        if not pts:
+            pts = telemetry_path_points(p, stride)
+        return jsonify(pts)
     return jsonify(telemetry_path_points(p, stride))
 
 
@@ -877,8 +880,25 @@ def rpi_pull_missions():
     user_host = resolved
     remote = _rpi_remote_skydock_path()
     rpi_missions: Path = current_app.config["RPI_MISSIONS_ROOT"]
-    code, out = _rpi_tar_ssh_pull(user_host, remote, "missions", rpi_missions)
-    if code == 0:
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    sync_script = repo_root / "tools" / "sync_rpi_logs.sh"
+    env = os.environ.copy()
+    env["SKYDOCK_RPI_SSH"] = user_host
+    env["SKYDOCK_RPI_REMOTE_DIR"] = remote
+    env["SKYDOCK_RPI_MISSIONS_DIR"] = str(rpi_missions.resolve())
+    try:
+        proc = subprocess.run(
+            ["bash", str(sync_script)],
+            cwd=str(repo_root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=7200,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Timed out after 7200s"}), 504
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 0:
         return jsonify({"ok": True, "output": out or "(no output)"})
     return jsonify({"ok": False, "error": out}), 500
 

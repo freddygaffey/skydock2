@@ -63,7 +63,7 @@ class DroneStateModel(Base):
     velocity_x = Column(Float, nullable=False)
     velocity_y = Column(Float, nullable=False)
     velocity_z = Column(Float, nullable=False)
-    enable_homing_and_autonomy = Column(Boolean, nullable=False)
+    autonomy_enabled = Column(Boolean, nullable=False)
     heading = Column(Float, nullable=True)
     rotation_x = Column(Float, nullable=False, default=0.0)
     rotation_y = Column(Float, nullable=False, default=0.0)
@@ -248,7 +248,7 @@ class DatabaseSession:
 #                             velocity_x REAL NOT NULL,
 #                             velocity_y REAL NOT NULL,
 #                             velocity_z REAL NOT NULL,
-#                             enable_homing_and_autonomy INTEGER NOT NULL,
+#                             autonomy_enabled INTEGER NOT NULL,
 #                             heading REAL,
 #                             rotation_x REAL NOT NULL,
 #                             rotation_z REAL NOT NULL,

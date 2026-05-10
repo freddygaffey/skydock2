@@ -1,36 +1,35 @@
 #########################
-# globa
-# #######################
+# global
+#########################
 import sys
 SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys.argv else (int(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1)
 
 
 ###########################
 ###### fsm ################
-# Set from mission JSON params in main.py before FSM is imported
 ###########################
 
 # Scan state
-SCAN_HIGHT = None           # scan_height_m
-SCAN_SPEED_MS = None        # scan_speed_ms
-MIN_DIST_FROM_WAYPOINT = None  # min_dist_from_waypoint_m
-MIN_WEED_SPACING = None     # min_weed_spacing_m
-MIN_NUM_DET = None          # min_num_det
+SCAN_HIGHT = 10.0
+SCAN_SPEED_MS = 1.0
+MIN_DIST_FROM_WAYPOINT = 1.0
+MIN_WEED_SPACING = 2.0
+MIN_NUM_DET = 3
 
 # Goto state
-GOTO_ALT = None             # goto_alt_m
+GOTO_ALT = 10.0
 
 # Homing state
-MAX_HOMING_DIST = None      # max_homing_dist_m
-MIN_ALT = None              # min_alt_m
-MAX_HOMING_ALT = None       # max_homing_alt_m
+MAX_HOMING_DIST = 10.0
+MIN_ALT = 5.0
+MAX_HOMING_ALT = 15.0
 
 # Spray state
-MIN_SPRAY_ERROR = None      # min_spray_error_m
+MIN_SPRAY_ERROR = 2.0
 
 # Homing timeouts (real-time seconds; states/homing.py divides by SIM_SPEED)
-TIME_WAIT_FOR_DET = None    # time_wait_for_det_s
-MAX_HOMING_TIME = None      # max_homing_time_s
+TIME_WAIT_FOR_DET = 10.0
+MAX_HOMING_TIME = 40.0
 
 
 ###########################
