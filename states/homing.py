@@ -131,7 +131,9 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                       closest_detection={"time_detected": min_det.time_ns})
             last_det_time = None
             start_homing_time = None
-            return DroneStateEnum.SPRAY
+            # return DroneStateEnum.SPRAY
+            # todo: remove 
+            return DroneStateEnum.HOMING
         else:
             # the homing funcatin will handle this move the drone closer to the weed and down
             pass
