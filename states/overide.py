@@ -9,6 +9,7 @@ from ai_callback import Frame
 
 
 def overide(drone_state:DroneStateForHoming,frame:Frame):
+    telemetry_singlton.stop_volocity_command()
     if not drone_state.autonomy_enabled:
         telemetry_singlton.stop_volocity_command()
         return DroneStateEnum.OVERRIDE
