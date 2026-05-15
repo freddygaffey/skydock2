@@ -55,7 +55,7 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     if ray_NED[2] < 0.3:
         return float('inf'), float('inf')
 
-    if 0.3 < drone_state.rangefinder_m < 100:
+    if 0.3 < drone_state.rangefinder_m < 12:
         rng_NED = ray_to_ned @ np.array([0.0, 0.0, 1.0])
         h = drone_state.rangefinder_m * rng_NED[2]
         multiply_factor = h / ray_NED[2]
@@ -117,7 +117,7 @@ def latlon_to_pixel(drone_state, weed_lat: float, weed_lon: float, time_ns: int 
     E = (weed_lon - drone_state.longitude) * (111320 * np.cos(radians(drone_state.latitude)))
 
     # Vertical component (positive-down in NED = altitude)
-    if 0.3 < drone_state.rangefinder_m < 100:
+    if 0.3 < drone_state.rangefinder_m < 12:
         rng_ned = ray_to_ned @ np.array([0.0, 0.0, 1.0])
         h = drone_state.rangefinder_m * rng_ned[2]
     else:

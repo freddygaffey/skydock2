@@ -32,11 +32,26 @@ def set_sim_speed(conn, speed: float):
     set_param(conn, b"SIM_SPEEDUP", speed)
 
 
+def setup_rtk_gps(conn):
+    print("[sitl] configuring simulated RTK GPS...")
+    set_param(conn, b"GPS_TYPE",          1.0)   # UBLOX
+    set_param(conn, b"SIM_GPS_TYPE",      1.0)   # UBLOX
+    set_param(conn, b"SIM_GPS_NOISE",     0.0)
+    set_param(conn, b"SIM_GPS_NUMSATS",  20.0)
+    set_param(conn, b"SIM_GPS_HZ",       10.0)
+    set_param(conn, b"SIM_GPS_GLITCH_X",  0.0)
+    set_param(conn, b"SIM_GPS_GLITCH_Y",  0.0)
+    set_param(conn, b"SIM_GPS_GLITCH_Z",  0.0)
+    set_param(conn, b"SIM_GPS_LAG_MS",    0.0)
+    set_param(conn, b"SIM_GPS_BYTELOSS",  0.0)
+    set_param(conn, b"SIM_GPS_FIX_TYPE",  6.0)   # RTK_FIXED (ignored on older ArduPilot)
+
+
 def setup_rangefinder(conn):
     print("[sitl] configuring simulated rangefinder...")
     set_param(conn, b"RNGFND1_TYPE",    100.0)  # SITL simulated
     set_param(conn, b"RNGFND1_ORIENT",   25.0)  # MAV_SENSOR_ROTATION_PITCH_270 = nadir
-    set_param(conn, b"RNGFND1_MAX_CM", 5000.0)  # 50 m
+    set_param(conn, b"RNGFND1_MAX_CM", 1200.0)  # 12 m
     set_param(conn, b"RNGFND1_MIN_CM",   20.0)  # 0.2 m
 
 
@@ -82,6 +97,7 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
 def setup_sitl(conn, telemetry, speed: float = 1.0, altitude: float = 10):
     disable_sensor_noise(conn)
     set_sim_speed(conn, speed)
+    setup_rtk_gps(conn)
     setup_rangefinder(conn)
     time.sleep(0.5)
     arm_and_takeoff(conn, telemetry, altitude)

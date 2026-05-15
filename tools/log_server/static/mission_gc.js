@@ -220,7 +220,7 @@
         const anyWeedDetected = data.events.some((e) => e.event === "weed_detected");
         const anySprayEvent = data.events.some(
           (e) =>
-            e.event === "weed_sprayed" ||
+            e.event === "db_weed_sprayed" ||
             e.event === "spray_attempt" ||
             e.event === "spray_miss"
         );

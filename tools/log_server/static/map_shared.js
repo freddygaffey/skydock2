@@ -584,7 +584,7 @@
         }
         var paletteGreen = ["#2ecc71", "#4adf86", "#6bf1a3", "#1abc9c", "#00d084", "#16a085"];
         var paletteRed = ["#ff4a4a", "#ff6b6b", "#ff5252", "#e74c3c", "#f25f5c", "#c0392b"];
-        var pal = ev.event === "weed_sprayed" || ev.event === "spray_attempt" ? paletteGreen : paletteRed;
+        var pal = ev.event === "db_weed_sprayed" || ev.event === "spray_attempt" ? paletteGreen : paletteRed;
         var idx = hashStr(weedKey) % pal.length;
         var col = pal[idx];
         out.push(

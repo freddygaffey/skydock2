@@ -172,7 +172,7 @@ def mission_fsm(mission_id: str):
 def mission_weeds(mission_id: str):
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
-    kinds = {"weed_detected", "weed_sprayed", "spray_attempt", "spray_miss", "spray_ready"}
+    kinds = {"weed_detected", "db_weed_sprayed", "spray_attempt", "spray_miss", "spray_ready"}
     return jsonify([ev for ev in iter_events(p) if ev.get("event") in kinds])
 
 
@@ -265,7 +265,7 @@ def mission_spray(mission_id: str):
     """All spray-related events."""
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
-    kinds = {"weed_sprayed", "spray_attempt", "spray_miss", "spray_ready", "spray_skipped"}
+    kinds = {"db_weed_sprayed", "spray_attempt", "spray_miss", "spray_ready", "spray_skipped"}
     return jsonify([ev for ev in iter_events(p) if ev.get("event") in kinds])
 
 

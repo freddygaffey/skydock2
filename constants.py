@@ -10,7 +10,7 @@ SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys
 ###########################
 
 # Scan state
-SCAN_HIGHT = 10.0
+SCAN_HIGHT = 30
 SCAN_SPEED_MS = 1.0
 MIN_DIST_FROM_WAYPOINT = 1.0
 MIN_WEED_SPACING = 2.0
@@ -21,8 +21,8 @@ GOTO_ALT = 10.0
 
 # Homing state
 MAX_HOMING_DIST = 10.0
-MIN_ALT = 5.0
-MAX_HOMING_ALT = 15.0
+MIN_ALT = 10
+MAX_HOMING_ALT = 30
 
 # Spray state
 MIN_SPRAY_ERROR = 2.0

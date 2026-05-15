@@ -1,11 +1,10 @@
 import time
 from dataclasses import dataclass
-from ai_class import Detection
+from ai_class import Detection, Frame
 
 from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from states.enum import DroneStateEnum
-from ai_callback import Frame
 
 
 def overide(drone_state:DroneStateForHoming,frame:Frame):

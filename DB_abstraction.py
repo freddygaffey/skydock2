@@ -368,6 +368,11 @@ class DBAbstraction:
                     ),
                     mode=state_model.mode
                 )
+                # Seed rotaion_history so is_telemetry_ready is True. time_ns=inf so
+                # get_rotation_at_time falls back to self.rotaion instead of extrapolating.
+                _seed = Rotation(time_ns=float('inf'),
+                                 x=drone_state.rotaion.x, y=drone_state.rotaion.y, z=drone_state.rotaion.z)
+                drone_state.rotaion_history.append(_seed)
 
                 # Reconstruct Frame with detections
                 detections = []

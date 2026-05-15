@@ -135,7 +135,7 @@ class DroneStateForHoming:
             import sys
             if "-s" in sys.argv or "--sim" in sys.argv:
                 self.autonomy_enabled = True
-                self.force_homing = True
+                self.force_homing = False
             else:
                 # 3-pos switch on chan16: up (~2099) = force_homing, mid (~1500) = disable, down (~900) = autonomy
                 pwm = msg.chan16_raw

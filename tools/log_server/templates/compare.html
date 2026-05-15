@@ -539,7 +539,7 @@ function renderFsmChart(midA, midB, sumA, sumB){
 // ── event count bar ───────────────────────────────────────────────────────────
 function renderEvChart(midA, midB, evA, evB){
   const interested = ["telemetry_sample","fsm_tick","fsm_transition",
-                      "move_command","weed_detected","weed_sprayed",
+                      "move_command","weed_detected","db_weed_sprayed",
                       "spray_attempt","spray_miss"];
   const keys = interested.filter(k=>(evA[k]||0)+(evB[k]||0)>0);
   const trA={name:`Mission ${midA}`,type:"bar",

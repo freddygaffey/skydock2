@@ -470,7 +470,7 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
             lon = (ev.get("weed") or {}).get("lon")
             if lat and lon:
                 weed_pts.append({"lat": float(lat), "lon": float(lon)})
-        if ev_type in ("weed_sprayed", "spray_attempt"):
+        if ev_type in ("db_weed_sprayed", "spray_attempt"):
             spray_n += 1
         fr = ev.get("frame")
         if fr and (fr.get("detections") or []):
