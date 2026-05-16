@@ -63,4 +63,4 @@ ssh fred@rpi.local 'ping -I ppp0 -c 3 8.8.8.8'   # internet via NAT
 
 - **Duplicate units**: earlier setup created `ppp-ubuntu.service` (laptop) and `ppp-pi.service` (RPi) alongside the `ppp-serial.service` units. They competed for the same TTY and broke the link. The `ppp-serial.service` versions kept here are the survivors (better — they bind to the device unit and clean stale lock files).
 - **USB rename risk**: laptop unit binds to `/dev/ttyUSB0` by name. If another USB-serial device is plugged in and the RFD re-enumerates as `ttyUSB1`, the link breaks. Fix: switch to `/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0` and update `BindsTo`/`WantedBy` to the matching escaped device unit name. Not applied here.
-- Link is ~57600 baud over RFD900 — expect ~100ms RTT, occasional packet loss is normal.
+- Link is 230400 baud over RFD900 — expect ~100ms RTT, occasional packet loss is normal.

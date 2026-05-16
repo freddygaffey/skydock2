@@ -17,19 +17,19 @@ MIN_WEED_SPACING = 2.0
 MIN_NUM_DET = 3
 
 # Goto state
-GOTO_ALT = 10.0
+GOTO_ALT = 5
 
 # Homing state
-MAX_HOMING_DIST = 10.0
-MIN_ALT = 10
+MAX_HOMING_DIST = 3
+MIN_ALT = 5
 MAX_HOMING_ALT = 30
 
 # Spray state
 MIN_SPRAY_ERROR = 2.0
 
 # Homing timeouts (real-time seconds; states/homing.py divides by SIM_SPEED)
-TIME_WAIT_FOR_DET = 10.0
-MAX_HOMING_TIME = 40.0
+TIME_WAIT_FOR_DET = 30
+MAX_HOMING_TIME = 60
 
 
 ###########################

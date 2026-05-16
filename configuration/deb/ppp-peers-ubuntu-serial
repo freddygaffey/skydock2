@@ -1,4 +1,4 @@
-/dev/ttyUSB0 57600
+/dev/ttyUSB0 230400
 local
 noauth
 nocrtscts
@@ -8,3 +8,8 @@ nodetach
 persist
 holdoff 5
 maxfail 0
+noccp
+novj
+novjccomp
+nobsdcomp
+nodeflate

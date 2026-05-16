@@ -1,4 +1,4 @@
-/dev/serial0 57600
+/dev/serial0 230400
 local
 noauth
 nocrtscts
@@ -8,5 +8,8 @@ nodetach
 persist
 holdoff 5
 maxfail 0
-defaultroute
-replacedefaultroute
+noccp
+novj
+novjccomp
+nobsdcomp
+nodeflate
