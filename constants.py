@@ -10,8 +10,8 @@ SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys
 ###########################
 
 # Scan state
-SCAN_HIGHT = 30
-SCAN_SPEED_MS = 1.0
+SCAN_HIGHT = 10
+SCAN_SPEED_MS = 2
 MIN_DIST_FROM_WAYPOINT = 1.0
 MIN_WEED_SPACING = 2.0
 MIN_NUM_DET = 3
