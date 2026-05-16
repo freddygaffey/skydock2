@@ -55,7 +55,7 @@ class Point:
     def dist_to_cord(self,poss):
         return haversine_distance(*self.location,*poss)
 
-# old
+
 def prosess_all_scan_data():
     all_points : list[Point] = []
     frame_state = db_abstraction.get_all_snapshots()
@@ -65,7 +65,7 @@ def prosess_all_scan_data():
     for i in frame_state:
         for j in i.frame.detection:
             all_det.append(detState(j,i.drone_state))
-    print(f"[PROCESS] snapshots={len(frame_state)} total_dets={len(all_det)}")
+    # print(f"[PROCESS] snapshots={len(frame_state)} total_dets={len(all_det)}")
 
     import math
     skipped = 0
@@ -73,7 +73,7 @@ def prosess_all_scan_data():
         det_loc = detection_to_latlon(i.state,i.det)
         if not (math.isfinite(det_loc[0]) and math.isfinite(det_loc[1])):
             skipped += 1
-            print(f"[PROCESS]   det {idx}: non-finite latlon, skip")
+            # print(f"[PROCESS]   det {idx}: non-finite latlon, skip")
             continue
         min_dist = float("inf")
         min_point = None
@@ -83,24 +83,24 @@ def prosess_all_scan_data():
                 min_dist = j.dist_to_cord(det_loc)
         if min_dist < MIN_WEED_SPACING and min_point is not None:
             min_point.add_det(*det_loc)
-            print(f"[PROCESS]   det {idx} loc=({det_loc[0]:.6f},{det_loc[1]:.6f}) -> cluster at ({min_point.location[0]:.6f},{min_point.location[1]:.6f}) min_dist={min_dist:.2f}")
+            # print(f"[PROCESS]   det {idx} loc=({det_loc[0]:.6f},{det_loc[1]:.6f}) -> cluster at ({min_point.location[0]:.6f},{min_point.location[1]:.6f}) min_dist={min_dist:.2f}")
         else:
            new_point = Point()
            new_point.add_det(*det_loc)
            all_points.append(new_point)
-           print(f"[PROCESS]   det {idx} loc=({det_loc[0]:.6f},{det_loc[1]:.6f}) -> NEW cluster #{len(all_points)-1}")
-    print(f"[PROCESS] skipped={skipped} clusters={len(all_points)} (need >= {MIN_NUM_DET} dets)")
+        #    print(f"[PROCESS]   det {idx} loc=({det_loc[0]:.6f},{det_loc[1]:.6f}) -> NEW cluster #{len(all_points)-1}")
+    # print(f"[PROCESS] skipped={skipped} clusters={len(all_points)} (need >= {MIN_NUM_DET} dets)")
     to_remove = []
     for i in all_points:
         if len(i.det_location) < MIN_NUM_DET:
             to_remove.append(i)
     for i in to_remove:
-        print(f"[PROCESS]   drop cluster at ({i.location[0]:.6f},{i.location[1]:.6f}) dets={len(i.det_location)} < {MIN_NUM_DET}")
+        # print(f"[PROCESS]   drop cluster at ({i.location[0]:.6f},{i.location[1]:.6f}) dets={len(i.det_location)} < {MIN_NUM_DET}")
         all_points.remove(i)
     for i in all_points:
         weed = Weed(lat=i.location[0], lon=i.location[1])
         db_abstraction.log_weed(weed)
-        print(f"[PROCESS]   keep weed lat={i.location[0]:.6f} lon={i.location[1]:.6f} dets={len(i.det_location)}")
+        # print(f"[PROCESS]   keep weed lat={i.location[0]:.6f} lon={i.location[1]:.6f} dets={len(i.det_location)}")
         log_event(
             "weed_detected",
             logger="ai",
@@ -113,4 +113,4 @@ def prosess_all_scan_data():
 
     print(f"[PROCESS] DONE: {len(all_points)} weed(s) detected")
     for idx, i in enumerate(all_points):
-        print(f"[PROCESS]   weed #{idx} lat={i.location[0]:.6f} lon={i.location[1]:.6f} dets={len(i.det_location)}")
+        print(f"weed #{idx} lat={i.location[0]:.6f} lon={i.location[1]:.6f} dets={len(i.det_location)}")

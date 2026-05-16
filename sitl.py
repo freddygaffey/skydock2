@@ -114,7 +114,6 @@ def start_sim(speed: int) -> None:
     except Exception:
         pass
 
-    open(os.path.expanduser("~/.mavinit.scr"), "w").close()
     cmd = (
         f"source ~/venv-ardupilot/bin/activate && "
         f"cd ~/ardupilot/ArduCopter && "

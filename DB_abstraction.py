@@ -215,13 +215,16 @@ class DBAbstraction:
     def get_closest_weed(
         self, 
         drone_state: DroneStateForHoming,
-        only_unsprayed: bool = True
+        only_unsprayed: bool = True,
+        skip_traveled: bool = True,
     ) -> Optional[Weed]:
         """Get the closest weed to current drone position"""
         with self.db_session.get_session() as session:
             query = session.query(WeedModel)
             if only_unsprayed:
                 query = query.filter_by(sprayed=False)
+            if skip_traveled:
+                query = query.filter_by(traveled_to=False)
             
             weeds = query.all()
             

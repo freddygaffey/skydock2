@@ -70,11 +70,9 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
         if d < min_dist:
             min_dist = d
             best_det = i
-    print(f"[HOMING] alt={drone_state.altitude_rel_home:.2f} dets={len(frame.detection)} min_dist={min_dist:.2f} best={'Y' if best_det else 'N'}")
 
     # stop it just sitting there check timout
     if (time.time() - start_homing_time) > MAX_HOMING_TIME / SIM_SPEED:
-        print(f"[HOMING] GIVE UP timeout elapsed={time.time()-start_homing_time:.1f}s min_dist={min_dist:.2f} -> GOTO")
         log_event("homing_give_up_timeout", logger="homing", level="WARN",
                   drone_state=drone_state, frame=frame,
                   elapsed_total_s=float(time.time() - start_homing_time),
@@ -91,7 +89,6 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     # This block tests to ensure that if a weed has been lost for more than
     # TIME_WAIT_FOR_DET seconds, it doesn't continue searching
     if best_det is None and (time.time() - last_det_time) > TIME_WAIT_FOR_DET / SIM_SPEED:
-        print(f"[HOMING] GIVE UP no det for {time.time()-last_det_time:.1f}s -> GOTO")
         log_event("homing_give_up_no_det", logger="homing", level="WARN",
                   drone_state=drone_state, frame=frame,
                   elapsed_no_det_s=float(time.time() - last_det_time))
@@ -103,7 +100,6 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     # move up to try and find weed (cap at MAX_HOMING_ALT)
     elif best_det is None:
         if drone_state.altitude_rel_home >= MAX_HOMING_ALT:
-            print(f"[HOMING] no det AT MAX ALT {drone_state.altitude_rel_home:.2f} -> descend 0.5")
             _alt_warn("max", "exceed max alt")
             log_event("homing_alt_cap", logger="homing", level="WARN",
                       drone_state=drone_state, frame=frame,
@@ -111,17 +107,14 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                       max_homing_alt=float(MAX_HOMING_ALT))
             telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, 0.5)  # move down
         else:
-            print(f"[HOMING] no det, climbing (alt={drone_state.altitude_rel_home:.2f} vD=-0.4)")
             telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -0.4) # move up
         return DroneStateEnum.HOMING
 
 ####### Detection is there
     # spray weed
     if min_dist <= MIN_SPRAY_ERROR:
-        print(f"[HOMING] within spray error dist={min_dist:.2f} alt={drone_state.altitude_rel_home:.2f}")
         # if low enough
         if drone_state.altitude_rel_home <= MIN_ALT + 1:
-            print(f"[HOMING] SPRAY READY -> SPRAY")
             log_event("spray_ready", logger="spray", level="INFO",
                       drone_state=drone_state, frame=frame,
                       dist_horizontal_m=float(min_dist),
@@ -133,7 +126,8 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             telemetry_singlton.stop_volocity_command()
             if drone_state.force_homing: 
                 return DroneStateEnum.HOMING
-            else: return DroneStateEnum.SPRAY
+            else:
+                return DroneStateEnum.SPRAY
         else:
             ...
             # this needs to pass then it will run homing as nomal
@@ -154,7 +148,6 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     else:
         vD = 0.3
     telemetry_singlton.send_volocity_command_yaw_stay_same(mx=vN,my=vE,mz=vD)
-    print(f"[HOMING] tick N={N:.2f} E={E:.2f} -> vN={vN:.2f} vE={vE:.2f} vD={vD:.2f}")
 
     log_event("homing_tick", logger="homing", level="DEBUG",
               drone_state=drone_state, frame=frame,

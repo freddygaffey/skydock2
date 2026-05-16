@@ -650,7 +650,8 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
     rev = _log_rev_key(path)
     mdir_s = str(mission_dir.resolve()) if mission_dir is not None else ""
     fr_rev = _frames_dir_rev(mission_dir)
-    fe_key = ("frame_events", *rev, mdir_s, fr_rev)
+    # v3: real-mission detections now matched to jpeg by time_detected (not nearest tick).
+    fe_key = ("frame_events", 3, *rev, mdir_s, fr_rev)
     cached = MISSION_READ_CACHE.get(fe_key)
     if cached is not None:
         return cached
@@ -669,8 +670,12 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
             use_frames_dir = True
 
     if use_frames_dir:
-        # Build sorted lookup of fsm_tick events by time_ns
+        # Build sorted lookup of fsm_tick events by time_ns (for drone_state fallback by jpeg ts).
         ticks: list[tuple[int, dict[str, Any]]] = []
+        # Per-jpeg dets index keyed on detection.time_detected (== jpeg stem when AI logged the same frame).
+        # One tick can carry detections from a previous AI frame; matching on time_detected avoids
+        # cross-attributing detections to the wrong jpeg.
+        dets_by_stem: dict[int, tuple[list, dict[str, Any]]] = {}
         for ev in iter_events(path):
             if ev.get("event") != "fsm_tick":
                 continue
@@ -678,11 +683,29 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
             if time_ns is None:
                 continue
             ticks.append((int(time_ns), ev))
+            fr = ev.get("frame") or {}
+            dets = fr.get("detections") or []
+            if not dets:
+                continue
+            grouped: dict[int, list] = {}
+            for d in dets:
+                td = d.get("time_detected")
+                if td is None:
+                    continue
+                try:
+                    td_i = int(td)
+                except (TypeError, ValueError):
+                    continue
+                grouped.setdefault(td_i, []).append(d)
+            for stem, dlist in grouped.items():
+                # Last writer wins if two ticks reference the same stem (rare; later tick is closer).
+                dets_by_stem[stem] = (dlist, ev)
         ticks.sort(key=lambda x: x[0])
 
         results: list[dict[str, Any]] = []
         for ts_ns, rel_path in frame_files:
-            ev = _nearest_by_ts(ticks, ts_ns)
+            stem_hit = dets_by_stem.get(ts_ns)
+            ev = stem_hit[1] if stem_hit else _nearest_by_ts(ticks, ts_ns)
             if ev is None:
                 drone_state_dict = None
                 dets = []
@@ -691,8 +714,11 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
                 state_to = ""
             else:
                 drone_state_dict = ev.get("drone_state")
-                fr = ev.get("frame") or {}
-                dets = fr.get("detections") or []
+                if stem_hit:
+                    dets = stem_hit[0]
+                else:
+                    fr = ev.get("frame") or {}
+                    dets = fr.get("detections") or []
                 ts_str = ev.get("ts")
                 state_from = ev.get("state_from", "")
                 state_to = ev.get("state_to", "") or ev.get("state", "")

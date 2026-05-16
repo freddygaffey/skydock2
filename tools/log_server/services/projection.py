@@ -47,6 +47,7 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
             "rotaion",
             "width",
             "hight",
+            "is_telemetry_ready",
             "_rx",
             "_ry",
             "_rz",
@@ -59,6 +60,8 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
             self.rangefinder_m = float(ds.get("rangefinder_m") or 0.0)
             self.width = int(ds.get("width") or _DEFAULT_W)
             self.hight = int(ds.get("hight") or _DEFAULT_H)
+            # utils.detection_to_ned now gates on this; logged states were live at write time.
+            self.is_telemetry_ready = True
             self._rx, self._ry, self._rz = rx, ry, rz
             self.rotaion = SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)
 
