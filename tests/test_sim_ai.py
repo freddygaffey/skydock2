@@ -10,8 +10,11 @@ import sys
 import types
 import unittest
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Optional, Tuple
 from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +44,7 @@ def _make_stubs():
         confidence: float
         bbox: List[Tuple[float, float]]
         track_id: Optional[int] = None
+        truth_id: Optional[int] = None
         time_ns: int = field(default_factory=lambda: time.time_ns())
 
         def get_center(self):
@@ -81,11 +85,38 @@ def _make_stubs():
     ds = types.ModuleType("drone_state")
 
     @dataclass
+    class Rotation:
+        x: float = 0.0
+        y: float = 0.0
+        z: float = 0.0
+        dx: float = 0.0
+        dy: float = 0.0
+        dz: float = 0.0
+
+    @dataclass
     class DroneStateForHoming:
         latitude: float = 0.0
         longitude: float = 0.0
         altitude_rel_home: float = 0.0
+        rotaion: Rotation = field(default_factory=Rotation)
 
+        # Mirror the real lens model (drone_state.py) so intrinsics match
+        SENSOR_PIXEL_PITCH_MM = 0.00155
+        LENS_FOCAL_LENGTH_MM = 6.0
+        SENSOR_W_PX = 4056
+        SENSOR_H_PX = 2160
+
+        @property
+        def fov_x_deg(self) -> float:
+            half = self.SENSOR_W_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
+            return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
+
+        @property
+        def fov_y_deg(self) -> float:
+            half = self.SENSOR_H_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
+            return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
+
+    ds.Rotation = Rotation
     ds.DroneStateForHoming = DroneStateForHoming
     sys.modules["drone_state"] = ds
 
@@ -109,17 +140,19 @@ _visible_weed_detections = sim_ai._visible_weed_detections
 _vision_params = sim_ai._vision_params
 DroneStateForHoming = _ds_mod.DroneStateForHoming
 
-# Image / optics constants from sim_ai
-IMG_W = sim_ai.NUM_OF_PIX_X   # 640
-IMG_H = sim_ai.NUM_OF_PIX_Y   # 640
-CX = sim_ai.CX                # 320
-CY = sim_ai.CY                # 320
-FX = sim_ai.FX
-FY = sim_ai.FY
+# Image size from sim_ai; intrinsics derived from the drone_state lens model
+# (single source of truth — sim_ai no longer has its own camera constants).
+IMG_W = sim_ai.NUM_OF_PIX_X
+IMG_H = sim_ai.NUM_OF_PIX_Y
+CX = IMG_W / 2.0
+CY = IMG_H / 2.0
+_lens = DroneStateForHoming()
+FX = IMG_W / (2 * math.tan(math.radians(_lens.fov_x_deg / 2)))
+FY = IMG_H / (2 * math.tan(math.radians(_lens.fov_y_deg / 2)))
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _state(lat=0.0, lon=0.0, alt=10.0):
@@ -130,15 +163,19 @@ def _state(lat=0.0, lon=0.0, alt=10.0):
     return s
 
 
+def _weed(lat, lon, wid=0):
+    return {"id": wid, "lat": lat, "lon": lon}
+
+
 class TestVisionParams(unittest.TestCase):
     def test_has_expected_top_level_keys(self):
-        p = _vision_params()
+        p = _vision_params(_state())
         self.assertIn("camera", p)
         self.assertIn("sim_ai", p)
         self.assertIn("model", p)
 
     def test_camera_intrinsics_match_module_constants(self):
-        cam = _vision_params()["camera"]
+        cam = _vision_params(_state())["camera"]
         self.assertAlmostEqual(cam["fx"], FX)
         self.assertAlmostEqual(cam["fy"], FY)
         self.assertEqual(cam["cx"], CX)
@@ -147,7 +184,7 @@ class TestVisionParams(unittest.TestCase):
         self.assertEqual(cam["height_px"], IMG_H)
 
     def test_sim_ai_fields_present(self):
-        sa = _vision_params()["sim_ai"]
+        sa = _vision_params(_state())["sim_ai"]
         for key in ("fps", "enable_imperfections", "pixel_noise_std_px",
                     "size_noise_std_frac", "miss_prob", "false_pos_prob",
                     "wrong_label_prob", "confidence_mean", "confidence_noise_std",
@@ -156,22 +193,22 @@ class TestVisionParams(unittest.TestCase):
 
     def test_json_serialisable(self):
         import json
-        json.dumps(_vision_params())  # must not raise
+        json.dumps(_vision_params(_state()))  # must not raise
 
 
 class TestVisibleWeedDetectionsEdgeCases(unittest.TestCase):
     def test_none_drone_state_returns_empty(self):
-        result = _visible_weed_detections(None, [[0.0, 0.0]])
+        result = _visible_weed_detections(None, [_weed(0.0, 0.0)])
         self.assertEqual(result, [])
 
     def test_zero_altitude_returns_empty(self):
         state = _state(alt=0.0)
-        result = _visible_weed_detections(state, [[0.0, 0.0]])
+        result = _visible_weed_detections(state, [_weed(0.0, 0.0)])
         self.assertEqual(result, [])
 
     def test_negative_altitude_returns_empty(self):
         state = _state(alt=-5.0)
-        result = _visible_weed_detections(state, [[0.0, 0.0]])
+        result = _visible_weed_detections(state, [_weed(0.0, 0.0)])
         self.assertEqual(result, [])
 
     def test_empty_weed_list_returns_empty(self):
@@ -185,17 +222,17 @@ class TestVisibleWeedDetectionsInView(unittest.TestCase):
     def test_weed_directly_below_is_detected(self):
         state = _state(lat=-35.0, lon=149.0, alt=10.0)
         # Weed at exactly the same GPS position → pixel (cx, cy)
-        dets = _visible_weed_detections(state, [[-35.0, 149.0]])
+        dets = _visible_weed_detections(state, [_weed(-35.0, 149.0)])
         self.assertEqual(len(dets), 1)
 
     def test_detection_label_is_sports_ball(self):
         state = _state(lat=-35.0, lon=149.0, alt=10.0)
-        dets = _visible_weed_detections(state, [[-35.0, 149.0]])
+        dets = _visible_weed_detections(state, [_weed(-35.0, 149.0)])
         self.assertEqual(dets[0].label, "sports ball")
 
     def test_detection_confidence_is_0_9(self):
         state = _state(lat=-35.0, lon=149.0, alt=10.0)
-        dets = _visible_weed_detections(state, [[-35.0, 149.0]])
+        dets = _visible_weed_detections(state, [_weed(-35.0, 149.0)])
         self.assertAlmostEqual(dets[0].confidence, 0.9)
 
     def test_multiple_weeds_below_all_detected(self):
@@ -203,9 +240,9 @@ class TestVisibleWeedDetectionsInView(unittest.TestCase):
         state = _state(lat=lat, lon=lon, alt=10.0)
         # Three weeds within a metre of the drone, all should be in frame
         weeds = [
-            [lat, lon],
-            [lat + 1e-5, lon],
-            [lat, lon + 1e-5],
+            _weed(lat, lon, 0),
+            _weed(lat + 1e-5, lon, 1),
+            _weed(lat, lon + 1e-5, 2),
         ]
         dets = _visible_weed_detections(state, weeds)
         self.assertEqual(len(dets), 3)
@@ -218,14 +255,14 @@ class TestVisibleWeedDetectionsOutOfView(unittest.TestCase):
         state = _state(lat=-35.0, lon=149.0, alt=10.0)
         # 1 km north – well outside any reasonable FOV at 10 m altitude
         far_lat = -35.0 + (1000.0 / 111_320.0)
-        dets = _visible_weed_detections(state, [[far_lat, 149.0]])
+        dets = _visible_weed_detections(state, [_weed(far_lat, 149.0)])
         self.assertEqual(dets, [])
 
     def test_mixed_weeds_only_visible_returned(self):
         lat, lon = -35.0, 149.0
         state = _state(lat=lat, lon=lon, alt=10.0)
         far_lat = lat + (500.0 / 111_320.0)
-        weeds = [[lat, lon], [far_lat, lon]]
+        weeds = [_weed(lat, lon, 0), _weed(far_lat, lon, 1)]
         dets = _visible_weed_detections(state, weeds)
         self.assertEqual(len(dets), 1)
 
@@ -235,7 +272,7 @@ class TestVisibleWeedDetectionsBboxSanity(unittest.TestCase):
 
     def _det_for_weed_below(self, alt=10.0):
         state = _state(lat=-35.0, lon=149.0, alt=alt)
-        dets = _visible_weed_detections(state, [[-35.0, 149.0]])
+        dets = _visible_weed_detections(state, [_weed(-35.0, 149.0)])
         self.assertEqual(len(dets), 1)
         return dets[0]
 
@@ -286,7 +323,7 @@ class TestVisibleWeedDetectionsBboxSanity(unittest.TestCase):
     def test_bbox_minimum_size_enforced(self):
         """Even at extreme altitude the bbox should be at least min_px × min_px."""
         state = _state(lat=-35.0, lon=149.0, alt=1000.0)
-        dets = _visible_weed_detections(state, [[-35.0, 149.0]])
+        dets = _visible_weed_detections(state, [_weed(-35.0, 149.0)])
         if not dets:
             self.skipTest("Weed not in FOV at extreme altitude – skip size check")
         (x_min, y_min), (x_max, y_max) = dets[0].bbox

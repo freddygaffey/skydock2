@@ -124,6 +124,8 @@ def main():
     # Init mission log
     truth_file = mission_file if is_sim else os.path.basename(mission_file)
     init_mission_log(is_sim=is_sim, truth_file=truth_file, weed_match_m=0.5, min_spray_error_m=float(constants.MIN_SPRAY_ERROR))
+    log_event("constants_snapshot", logger="main", level="INFO",
+              constants={k: v for k, v in vars(constants).items() if k.isupper()})
 
     # Pre-flight
     if is_sim:

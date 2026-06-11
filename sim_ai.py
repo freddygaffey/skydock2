@@ -11,9 +11,9 @@ from mission_logging import log_event
 import constants
 
 
-# Camera parameters – must match utils.detection_to_ned
-CAMERA_FOV_X = 27.4  # degrees
-CAMERA_FOV_Y = 21.0  # degrees
+# Simulated image resolution. Camera FOV/intrinsics are derived from
+# DroneStateForHoming's lens constants (drone_state.py) — the same source
+# utils.detection_to_ned uses, so sim pixels round-trip exactly.
 NUM_OF_PIX_X = 1280
 NUM_OF_PIX_Y = 1280
 SIM_AI_FPS = 30.0
@@ -46,24 +46,20 @@ SIM_AI_RANDOM_SEED = 1337
 # Extra pixel noise per rad/s of angular rate (simulates motion blur).
 SIM_AI_ROTATION_NOISE_SCALE_PX_PER_RADS = 30.0
 
-FX = NUM_OF_PIX_X / (2 * math.tan(math.radians(CAMERA_FOV_X / 2)))
-FY = NUM_OF_PIX_Y / (2 * math.tan(math.radians(CAMERA_FOV_Y / 2)))
-CX = NUM_OF_PIX_X / 2.0
-CY = NUM_OF_PIX_Y / 2.0
-
-
-def _vision_params():
+def _vision_params(drone_state: DroneStateForHoming):
     # Keep this JSON-serializable (for mission_logging)
+    fov_x = drone_state.fov_x_deg
+    fov_y = drone_state.fov_y_deg
     return {
         "camera": {
-            "fov_x_deg": CAMERA_FOV_X,
-            "fov_y_deg": CAMERA_FOV_Y,
+            "fov_x_deg": fov_x,
+            "fov_y_deg": fov_y,
             "width_px": NUM_OF_PIX_X,
             "height_px": NUM_OF_PIX_Y,
-            "fx": FX,
-            "fy": FY,
-            "cx": CX,
-            "cy": CY,
+            "fx": NUM_OF_PIX_X / (2 * math.tan(math.radians(fov_x / 2))),
+            "fy": NUM_OF_PIX_Y / (2 * math.tan(math.radians(fov_y / 2))),
+            "cx": NUM_OF_PIX_X / 2.0,
+            "cy": NUM_OF_PIX_Y / 2.0,
         },
         "sim_ai": {
             "fps": SIM_AI_FPS,
@@ -108,6 +104,8 @@ def _visible_weed_detections(
     fov_y = drone_state.fov_y_deg
     fx = NUM_OF_PIX_X / (2 * math.tan(math.radians(fov_x / 2)))
     fy = NUM_OF_PIX_Y / (2 * math.tan(math.radians(fov_y / 2)))
+    cx = NUM_OF_PIX_X / 2.0
+    cy = NUM_OF_PIX_Y / 2.0
 
     # Bounding circle of the full image footprint: use half-diagonal FOV
     # so weeds at the corners of the wider X-axis aren't culled early.
@@ -162,8 +160,8 @@ def _visible_weed_detections(
         x_cam = ray_body[0] / ray_body[2]
         y_cam = ray_body[1] / ray_body[2]
 
-        u = fx * x_cam + CX
-        v = fy * y_cam + CY
+        u = fx * x_cam + cx
+        v = fy * y_cam + cy
 
         # Skip if outside image
         if not (0 <= u < NUM_OF_PIX_X and 0 <= v < NUM_OF_PIX_Y):
@@ -175,8 +173,8 @@ def _visible_weed_detections(
         min_px = 8.0
         max_px = NUM_OF_PIX_X * 0.8
 
-        size_x = max(min_px, min(max_px, FX * (diameter_m / alt)))
-        size_y = max(min_px, min(max_px, FY * (diameter_m / alt)))
+        size_x = max(min_px, min(max_px, fx * (diameter_m / alt)))
+        size_y = max(min_px, min(max_px, fy * (diameter_m / alt)))
 
         half_w = size_x / 2.0
         half_h = size_y / 2.0
@@ -220,7 +218,7 @@ def run_sim_ai(weed_locations: list[dict]):
             "sim_vision_params",
             logger="sim_ai",
             level="INFO",
-            vision=_vision_params(),
+            vision=_vision_params(ds if ds is not None else DroneStateForHoming()),
         )
     except Exception:
         # Logging should never crash sim AI
