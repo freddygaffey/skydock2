@@ -11,12 +11,12 @@ from mission_logging import log_event
 import constants
 
 
-# Simulated image resolution. Camera FOV/intrinsics are derived from
-# DroneStateForHoming's lens constants (drone_state.py) — the same source
-# utils.detection_to_ned uses, so sim pixels round-trip exactly.
-NUM_OF_PIX_X = 1280
-NUM_OF_PIX_Y = 1280
-SIM_AI_FPS = 30.0
+# Simulated camera mirrors DroneStateForHoming: resolution from its
+# width/hight defaults, FOV/intrinsics from its lens constants — the same
+# source utils.detection_to_ned uses, so sim pixels round-trip exactly.
+# Frame rate comes from constants.TARGET_FPS, shared with ai_callback.
+NUM_OF_PIX_X = DroneStateForHoming.width
+NUM_OF_PIX_Y = DroneStateForHoming.hight
 
 # Pixel jitter (Gaussian std-dev in pixels) applied to bbox center.
 SIM_AI_PIXEL_NOISE_STD_PX = 2.0
@@ -62,7 +62,7 @@ def _vision_params(drone_state: DroneStateForHoming):
             "cy": NUM_OF_PIX_Y / 2.0,
         },
         "sim_ai": {
-            "fps": SIM_AI_FPS,
+            "fps": constants.TARGET_FPS,
             "enable_imperfections": constants.SIM_AI_ENABLE_IMPERFECTIONS,
             "pixel_noise_std_px": SIM_AI_PIXEL_NOISE_STD_PX,
             "size_noise_std_frac": SIM_AI_SIZE_NOISE_STD_FRAC,
@@ -225,7 +225,7 @@ def run_sim_ai(weed_locations: list[dict]):
         pass
 
     def _loop():
-        dt = 1.0 / SIM_AI_FPS  # FPS
+        dt = 1.0 / constants.TARGET_FPS
         start = time.perf_counter()
         frame_idx = 0
         rng = random.Random(SIM_AI_RANDOM_SEED)
@@ -293,7 +293,9 @@ def run_sim_ai(weed_locations: list[dict]):
 
                         noisy.append(d)
 
-                    # False positives: sometimes hallucinate an object
+                    # False positives: sometimes hallucinate a ball. Labelled
+                    # "sports ball" because that's the only kind of FP that
+                    # survives Frame.add_detection — same as on real hardware.
                     if rng.random() < SIM_AI_FALSE_POS_PROB:
                         w = rng.uniform(12.0, 90.0)
                         h = rng.uniform(12.0, 90.0)
@@ -301,7 +303,7 @@ def run_sim_ai(weed_locations: list[dict]):
                         cy = rng.uniform(h / 2.0, NUM_OF_PIX_Y - 1 - h / 2.0)
                         bbox = [(cx - w / 2.0, cy - h / 2.0), (cx + w / 2.0, cy + h / 2.0)]
                         fp = Detection(
-                            label=rng.choice(wrong_labels),
+                            label="sports ball",
                             confidence=float(
                                 max(
                                     SIM_AI_CONFIDENCE_MIN,
@@ -314,7 +316,12 @@ def run_sim_ai(weed_locations: list[dict]):
 
                     dets = noisy
 
-                frame = Frame(dets, drone_state=drone_state)
+                # Route through add_detection so sim detections pass the same
+                # label gate as the real pipeline (ai_callback.py). Wrong-label
+                # noise gets dropped here, exactly as it would on the drone.
+                frame = Frame([], drone_state=drone_state)
+                for d in dets:
+                    frame.add_detection(d)
                 ai_storage_singleton.set_latest_frame(frame)
 
             # Schedule next frame based on absolute time

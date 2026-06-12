@@ -33,6 +33,14 @@ MAX_HOMING_TIME = 60
 
 
 ###########################
+###### camera #############
+###########################
+
+# Frame rate for both the real pipeline (ai_callback) and the sim AI (sim_ai).
+TARGET_FPS = 30
+
+
+###########################
 ###### sim ai #############
 ###########################
 

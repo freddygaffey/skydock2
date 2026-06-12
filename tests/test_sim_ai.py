@@ -1,144 +1,39 @@
 """
 Tests for sim_ai.py
 
-Patches heavy dependencies (pymavlink, mission_logging, ai_class) so the tests
-run without a MAVLink connection or filesystem side-effects.
+Uses the real ai_class, drone_state and constants modules so the tests can
+never drift from the real interfaces. Only two modules are stubbed:
+telemetry (would pull in pyserial / a live MAVLink connection) and
+mission_logging (would write mission.jsonl to disk).
 """
 
 import math
 import sys
 import types
 import unittest
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+_tel = types.ModuleType("telemetry")
+_tel.telemetry_singlton = None
+sys.modules.setdefault("telemetry", _tel)
 
-# ---------------------------------------------------------------------------
-# Minimal stubs so sim_ai can be imported without its heavy dependencies
-# ---------------------------------------------------------------------------
+_ml = types.ModuleType("mission_logging")
+_ml.log_event = MagicMock()
+sys.modules.setdefault("mission_logging", _ml)
 
-def _make_stubs():
-    # --- mission_logging ---
-    ml = types.ModuleType("mission_logging")
-    ml.log_event = MagicMock()
-    ml.allocate_mission_dir = MagicMock(return_value=MagicMock())
-    ml.configure_mission_dir = MagicMock()
-    sys.modules.setdefault("mission_logging", ml)
+import constants  # noqa: E402
+# These tests check geometry, not noise — force deterministic detections.
+constants.SIM_AI_ENABLE_IMPERFECTIONS = False
 
-    # --- pymavlink ---
-    pml = types.ModuleType("pymavlink")
-    pml.mavutil = MagicMock()
-    sys.modules.setdefault("pymavlink", pml)
-    sys.modules.setdefault("pymavlink.mavutil", pml.mavutil)
-
-    # --- Detection / Frame stubs (mirrors ai_class) ---
-    import time
-
-    @dataclass
-    class Detection:
-        label: str
-        confidence: float
-        bbox: List[Tuple[float, float]]
-        track_id: Optional[int] = None
-        truth_id: Optional[int] = None
-        time_ns: int = field(default_factory=lambda: time.time_ns())
-
-        def get_center(self):
-            x = (self.bbox[0][0] + self.bbox[1][0]) / 2
-            y = (self.bbox[0][1] + self.bbox[1][1]) / 2
-            return x, y
-
-    class Frame:
-        def __init__(self, det, photo_path="No photo taken"):
-            self.photo_path = photo_path
-            self.detection = det
-
-    class _AiStorage:
-        def __init__(self):
-            self.current_frame = Frame([])
-            self.is_ai_running = False
-            self._frames: list = []
-
-        def set_latest_frame(self, frame):
-            self.current_frame = frame
-            self._frames.append(frame)
-
-        def get_latest_frame(self):
-            return self.current_frame
-
-    ai_mod = types.ModuleType("ai_class")
-    ai_mod.Detection = Detection
-    ai_mod.Frame = Frame
-    ai_mod.ai_storage_singleton = _AiStorage()
-    sys.modules["ai_class"] = ai_mod
-
-    # --- telemetry stub ---
-    tel = types.ModuleType("telemetry")
-    tel.telemetry_singlton = MagicMock()
-    sys.modules.setdefault("telemetry", tel)
-
-    # --- drone_state stub (uses pymavlink at class-definition time) ---
-    ds = types.ModuleType("drone_state")
-
-    @dataclass
-    class Rotation:
-        x: float = 0.0
-        y: float = 0.0
-        z: float = 0.0
-        dx: float = 0.0
-        dy: float = 0.0
-        dz: float = 0.0
-
-    @dataclass
-    class DroneStateForHoming:
-        latitude: float = 0.0
-        longitude: float = 0.0
-        altitude_rel_home: float = 0.0
-        rotaion: Rotation = field(default_factory=Rotation)
-
-        # Mirror the real lens model (drone_state.py) so intrinsics match
-        SENSOR_PIXEL_PITCH_MM = 0.00155
-        LENS_FOCAL_LENGTH_MM = 6.0
-        SENSOR_W_PX = 4056
-        SENSOR_H_PX = 2160
-
-        @property
-        def fov_x_deg(self) -> float:
-            half = self.SENSOR_W_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
-            return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
-
-        @property
-        def fov_y_deg(self) -> float:
-            half = self.SENSOR_H_PX * self.SENSOR_PIXEL_PITCH_MM / 2.0
-            return 2.0 * math.degrees(math.atan(half / self.LENS_FOCAL_LENGTH_MM))
-
-    ds.Rotation = Rotation
-    ds.DroneStateForHoming = DroneStateForHoming
-    sys.modules["drone_state"] = ds
-
-    # --- constants stub ---
-    const = types.ModuleType("constants")
-    const.SIM_SPEED = 1
-    const.SIM_AI_ENABLE_IMPERFECTIONS = False
-    sys.modules["constants"] = const
-
-    return ai_mod, tel, ds, const
-
-
-_ai_mod, _tel_mod, _ds_mod, _const_mod = _make_stubs()
-
-# Now safe to import sim_ai
-import importlib
-import sim_ai  # noqa: E402  (must come after stubs)
+import sim_ai  # noqa: E402  (must come after the telemetry/mission_logging stubs)
+from drone_state import DroneStateForHoming  # noqa: E402
 
 # Grab the private helpers for white-box testing
 _visible_weed_detections = sim_ai._visible_weed_detections
 _vision_params = sim_ai._vision_params
-DroneStateForHoming = _ds_mod.DroneStateForHoming
 
 # Image size from sim_ai; intrinsics derived from the drone_state lens model
 # (single source of truth — sim_ai no longer has its own camera constants).

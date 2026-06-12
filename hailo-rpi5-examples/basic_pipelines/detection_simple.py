@@ -18,8 +18,8 @@ import numpy as np
 import cv2
 import queue as queue_module  # rename to avoid shadowing
 
-TARGET_FPS = 30
-SAVE_EVERY_N_FRAMES = 2  # at 60fps -> save 30 jpgs/sec
+from constants import TARGET_FPS  # shared with sim_ai so sim and real run the same frame rate
+SAVE_EVERY_N_FRAMES = 2  # save every 2nd frame as jpg
 
 # Frame saving queue
 frame_queue = queue_module.Queue(maxsize=500)
