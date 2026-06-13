@@ -73,7 +73,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
 
     # stop it just sitting there check timout
     if (time.time() - start_homing_time) > MAX_HOMING_TIME / SIM_SPEED:
-        log_event("homing_give_up_timeout", logger="homing", level="WARN",
+        log_event("homing_give_up_timeout", logger="homing", level="WARNING",
                   drone_state=drone_state, frame=frame,
                   elapsed_total_s=float(time.time() - start_homing_time),
                   min_dist_m=float(min_dist))
@@ -89,7 +89,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     # This block tests to ensure that if a weed has been lost for more than
     # TIME_WAIT_FOR_DET seconds, it doesn't continue searching
     if best_det is None and (time.time() - last_det_time) > TIME_WAIT_FOR_DET / SIM_SPEED:
-        log_event("homing_give_up_no_det", logger="homing", level="WARN",
+        log_event("homing_give_up_no_det", logger="homing", level="WARNING",
                   drone_state=drone_state, frame=frame,
                   elapsed_no_det_s=float(time.time() - last_det_time))
         last_det_time = None
@@ -101,7 +101,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     elif best_det is None:
         if drone_state.altitude_rel_home >= MAX_HOMING_ALT:
             _alt_warn("max", "exceed max alt")
-            log_event("homing_alt_cap", logger="homing", level="WARN",
+            log_event("homing_alt_cap", logger="homing", level="WARNING",
                       drone_state=drone_state, frame=frame,
                       altitude_rel_home=float(drone_state.altitude_rel_home),
                       max_homing_alt=float(MAX_HOMING_ALT))

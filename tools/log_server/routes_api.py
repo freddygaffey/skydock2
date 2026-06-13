@@ -47,7 +47,7 @@ bp = Blueprint("log_api", __name__)
 
 # Default mission ``params`` (same keys as ``main.py`` reads from setup JSON).
 _SETUP_PARAM_DEFAULTS: dict[str, Any] = {
-    "scan_height_m": 35,
+    "scan_height_m": 10,
     "scan_speed_ms": 1.0,
     "min_dist_from_waypoint_m": 1,
     "min_weed_spacing_m": 2,
@@ -294,8 +294,10 @@ def mission_index_build(mission_id: str):
 
     try:
         out = build_mission_index(p, force=True)
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    except Exception as exc:
+        # Always return JSON (not an HTML 500) so the UI can show the message
+        # instead of failing to parse it. sqlite3.Error is not an OSError.
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
     return jsonify({"ok": True, "index_path": str(out)})
 
 

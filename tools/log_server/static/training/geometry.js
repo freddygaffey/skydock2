@@ -33,7 +33,7 @@ const CAM_FY = CAM_PIX / (2 * Math.tan(CAM_FOV_Y * Math.PI / 360));
 const CAM_CX = CAM_PIX / 2, CAM_CY = CAM_PIX / 2;
 
 function _dsRot(ds) {
-  const rot = ds.rotaion || {};
+  const rot = ds.rotation || {};
   return { roll: rot.x || 0, pitch: rot.y || 0, yaw: rot.z || 0 };
 }
 
@@ -140,8 +140,8 @@ function droneStateMotionDelta(dsA, dsB) {
   if (!dsA || !dsB) return null;
   const ground_m = groundDistanceMeters(dsA.latitude, dsA.longitude, dsB.latitude, dsB.longitude);
   const alt_m = Math.abs(Number(dsA.altitude_rel_home || 0) - Number(dsB.altitude_rel_home || 0));
-  const ra = dsA.rotaion || {};
-  const rb = dsB.rotaion || {};
+  const ra = dsA.rotation || {};
+  const rb = dsB.rotation || {};
   const dRoll = Math.abs(Number(ra.x || 0) - Number(rb.x || 0)) * 180 / Math.PI;
   const dPitch = Math.abs(Number(ra.y || 0) - Number(rb.y || 0)) * 180 / Math.PI;
   const dYaw = _yawWrapAbsDeg(Number(ra.z || 0) * 180 / Math.PI, Number(rb.z || 0) * 180 / Math.PI);

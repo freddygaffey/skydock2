@@ -64,7 +64,8 @@ def _debug_mode_for_dev_server() -> bool:
 if __name__ == "__main__":
     from config import data_paths
 
-    port = int(os.environ.get("PORT", "5000"))
+    # Default 5050: macOS uses 5000 for the AirPlay Receiver. Override with PORT=.
+    port = int(os.environ.get("PORT", "5050"))
     _sim, missions_root = data_paths()
     missions = sorted(missions_root.glob("*/mission.jsonl")) if missions_root.exists() else []
     print(f"\n  MISSIONS_ROOT : {missions_root}  ({'exists' if missions_root.exists() else 'MISSING'})")

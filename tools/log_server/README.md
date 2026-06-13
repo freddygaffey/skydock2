@@ -21,7 +21,7 @@ Opening **`/`** in the browser redirects to the **mission list** (`/missions`). 
 
 If you use **gunicorn** or import the app without running `app.py`, set `PYTHONPATH` to the repo root and `tools/log_server` (or `cd tools/log_server` and include `../..`).
 
-- **Port:** `PORT` (default `5000`).
+- **Port:** `PORT` (default `5050`; macOS reserves `5000` for the AirPlay Receiver).
 - **Dev mode:** `FLASK_DEBUG=1` or `LOG_SERVER_DEBUG=1` enables Flask debug (reloader and exception pages). Omit in production.
 
 ## Mission index (SQLite sidecar)

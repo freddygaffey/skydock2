@@ -212,6 +212,10 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# log_server sqlite index sidecars (regenerated from mission.jsonl on demand)
+mission_index.sqlite
+mission_index.sqlite.tmp-*
+
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data

@@ -47,19 +47,12 @@ from typing import Any
 import cv2
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from mission_logging import iter_events  # noqa: E402  (the one authoritative reader)
+
 
 # ── JSONL helpers ─────────────────────────────────────────────────────────────
-
-def iter_events(path: Path):
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+# iter_events is imported from mission_logging (the one authoritative reader).
 
 
 # ── Timestamp lookup ──────────────────────────────────────────────────────────
@@ -148,9 +141,8 @@ def draw_overlay(
 
     # FSM state (top-right)
     if fsm_state:
-        state_clean = fsm_state.replace("DroneStateEnum.", "").split(".")[-1]
-        sc = FSM_COLORS.get(state_clean.upper(), white)
-        cv2.putText(frame, f"STATE: {state_clean}", (w - 210, y), font, 0.55, sc, 2)
+        sc = FSM_COLORS.get(fsm_state.upper(), white)
+        cv2.putText(frame, f"STATE: {fsm_state}", (w - 210, y), font, 0.55, sc, 2)
 
     # Telemetry
     if drone_state:
@@ -158,7 +150,7 @@ def draw_overlay(
         lat  = drone_state.get("latitude", 0.0)
         lon  = drone_state.get("longitude", 0.0)
         alt  = drone_state.get("altitude_rel_home", 0.0)
-        hdg  = drone_state.get("heading", 0.0)
+        hdg  = drone_state.get("heading") or 0.0  # heading is null when the FC reports unknown (65535)
         mode = drone_state.get("mode", "?")
         armed = drone_state.get("arm_state", False)
         vx   = drone_state.get("velocity_x", 0.0)
@@ -180,7 +172,7 @@ def draw_overlay(
 
     # Detection bboxes
     if detections:
-        state_clean = fsm_state.replace("DroneStateEnum.", "").split(".")[-1].upper() if fsm_state else ""
+        state_clean = fsm_state.upper() if fsm_state else ""
         bbox_color = FSM_COLORS.get("HOMING") if state_clean == "HOMING" else (0, 255, 0)
         for det in detections:
             bbox = det.get("bbox")
@@ -258,14 +250,15 @@ def parse_mission(mission_dir: Path) -> dict:
         elif event == "fsm_transition":
             ts = ev.get("time_ns")
             if ts is not None:
-                state = (ev.get("state_to") or ev.get("state") or "").replace("DroneStateEnum.", "").split(".")[-1]
+                state = ev.get("state_to") or ev.get("state") or ""
                 fsm_trans_ts.append(int(ts))
                 fsm_trans_state.append(state)
 
         elif event == "weed_detected":
-            ts = ev.get("time_ns") or ev.get("ts")
-            lat = ev.get("lat") or (ev.get("weed") or {}).get("lat")
-            lon = ev.get("lon") or (ev.get("weed") or {}).get("lon")
+            ts = ev.get("time_ns")
+            weed = ev.get("weed") or {}
+            lat = weed.get("lat")
+            lon = weed.get("lon")
             if ts is not None and lat is not None and lon is not None:
                 def _parse_ts_to_ns(v: Any) -> int | None:
                     if v is None:

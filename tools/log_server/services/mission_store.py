@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -38,8 +39,13 @@ def _ensure_index(path: Path):
     if _auto_index_enabled() and path.is_file() and not index_matches_log(path, ip):
         try:
             build_mission_index(path, force=False)
-        except OSError:
-            pass
+        except Exception as e:
+            # The sqlite index is a best-effort speed-up; if it can't be built
+            # (e.g. WAL "disk I/O error" on some filesystems) fall back to reading
+            # the JSONL directly rather than failing the request. sqlite3.Error is
+            # NOT an OSError, so it must be caught here explicitly.
+            print(f"[mission_store] index build failed for {path}: {e}; "
+                  f"reading JSONL directly", file=sys.stderr)
     return ip, index_matches_log(path, ip)
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,28 +12,29 @@ from utils import detection_to_latlon
 
 _DEFAULT_W = DroneStateForHoming.__dataclass_fields__["width"].default
 _DEFAULT_H = DroneStateForHoming.__dataclass_fields__["hight"].default
-_PITCH_MM = DroneStateForHoming.SENSOR_PIXEL_PITCH_MM
-_FOCAL_MM = DroneStateForHoming.LENS_FOCAL_LENGTH_MM
+# Camera FOV is a fixed property of the lens + sensor, independent of the lores buffer
+# resolution. Take it straight from drone_state (the single source of truth) — deriving it
+# from the 1280px image width understated it ~3x (18.8deg vs the real 55.3x31.2deg).
+_FOV_X_DEG = DroneStateForHoming().fov_x_deg
+_FOV_Y_DEG = DroneStateForHoming().fov_y_deg
 
 
 def drone_state_from_dict(ds: dict | None) -> Any | None:
     """Build a state object compatible with `utils.detection_to_ned` / `detection_to_latlon`.
 
-    Mission JSON stores attitude under ``rotaion`` (nested ``x,y,z`` from the drone dataclass),
-    not flat ``rotaion_x``/``_y``/``_z``. Live code also calls ``get_rotation_at_time`` on the
+    Mission JSON stores attitude under ``rotation`` (nested ``x,y,z``; schema v2 corrected the
+    dataclass's ``rotaion`` typo on disk). Live code also calls ``get_rotation_at_time`` on the
     state object; log replay must supply the same interface.
     """
     if not ds or not isinstance(ds, dict):
         return None
-    rot_d = ds.get("rotaion")
+    rot_d = ds.get("rotation")
     if isinstance(rot_d, dict):
         rx = float(rot_d.get("x") or 0.0)
         ry = float(rot_d.get("y") or 0.0)
         rz = float(rot_d.get("z") or 0.0)
     else:
-        rx = float(ds.get("rotaion_x") or 0.0)
-        ry = float(ds.get("rotaion_y") or 0.0)
-        rz = float(ds.get("rotaion_z") or 0.0)
+        rx = ry = rz = 0.0
 
     class _LogDroneState:
         # `rotaion` must be assignable: `utils.detection_to_ned` sets it from
@@ -67,11 +67,11 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
 
         @property
         def fov_x_deg(self) -> float:
-            return 2.0 * math.degrees(math.atan(self.width * _PITCH_MM / 2.0 / _FOCAL_MM))
+            return _FOV_X_DEG
 
         @property
         def fov_y_deg(self) -> float:
-            return 2.0 * math.degrees(math.atan(self.hight * _PITCH_MM / 2.0 / _FOCAL_MM))
+            return _FOV_Y_DEG
 
         def get_rotation_at_time(self, _time_ns: Any) -> Any:
             return SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)

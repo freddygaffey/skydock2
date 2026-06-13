@@ -1160,7 +1160,7 @@ const CAM_FY = CAM_PIX / (2 * Math.tan(CAM_FOV_Y * Math.PI / 360));
 const CAM_CX = CAM_PIX / 2, CAM_CY = CAM_PIX / 2;
 
 function _dsRot(ds) {
-  const rot = ds.rotaion || {};
+  const rot = ds.rotation || {};
   return { roll: rot.x || 0, pitch: rot.y || 0, yaw: rot.z || 0 };
 }
 

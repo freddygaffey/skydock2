@@ -4,7 +4,7 @@
  */
 export function defaultParams() {
   return {
-    scan_height_m: 35,
+    scan_height_m: 10,
     scan_speed_ms: 1.0,
     min_dist_from_waypoint_m: 1,
     min_weed_spacing_m: 2,

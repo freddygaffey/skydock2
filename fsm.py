@@ -54,7 +54,6 @@ class StateMachine:
             print(self.current_state)
             self._last_printed_state = self.current_state
             self._last_state_print = now
-        timestamp_ns = time.time_ns()
         if prev_state != self.current_state:
             log_event(
                 "fsm_transition",
@@ -62,9 +61,8 @@ class StateMachine:
                 level="INFO",
                 drone_state=drone_state,
                 frame=frame,
-                time_ns=timestamp_ns,
-                state_from=str(prev_state),
-                state_to=str(self.current_state),
+                state_from=prev_state,
+                state_to=self.current_state,
             )
         else:
             log_event(
@@ -73,8 +71,7 @@ class StateMachine:
                 level="DEBUG",
                 drone_state=drone_state,
                 frame=frame,
-                time_ns=timestamp_ns,
-                state=str(self.current_state),
+                state=self.current_state,
             )
     
 

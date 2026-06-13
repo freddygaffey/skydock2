@@ -402,8 +402,8 @@ def build_timeline_payload(path: Path) -> dict[str, Any]:
         if ev.get("event") == "fsm_transition":
             transitions.append({
                 "ts": ts,
-                "state_from": ev.get("state_from", "").replace("DroneStateEnum.", ""),
-                "state_to": ev.get("state_to", "").replace("DroneStateEnum.", ""),
+                "state_from": ev.get("state_from", ""),
+                "state_to": ev.get("state_to", ""),
             })
 
     segments: list[dict[str, Any]] = []
@@ -621,8 +621,8 @@ def _make_frame_row(
         "frame_index": frame_index,
         "ts": ts_str,
         "event": event_name,
-        "state_from": state_from.replace("DroneStateEnum.", ""),
-        "state_to": state_to.replace("DroneStateEnum.", ""),
+        "state_from": state_from,
+        "state_to": state_to,
         "photo_path": photo_path,
         "detections": dets,
         "raw_detections": raw_dets if raw_dets else None,

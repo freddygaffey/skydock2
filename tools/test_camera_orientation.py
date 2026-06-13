@@ -48,7 +48,7 @@ def project_detection(bbox, drone_state, R_cam_to_body):
 
     ray_body = R_cam_to_body @ cam_ray
 
-    rot = drone_state.get("rotaion", {})
+    rot = drone_state.get("rotation", {})
     roll = float(rot.get("x", 0))
     pitch = float(rot.get("y", 0))
     yaw = float(rot.get("z", 0))

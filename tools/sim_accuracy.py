@@ -1,21 +1,12 @@
 import argparse
 import json
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
 
-
-def iter_events(path: Path) -> Iterable[dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from mission_logging import iter_events  # noqa: E402  (the one authoritative reader)
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -36,7 +27,7 @@ class Point:
 
 def load_truth(sim_json: Path) -> list[Point]:
     data = json.loads(sim_json.read_text(encoding="utf-8"))
-    return [Point(lat=float(lat), lon=float(lon)) for lat, lon in data["weed_locations"]]
+    return [Point(lat=float(w["lat"]), lon=float(w["lon"])) for w in data["weed_locations"]]
 
 
 def load_predictions(mission_jsonl: Path) -> list[Point]:
@@ -44,8 +35,9 @@ def load_predictions(mission_jsonl: Path) -> list[Point]:
     for ev in iter_events(mission_jsonl):
         if ev.get("event") != "weed_detected":
             continue
-        lat = ev.get("lat")
-        lon = ev.get("lon")
+        weed = ev.get("weed") or {}
+        lat = weed.get("lat")
+        lon = weed.get("lon")
         if lat is None or lon is None:
             continue
         preds.append(Point(lat=float(lat), lon=float(lon)))

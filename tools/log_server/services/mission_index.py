@@ -32,9 +32,24 @@ def default_index_path(log_path: Path) -> Path:
 
 def _connect_rw(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Single-file rollback journal: the index is built into a .tmp file and then
+    # atomically renamed into place. WAL would leave -wal/-shm sidecars named after
+    # the .tmp file; the rename moves only the main db, orphaning the WAL data and
+    # leaving an index that can't be reopened (read_meta -> None, never matches).
+    # WAL's only benefit is concurrent readers, which a build-once/read-only index
+    # doesn't need. TRUNCATE journal avoids per-commit file deletes during the build.
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
+
+
+def _cleanup_tmp_sidecars(tmp: Path) -> None:
+    """Remove a stale tmp index and any journal/WAL sidecars left by an earlier build."""
+    for q in tmp.parent.glob(tmp.name + "*"):  # tmp, tmp-journal, tmp-wal, tmp-shm
+        try:
+            q.unlink()
+        except OSError:
+            pass
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -115,11 +130,7 @@ def build_mission_index(log_path: Path, *, force: bool = False) -> Path:
 
     st = log_path.stat()
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    if tmp.exists():
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+    _cleanup_tmp_sidecars(tmp)
 
     conn = _connect_rw(tmp)
     try:
@@ -163,6 +174,7 @@ def build_mission_index(log_path: Path, *, force: bool = False) -> Path:
         conn.close()
 
     tmp.replace(out_path)
+    _cleanup_tmp_sidecars(tmp)  # drop any orphaned journal sidecar
     return out_path
 
 

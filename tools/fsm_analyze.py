@@ -1,10 +1,11 @@
 import argparse
-import json
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from mission_logging import iter_events  # noqa: E402  (the one authoritative reader)
 
 
 @dataclass
@@ -12,18 +13,6 @@ class Transition:
     time_ns: int
     state_from: str
     state_to: str
-
-
-def iter_events(path: Path) -> Iterable[dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
 
 
 def main() -> int:
