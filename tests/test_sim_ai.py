@@ -237,6 +237,10 @@ class TestRunSimAiStartsThread(unittest.TestCase):
         def capture_thread(*args, **kwargs):
             t = original_thread(*args, **kwargs)
             started_threads.append(t)
+            # This test only verifies a daemon thread is created. Don't actually
+            # run the infinite _loop — it would leak and tick forever against the
+            # shared (mocked) telemetry_singlton, raising thread exceptions.
+            t.start = lambda: None
             return t
 
         with patch("threading.Thread", side_effect=capture_thread):
@@ -252,6 +256,8 @@ class TestRunSimAiStartsThread(unittest.TestCase):
         def capture_thread(*args, **kwargs):
             t = original_thread(*args, **kwargs)
             created.append(t)
+            # Verify the daemon flag without running the infinite _loop (see above).
+            t.start = lambda: None
             return t
 
         with patch("threading.Thread", side_effect=capture_thread):

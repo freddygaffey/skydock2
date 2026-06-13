@@ -353,6 +353,7 @@ async function applyCmpCameraFrame(){
 function initMap(){
   if(cmpMap){ cmpMap.remove(); cmpMap=null; }
   cmpMap = L.map("cmpMap", { maxZoom: SdMap.MAP_MAX_ZOOM, preferCanvas: true });
+  SdMap.keepMapSized(cmpMap);
   SdMap.ensureDetectionUnderlay(cmpMap);
   SdMap.attachMapDetectionPopupPainter(cmpMap);
   L.tileLayer({{ tile_osm_url|tojson }},

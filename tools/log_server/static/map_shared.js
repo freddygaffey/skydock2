@@ -498,6 +498,78 @@
       );
     },
 
+    /**
+     * Keep a Leaflet map correctly sized — fixes the common "tiles never load / gray map" bug
+     * that happens when <code>L.map()</code> measures a container that isn't laid out yet
+     * (Bootstrap tab still <code>display:none</code>, reflow not settled, font/CSS late).
+     *
+     * Wires three self-healing triggers so no single timer has to win the race:
+     *  - ResizeObserver on the container → invalidateSize whenever it gains/changes size
+     *  - IntersectionObserver → invalidateSize when it scrolls / tabs into view
+     *  - whenReady + staggered invalidateSize (0/100/350ms) for the initial layout pass
+     *
+     * Idempotent per map. Pass the container element, or it falls back to
+     * <code>map.getContainer()</code>.
+     * @param {L.Map} map
+     * @param {Element} [container]
+     */
+    keepMapSized: function (map, container) {
+      if (!map || map._sdKeepSizedAttached) return;
+      map._sdKeepSizedAttached = true;
+      var el = container || (map.getContainer && map.getContainer());
+
+      /** invalidateSize, then re-assert the current view so tiles re-request for the new size. */
+      function sync() {
+        if (!map._container) return; // already removed
+        try {
+          map.invalidateSize({ animate: false });
+          var c = map.getCenter();
+          var z = map.getZoom();
+          if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng) && Number.isFinite(z)) {
+            map.setView(c, z, { animate: false });
+          }
+        } catch (err) {}
+      }
+
+      map.whenReady(sync);
+      [0, 100, 350].forEach(function (ms) {
+        setTimeout(sync, ms);
+      });
+
+      if (el && typeof ResizeObserver !== "undefined") {
+        try {
+          var ro = new ResizeObserver(function () {
+            sync();
+          });
+          ro.observe(el);
+          map.on("unload", function () {
+            try {
+              ro.disconnect();
+            } catch (err) {}
+          });
+        } catch (err) {}
+      }
+
+      if (el && typeof IntersectionObserver !== "undefined") {
+        try {
+          var io = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (en) {
+                if (en.isIntersecting) sync();
+              });
+            },
+            { threshold: 0.01 }
+          );
+          io.observe(el);
+          map.on("unload", function () {
+            try {
+              io.disconnect();
+            } catch (err) {}
+          });
+        } catch (err) {}
+      }
+    },
+
     ensureDetectionUnderlay: function (map) {
       if (!map.getPane(this.FOV_GROUND_PANE)) map.createPane(this.FOV_GROUND_PANE);
       map.getPane(this.FOV_GROUND_PANE).style.zIndex = String(this.FOV_GROUND_PANE_Z);

@@ -934,6 +934,7 @@ function initMap(){
   if(typeof L.DomEvent !== "undefined" && L.DomEvent.disableScrollPropagation){
     L.DomEvent.disableScrollPropagation(map.getContainer());
   }
+  SdMap.keepMapSized(map);
   SdMap.ensureDetectionUnderlay(map);
   // Explicit pane ordering (z-index) so overlays render:
   // weeds (top) -> path -> detection underlay -> camera frames (bottom)
@@ -1456,6 +1457,7 @@ function renderFrameGround(f){
   if(!el) return;
   if(!frameMap){
     frameMap = L.map("frameGroundMap", { maxZoom: MAP_MAX_ZOOM, preferCanvas: true });
+    SdMap.keepMapSized(frameMap);
     SdMap.ensureDetectionUnderlay(frameMap);
     L.tileLayer(
       {{ tile_osm_url|tojson }},
@@ -1527,6 +1529,8 @@ function renderFrameGround(f){
   } else {
     frameMap.setView([0,0], 2);
   }
+  // Sizing is handled by SdMap.keepMapSized (ResizeObserver + IntersectionObserver); a one-shot
+  // nudge here still helps when the Frames tab was just shown and the map already existed.
   setTimeout(()=>{ try{ frameMap.invalidateSize(); }catch(e){} }, 120);
 }
 
@@ -2537,6 +2541,7 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     await new Promise((r)=> requestAnimationFrame(()=> requestAnimationFrame(r)));
 
     frMap = L.map('frMap', { zoomSnap: 0.25, maxZoom: MAP_MAX_ZOOM, preferCanvas: true });
+    SdMap.keepMapSized(frMap);
     SdMap.ensureDetectionUnderlay(frMap);
     SdMap.attachMapDetectionPopupPainter(frMap);
     frOsmTile = L.tileLayer({{ tile_osm_url|tojson }},

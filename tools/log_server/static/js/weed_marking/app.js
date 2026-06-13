@@ -474,6 +474,7 @@ let _setupDraft = normalizeLoadedPayload(null);
     if (typeof L.DomEvent !== "undefined" && L.DomEvent.disableScrollPropagation) {
       L.DomEvent.disableScrollPropagation(map.getContainer());
     }
+    SdMap.keepMapSized(map);
     SdMap.ensureDetectionUnderlay(map);
     osmTile = L.tileLayer(C.tile_osm, mapTileOpts({ maxNativeZoom: OSM_NATIVE_MAX_ZOOM, attribution: "© OpenStreetMap contributors" }));
     satTile = L.tileLayer(C.tile_esri, mapTileOpts({ attribution: "Tiles © Esri" }));
