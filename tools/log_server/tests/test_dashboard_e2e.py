@@ -244,6 +244,20 @@ def test_detection_popup_shows_image_and_link(live_server, browser):
     page.close()
 
 
+def test_gc_live_control_panel_renders(live_server, browser):
+    """GC page shows the live-control panel; with no MAVLink URL it's disabled + noted."""
+    page = browser.new_page()
+    page.goto(f"{live_server}/missions/0001/gc?src=sim", wait_until="networkidle")
+    page.wait_for_selector("#liveControl:not(.d-none)", timeout=10000)
+    # State buttons built from /live/status contract.
+    page.wait_for_function(
+        "document.querySelectorAll('#liveStateBtns .live-state').length >= 5", timeout=10000)
+    # Not configured in the test env -> controls disabled with an explanatory note.
+    assert page.locator("#liveControl button[data-ovr='override']").is_disabled()
+    assert "not configured" in (page.locator("#liveControlNote").text_content() or "").lower()
+    page.close()
+
+
 def test_detection_popup_link_opens_frames_tab(live_server, browser):
     """The popup's 'Open in frame viewer' link switches to the Frames tab on the right frame."""
     page, errors = _open_dashboard(browser, live_server)

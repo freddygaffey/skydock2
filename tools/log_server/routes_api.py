@@ -42,6 +42,8 @@ from services.mission_store import (
 )
 from services.geometry import grid_dedup
 from services.mission_cache import MISSION_READ_CACHE
+from services.live_link import live_link, LiveLinkError
+from config import camera_stream_url
 
 bp = Blueprint("log_api", __name__)
 
@@ -1437,3 +1439,76 @@ def rpi_pull_real_missions():
     if code == 0:
         return jsonify({"status": "ok", "output": out or "(no output)"})
     return jsonify({"status": "error", "output": out}), 500
+
+
+# ── Live drone control (ground → MAVLink via MAVProxy) ─────────────────────────────────
+# Log-server side only: these endpoints send MAVLink to the drone. The flight-side reader
+# (FSM state register, Part A) is a separate change. All endpoints no-op safely with a clear
+# error when SKYDOCK_MAVLINK_URL is unset (the normal log-viewer case).
+
+@bp.get("/live/status")
+def live_status():
+    """Whether live control is configured + the RC/nudge contract for the UI."""
+    st = live_link.status()
+    st["camera_stream_url"] = camera_stream_url()
+    return jsonify(st)
+
+
+def _live_guard():
+    if not live_link.configured():
+        return jsonify({"ok": False, "error": "live control not configured (set SKYDOCK_MAVLINK_URL)"}), 503
+    return None
+
+
+@bp.post("/live/state")
+def live_set_state():
+    """Request an FSM state via the state-register RC channel."""
+    if (g := _live_guard()) is not None:
+        return g
+    state = (request.get_json(silent=True) or {}).get("state") or request.args.get("state")
+    try:
+        pwm = live_link.set_state(state)
+        return jsonify({"ok": True, "state": str(state).upper(), "pwm": pwm})
+    except LiveLinkError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@bp.post("/live/override")
+def live_set_override():
+    """Drive the autonomy/override switch (chan16): autonomy | override | force_homing."""
+    if (g := _live_guard()) is not None:
+        return g
+    mode = (request.get_json(silent=True) or {}).get("mode") or request.args.get("mode")
+    try:
+        pwm = live_link.set_override(mode)
+        return jsonify({"ok": True, "mode": str(mode).lower(), "pwm": pwm})
+    except LiveLinkError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@bp.post("/live/nudge")
+def live_nudge():
+    """Body-frame position nudge (magnitude clamped server-side)."""
+    if (g := _live_guard()) is not None:
+        return g
+    body = request.get_json(silent=True) or {}
+    direction = body.get("dir") or request.args.get("dir")
+    meters = body.get("meters", request.args.get("meters", 0.5))
+    try:
+        dx, dy, dz = live_link.nudge(direction, meters)
+        return jsonify({"ok": True, "dir": str(direction).lower(), "offset_m": [dx, dy, dz]})
+    except LiveLinkError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@bp.post("/live/mode")
+def live_set_mode():
+    """Set the flight-controller mode (e.g. RTL, GUIDED, LOITER)."""
+    if (g := _live_guard()) is not None:
+        return g
+    mode = (request.get_json(silent=True) or {}).get("mode") or request.args.get("mode")
+    try:
+        live_link.set_mode(mode)
+        return jsonify({"ok": True, "mode": str(mode).upper()})
+    except LiveLinkError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400

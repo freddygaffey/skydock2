@@ -362,6 +362,103 @@
       const ll = layerDrone.getLatLng();
       updateDroneMarker(ll.lat, ll.lng, _droneStateLabel, null);
     }
+    try {
+      await setupLiveControl();
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  // --- Live drone control (ground -> MAVLink via the /live/* endpoints) ---------------
+  let _overrideOn = false;
+
+  async function livePost(path, body) {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    return { ok: r.ok && data.ok, status: r.status, data };
+  }
+
+  function setNudgeEnabled(on) {
+    _overrideOn = on;
+    document.querySelectorAll(".live-nudge").forEach((b) => { b.disabled = !on; });
+    const note = document.getElementById("nudgeGateNote");
+    if (note) note.style.display = on ? "none" : "";
+  }
+
+  function liveNote(msg, isErr) {
+    const el = document.getElementById("liveControlNote");
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isErr ? "#ff6b6b" : "";
+  }
+
+  async function setupLiveControl() {
+    const panel = document.getElementById("liveControl");
+    if (!panel) return;
+    let st = {};
+    try { st = await (await fetch("/live/status")).json(); } catch (e) { st = {}; }
+
+    // Camera pane (independent of the MAVLink control link).
+    if (st.camera_stream_url) {
+      document.getElementById("liveCameraWrap").classList.remove("d-none");
+      document.getElementById("liveCamera").src = st.camera_stream_url;
+    }
+
+    panel.classList.remove("d-none");
+
+    // Build state buttons from the server's settable-state list.
+    const sb = document.getElementById("liveStateBtns");
+    if (sb) {
+      sb.innerHTML = "";
+      (st.states || []).forEach((s) => {
+        const b = document.createElement("button");
+        b.className = "btn btn-outline-info live-state";
+        b.dataset.state = s;
+        b.textContent = s;
+        sb.appendChild(b);
+      });
+    }
+
+    const configured = !!st.configured;
+    panel.querySelectorAll("button, input").forEach((el) => { el.disabled = !configured; });
+    if (!configured) {
+      liveNote("Live control not configured — set SKYDOCK_MAVLINK_URL on the server to enable.", false);
+      return;
+    }
+    setNudgeEnabled(false); // nudge gated until Override is engaged
+
+    panel.querySelectorAll(".live-ovr").forEach((b) => b.addEventListener("click", async () => {
+      const mode = b.dataset.ovr;
+      const res = await livePost("/live/override", { mode });
+      liveNote(res.ok ? `Override → ${mode}` : `Error: ${res.data.error || res.status}`, !res.ok);
+      if (res.ok) setNudgeEnabled(mode === "override");
+    }));
+
+    panel.querySelectorAll(".live-state").forEach((b) => b.addEventListener("click", async () => {
+      const state = b.dataset.state;
+      const res = await livePost("/live/state", { state });
+      liveNote(res.ok ? `Requested state ${state}` : `Error: ${res.data.error || res.status}`, !res.ok);
+    }));
+
+    const meters = document.getElementById("nudgeMeters");
+    const stepLabel = document.getElementById("nudgeStepLabel");
+    if (meters && stepLabel) meters.addEventListener("input", () => { stepLabel.textContent = meters.value; });
+    panel.querySelectorAll(".live-nudge").forEach((b) => b.addEventListener("click", async () => {
+      if (!_overrideOn) { liveNote("Engage Override before nudging.", true); return; }
+      const res = await livePost("/live/nudge", { dir: b.dataset.nudge, meters: parseFloat(meters.value) });
+      liveNote(res.ok ? `Nudge ${b.dataset.nudge} ${meters.value}m` : `Error: ${res.data.error || res.status}`, !res.ok);
+    }));
+
+    const rtl = document.getElementById("liveRtlBtn");
+    if (rtl) rtl.addEventListener("click", async () => {
+      const res = await livePost("/live/mode", { mode: "RTL" });
+      liveNote(res.ok ? "Mode → RTL" : `Error: ${res.data.error || res.status}`, !res.ok);
+    });
   }
 
   bootstrap();

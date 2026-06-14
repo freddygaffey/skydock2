@@ -51,3 +51,15 @@ def rpi_missions_root() -> Path:
     """Local folder where RPi ``missions/`` logs are synced (``Sync RPi`` / ``pull_logs_rpi.sh``)."""
     root = project_root()
     return Path(os.environ.get("SKYDOCK_RPI_MISSIONS_DIR", str(root / "rpi_missions")))
+
+
+def mavlink_url() -> str | None:
+    """pymavlink connection string for live control (e.g. a MAVProxy UDP output:
+    ``udpout:127.0.0.1:14550`` or ``udp:0.0.0.0:14551``). Unset → live control disabled."""
+    return os.environ.get("SKYDOCK_MAVLINK_URL") or None
+
+
+def camera_stream_url() -> str | None:
+    """URL of the drone's MJPEG/HTTP camera stream (served Pi-side, reached over Wi-Fi /
+    reverse-proxy / tunnel). Unset → the GC camera pane shows a 'not configured' note."""
+    return os.environ.get("SKYDOCK_CAMERA_STREAM_URL") or None
