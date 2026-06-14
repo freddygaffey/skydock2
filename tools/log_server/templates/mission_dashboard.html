@@ -757,7 +757,9 @@ function buildFootprintLayerFromFrames(frames){
 async function refreshMissionBboxGroundLayer(){
   if(!map) return { bounds: null, hasDrawable: false };
   if(layerBboxGround){ try{ map.removeLayer(layerBboxGround); }catch(e){} layerBboxGround=null; }
-  const frames = await api(`/missions/${MID}/frame_events`);
+  // Only detection rows are drawn here; dets_only keeps the payload small for sim missions
+  // that emit a JPEG per frame (the full list can be >100k empty-ground rows).
+  const frames = await api(`/missions/${MID}/frame_events?dets_only=1`);
   let detFpCount = 0;
   (frames||[]).forEach(f=>{
     detFpCount += (f.ground_projections||[]).length;
@@ -1225,7 +1227,9 @@ async function loadTimeline(){
   timelineLoaded = true;
   const [data, frameEvents] = await Promise.all([
     api(`/missions/${MID}/timeline`),
-    api(`/missions/${MID}/frame_events`),
+    // Timeline only marks frames that have detections; dets_only keeps this small for sim
+    // missions that emit a JPEG per frame.
+    api(`/missions/${MID}/frame_events?dets_only=1`),
   ]);
   const { segments, summary } = data;
   if(!segments.length){
@@ -1265,7 +1269,11 @@ async function loadTimeline(){
     detX.push(tsSec - t0);
     detY.push("Detections");
     detTxt.push(`#${frameIdx} · ${(f.detections||[]).length} detection(s) · ${fmtTs(f.ts)}`);
-    detIdx.push(frameIdx);
+    // Navigate by the stable frame time_ns (JPEG stem), not the dets_only list index, so the
+    // click resolves to the right frame in the full Frames-tab list.
+    const base = String(f.photo_path || "").split("/").pop() || "";
+    const stem = base.replace(/\.[^.]+$/, "");
+    detIdx.push(/^\d+$/.test(stem) ? stem : null);
   }
   if(detX.length){
     traces.push({
@@ -1299,9 +1307,9 @@ async function loadTimeline(){
     chartEl.on("plotly_click", (ev)=>{
       const p = ev && ev.points && ev.points[0];
       if(!p || !p.data || !p.data.meta || p.data.meta.kind !== "detections") return;
-      const idx = Number(p.customdata);
-      if(!Number.isFinite(idx)) return;
-      openMissionFrameViewerFromPopup(idx).catch((err)=>console.warn(err));
+      const tns = p.customdata;
+      if(tns == null) return;
+      openNearestFrameFromFovTimeNs(String(tns)).catch((err)=>console.warn(err));
     });
   }
 
@@ -1791,15 +1799,24 @@ document.addEventListener("click", (e)=>{
     openNearestFrameFromFovTimeNs(tns).catch((err)=> console.warn(err));
     return;
   }
-  const a = e.target.closest("a.sd-det-open-full[data-sd-frame-index]");
-  const img = e.target.closest("img.sd-det-img[data-sd-frame-index]");
+  const a = e.target.closest("a.sd-det-open-full");
+  const img = e.target.closest("img.sd-det-img");
   const el = a || img;
   if(!el) return;
+  const tns = el.getAttribute("data-sd-frame-tns");
+  const idxAttr = el.getAttribute("data-sd-frame-index");
+  if(tns == null && idxAttr == null) return;  // "Open full size" link with no nav target
   /* Allow ctrl/meta/shift/middle-click to open the image URL in a new tab (link only). */
   if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   e.stopPropagation();
-  const idx = parseInt(el.getAttribute("data-sd-frame-index"), 10);
+  // Prefer the stable time_ns key (resolves frames/<ns>.jpg regardless of which list the
+  // map used); fall back to a full-list index for older popups.
+  if(tns != null){
+    openNearestFrameFromFovTimeNs(tns).catch((err)=> console.warn(err));
+    return;
+  }
+  const idx = parseInt(idxAttr, 10);
   if(!Number.isFinite(idx)) return;
   openMissionFrameViewerFromPopup(idx).catch((err)=> console.warn(err));
 }, true);

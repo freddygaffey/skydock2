@@ -22,6 +22,7 @@ sys.modules.setdefault("telemetry", _tel)
 
 _ml = types.ModuleType("mission_logging")
 _ml.log_event = MagicMock()
+_ml.get_mission_dir = MagicMock(return_value=None)  # None -> sim_ai skips frame rendering
 sys.modules.setdefault("mission_logging", _ml)
 
 import constants  # noqa: E402

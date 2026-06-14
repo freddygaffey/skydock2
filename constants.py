@@ -47,3 +47,20 @@ TARGET_FPS = 30
 # False = perfect camera: every weed detected exactly, no false positives
 # True  = realistic camera: pixel jitter, missed detections, false positives, wrong labels
 SIM_AI_ENABLE_IMPERFECTIONS = True
+
+# When True, sim_ai renders a synthetic camera frame each tick and saves it to
+# missions/NNNN/frames/{time_ns}.jpg — the same path/naming the real pipeline uses —
+# so sim and real share one image code path (camera stream, make_video, log_server,
+# training tooling). The frame shows the ground, true weeds, predicted (clustered)
+# weeds, and the detection boxes. Set False to skip rendering (saves Pi/CPU).
+SIM_AI_RENDER_FRAMES = True
+
+# Side length (px) of the saved JPEG. The real lores stream is 640. 0 = render at the
+# full sim resolution (DroneStateForHoming.width/hight) with no downscale.
+SIM_AI_RENDER_SIZE = 640
+
+# Max JPEGs saved per second of SIMULATED time. The sim loop runs at TARGET_FPS (30),
+# so saving every frame makes a long mission produce >100k JPEGs — slow to turn into a
+# video and heavy on disk. Saving a handful per sim-second is plenty for a review video
+# / camera stream. Set >= TARGET_FPS to save every frame.
+SIM_AI_RENDER_MAX_FPS = 6

@@ -7,7 +7,7 @@ import numpy as np
 from telemetry import telemetry_singlton
 from ai_class import ai_storage_singleton, Detection, Frame
 from drone_state import DroneStateForHoming
-from mission_logging import log_event
+from mission_logging import log_event, get_mission_dir
 import constants
 
 
@@ -83,6 +83,67 @@ def _vision_params(drone_state: DroneStateForHoming):
     }
 
 
+# Hard-coded weed physical diameter (metres) — used for both detection bbox sizing
+# and the rendered blob size, so the drawn weed matches the box around it.
+WEED_DIAMETER_M = 0.5
+
+
+def _camera_intrinsics(drone_state: DroneStateForHoming):
+    """fx, fy, cx, cy in the sim pixel space (NUM_OF_PIX_X × NUM_OF_PIX_Y).
+
+    Derived from drone_state's FOV/lens — the same values utils.detection_to_ned
+    uses — so sim pixels round-trip exactly through detection_to_latlon.
+    """
+    fov_x = drone_state.fov_x_deg
+    fov_y = drone_state.fov_y_deg
+    fx = NUM_OF_PIX_X / (2 * math.tan(math.radians(fov_x / 2)))
+    fy = NUM_OF_PIX_Y / (2 * math.tan(math.radians(fov_y / 2)))
+    cx = NUM_OF_PIX_X / 2.0
+    cy = NUM_OF_PIX_Y / 2.0
+    return fx, fy, cx, cy
+
+
+def _project_latlon_to_pixel(drone_state: DroneStateForHoming, lat: float, lon: float,
+                             fx: float, fy: float, cx: float, cy: float):
+    """Project a ground GPS point to a (u, v) pixel, or None if not in front of the camera.
+
+    Single source of truth for sim projection — used by both detection generation and
+    frame rendering. Mirrors the inverse of utils.detection_to_ned (Rz@Ry@Rx body→NED).
+    """
+    lat0 = drone_state.latitude
+    lon0 = drone_state.longitude
+    alt = drone_state.altitude_rel_home
+
+    N = (lat - lat0) * 111_320.0
+    E = (lon - lon0) * 111_320.0 * math.cos(math.radians(lat0))
+
+    roll  = drone_state.rotaion.x
+    pitch = drone_state.rotaion.y
+    yaw   = drone_state.rotaion.z
+
+    Rx = np.array([[1, 0, 0],
+                   [0,  np.cos(roll), -np.sin(roll)],
+                   [0,  np.sin(roll),  np.cos(roll)]])
+    Ry = np.array([[ np.cos(pitch), 0, np.sin(pitch)],
+                   [0, 1, 0],
+                   [-np.sin(pitch), 0, np.cos(pitch)]])
+    Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0],
+                   [np.sin(yaw),  np.cos(yaw), 0],
+                   [0, 0, 1]])
+
+    # NED vector from drone to weed; z is positive-down so weed is +alt below.
+    ned = np.array([N, E, alt])
+    # Inverse of (Rz@Ry@Rx) is (Rz@Ry@Rx).T = Rx.T @ Ry.T @ Rz.T
+    ray_body = (Rx.T @ Ry.T @ Rz.T) @ ned
+
+    if ray_body[2] <= 0:
+        return None  # weed is behind or above the camera
+
+    u = fx * (ray_body[0] / ray_body[2]) + cx
+    v = fy * (ray_body[1] / ray_body[2]) + cy
+    return (u, v)
+
+
 def _visible_weed_detections(
     drone_state: DroneStateForHoming,
     weed_locations: list[dict],  # [{"id": int, "lat": float, "lon": float}, ...]
@@ -94,74 +155,32 @@ def _visible_weed_detections(
     if drone_state is None or drone_state.altitude_rel_home <= 0:
         return []
 
-    lat0 = drone_state.latitude
-    lon0 = drone_state.longitude
     alt = drone_state.altitude_rel_home
-
-    # Use the same intrinsics utils.detection_to_ned will use, derived from
-    # drone_state.width/hight + lens specs. Keeps sim/projection round-trip exact.
-    fov_x = drone_state.fov_x_deg
-    fov_y = drone_state.fov_y_deg
-    fx = NUM_OF_PIX_X / (2 * math.tan(math.radians(fov_x / 2)))
-    fy = NUM_OF_PIX_Y / (2 * math.tan(math.radians(fov_y / 2)))
-    cx = NUM_OF_PIX_X / 2.0
-    cy = NUM_OF_PIX_Y / 2.0
+    fx, fy, cx, cy = _camera_intrinsics(drone_state)
 
     # Bounding circle of the full image footprint: use half-diagonal FOV
     # so weeds at the corners of the wider X-axis aren't culled early.
     # The pixel-bounds check below handles precise clipping.
+    fov_x = drone_state.fov_x_deg
+    fov_y = drone_state.fov_y_deg
     half_diag_deg = math.sqrt((fov_x / 2) ** 2 + (fov_y / 2) ** 2)
     max_ground_radius = alt * math.tan(math.radians(half_diag_deg))
 
     detections: list[Detection] = []
 
-    # Hard-code weed physical diameter (meters) for all weeds
-    diameter_m = 0.5
-
     for w in weed_locations:
         lat, lon, wid = w["lat"], w["lon"], w["id"]
 
-        # GPS delta to local N/E offsets (same idea as utils.detection_to_latlon)
-        dlat = lat - lat0
-        dlon = lon - lon0
-
-        N = dlat * 111_320.0
-        E = dlon * 111_320.0 * math.cos(math.radians(lat0))
-
-        dist = math.hypot(N, E)
-        if dist > max_ground_radius:
+        # Cheap ground-distance cull before the full projection.
+        N = (lat - drone_state.latitude) * 111_320.0
+        E = (lon - drone_state.longitude) * 111_320.0 * math.cos(math.radians(drone_state.latitude))
+        if math.hypot(N, E) > max_ground_radius:
             continue  # not in view on the ground
 
-        # Rotate NED offset into body/camera frame using full attitude.
-        # Mirrors the inverse of utils.detection_to_ned (Rz@Ry@Rx body→NED),
-        # so sim-generated pixels round-trip correctly through detection_to_latlon.
-        roll  = drone_state.rotaion.x
-        pitch = drone_state.rotaion.y
-        yaw   = drone_state.rotaion.z
-
-        Rx = np.array([[1, 0, 0],
-                       [0,  np.cos(roll), -np.sin(roll)],
-                       [0,  np.sin(roll),  np.cos(roll)]])
-        Ry = np.array([[ np.cos(pitch), 0, np.sin(pitch)],
-                       [0, 1, 0],
-                       [-np.sin(pitch), 0, np.cos(pitch)]])
-        Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0],
-                       [np.sin(yaw),  np.cos(yaw), 0],
-                       [0, 0, 1]])
-
-        # NED vector from drone to weed; z is positive-down so weed is +alt below.
-        ned = np.array([N, E, alt])
-        # Inverse of (Rz@Ry@Rx) is (Rz@Ry@Rx).T = Rx.T @ Ry.T @ Rz.T
-        ray_body = (Rx.T @ Ry.T @ Rz.T) @ ned
-
-        if ray_body[2] <= 0:
-            continue  # weed is behind or above the camera
-
-        x_cam = ray_body[0] / ray_body[2]
-        y_cam = ray_body[1] / ray_body[2]
-
-        u = fx * x_cam + cx
-        v = fy * y_cam + cy
+        proj = _project_latlon_to_pixel(drone_state, lat, lon, fx, fy, cx, cy)
+        if proj is None:
+            continue
+        u, v = proj
 
         # Skip if outside image
         if not (0 <= u < NUM_OF_PIX_X and 0 <= v < NUM_OF_PIX_Y):
@@ -173,8 +192,8 @@ def _visible_weed_detections(
         min_px = 8.0
         max_px = NUM_OF_PIX_X * 0.8
 
-        size_x = max(min_px, min(max_px, fx * (diameter_m / alt)))
-        size_y = max(min_px, min(max_px, fy * (diameter_m / alt)))
+        size_x = max(min_px, min(max_px, fx * (WEED_DIAMETER_M / alt)))
+        size_y = max(min_px, min(max_px, fy * (WEED_DIAMETER_M / alt)))
 
         half_w = size_x / 2.0
         half_h = size_y / 2.0
@@ -194,6 +213,57 @@ def _visible_weed_detections(
         detections.append(det)
 
     return detections
+
+
+def _render_frame(drone_state: DroneStateForHoming, dets: list[Detection],
+                  true_weeds: list[dict], predicted_weeds: list[tuple]):
+    """Render a synthetic camera frame (BGR uint8) at the sim resolution.
+
+    Layers (per Fred): ground, true weeds (filled green blobs — what the camera
+    'sees'), predicted/clustered weeds (cross markers; grey if sprayed), and the
+    detection boxes (red rectangles + label). Mirrors the real camera image so the
+    saved JPEG flows through the same pipeline as real frames.
+    """
+    import cv2
+
+    H, W = NUM_OF_PIX_Y, NUM_OF_PIX_X
+    img = np.full((H, W, 3), (60, 90, 60), dtype=np.uint8)  # ground (BGR olive)
+
+    fx, fy, cx, cy = _camera_intrinsics(drone_state)
+    alt = drone_state.altitude_rel_home
+
+    if alt > 0:
+        # True weeds: filled green blobs sized like the detection bbox.
+        blob_r = max(3, int(0.5 * fx * (WEED_DIAMETER_M / alt)))
+        for w in true_weeds:
+            proj = _project_latlon_to_pixel(drone_state, w["lat"], w["lon"], fx, fy, cx, cy)
+            if proj is None:
+                continue
+            u, v = proj
+            if 0 <= u < W and 0 <= v < H:
+                cv2.circle(img, (int(u), int(v)), blob_r, (40, 170, 40), -1)
+
+        # Predicted (clustered) weeds: cross markers; grey once sprayed.
+        for lat, lon, sprayed in predicted_weeds:
+            proj = _project_latlon_to_pixel(drone_state, lat, lon, fx, fy, cx, cy)
+            if proj is None:
+                continue
+            u, v = proj
+            if 0 <= u < W and 0 <= v < H:
+                color = (120, 120, 120) if sprayed else (220, 140, 0)  # BGR: grey / blue
+                cv2.drawMarker(img, (int(u), int(v)), color, cv2.MARKER_CROSS, 24, 2)
+
+    # Detection boxes: red rectangles + label/confidence.
+    for d in dets:
+        (x0, y0), (x1, y1) = d.bbox
+        cv2.rectangle(img, (int(x0), int(y0)), (int(x1), int(y1)), (0, 0, 220), 2)
+        cv2.putText(img, f"{d.label} {d.confidence:.2f}", (int(x0), int(max(0, y0 - 4))),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 220), 1, cv2.LINE_AA)
+
+    size = constants.SIM_AI_RENDER_SIZE
+    if size and size > 0 and (W, H) != (size, size):
+        img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+    return img
 
 
 def run_sim_ai(weed_locations: list[dict]):
@@ -224,11 +294,36 @@ def run_sim_ai(weed_locations: list[dict]):
         # Logging should never crash sim AI
         pass
 
+    # Frame rendering setup: write synthetic JPEGs to missions/NNNN/frames/{time_ns}.jpg,
+    # the same path/naming the real pipeline uses, so sim and real share one image path.
+    frames_dir = None
+    if constants.SIM_AI_RENDER_FRAMES:
+        mdir = get_mission_dir()
+        if mdir is not None:
+            frames_dir = mdir / "frames"
+            frames_dir.mkdir(parents=True, exist_ok=True)
+
     def _loop():
+        import cv2
+        from pathlib import Path  # noqa: F401 (kept local; frames_dir is a Path)
+
+        # Predicted (clustered) weeds live in the mission DB; refresh on a slow cadence
+        # rather than every frame. Imported here (not at module top) so it loads after
+        # DB.set_db_path() — see init order in CLAUDE.md.
+        try:
+            from DB_abstraction import db_abstraction
+        except Exception:
+            db_abstraction = None
+        predicted_weeds: list[tuple] = []
+        last_pred_refresh = 0.0
+
         dt = 1.0 / constants.TARGET_FPS
         start = time.perf_counter()
         frame_idx = 0
         rng = random.Random(SIM_AI_RANDOM_SEED)
+
+        # Save at most SIM_AI_RENDER_MAX_FPS JPEGs per sim-second: render every Nth loop.
+        save_stride = max(1, round(constants.TARGET_FPS / max(1e-6, constants.SIM_AI_RENDER_MAX_FPS)))
 
         wrong_labels = ("person", "car", "bicycle", "dog", "cat", "chair")
 
@@ -316,12 +411,43 @@ def run_sim_ai(weed_locations: list[dict]):
 
                     dets = noisy
 
+                # Stamp every detection in this frame with one timestamp, and name the
+                # JPEG with the same value. analysis.build_frame_events attaches detections
+                # to a frame by matching detection.time_detected to the jpeg stem, so they
+                # must agree for sim frames to flow through the real-mission code path.
+                frame_ts = time.time_ns()
+                for d in dets:
+                    d.time_ns = frame_ts
+
                 # Route through add_detection so sim detections pass the same
                 # label gate as the real pipeline (ai_callback.py). Wrong-label
                 # noise gets dropped here, exactly as it would on the drone.
                 frame = Frame([], drone_state=drone_state)
                 for d in dets:
                     frame.add_detection(d)
+
+                # Render + save the synthetic camera frame (gated weeds need altitude).
+                # Throttled to SIM_AI_RENDER_MAX_FPS so long missions don't emit >100k JPEGs.
+                if (frames_dir is not None and drone_state.altitude_rel_home > 0
+                        and frame_idx % save_stride == 0):
+                    if (time.perf_counter() - last_pred_refresh) > 0.5 and db_abstraction is not None:
+                        try:
+                            predicted_weeds = [
+                                (w.lat, w.lon, bool(w.sprayed))
+                                for w in db_abstraction.get_all_weeds()
+                            ]
+                        except Exception:
+                            predicted_weeds = []
+                        last_pred_refresh = time.perf_counter()
+                    try:
+                        img = _render_frame(drone_state, frame.detection, weed_locations, predicted_weeds)
+                        out_path = frames_dir / f"{frame_ts}.jpg"
+                        cv2.imwrite(str(out_path), img)
+                        frame.photo_path = str(out_path)
+                    except Exception:
+                        # Rendering must never crash sim AI.
+                        pass
+
                 ai_storage_singleton.set_latest_frame(frame)
 
             # Schedule next frame based on absolute time

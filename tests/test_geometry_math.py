@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # about anything that might try to open a serial port / write a log.
 sys.modules.setdefault("mission_logging", types.ModuleType("mission_logging"))
 sys.modules["mission_logging"].log_event = MagicMock()
+sys.modules["mission_logging"].get_mission_dir = MagicMock(return_value=None)
 _tel = types.ModuleType("telemetry")
 _tel.telemetry_singlton = None
 sys.modules.setdefault("telemetry", _tel)

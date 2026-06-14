@@ -218,6 +218,8 @@ def parse_mission(mission_dir: Path) -> dict:
     is_sim = False
     sim_truth_file = None
     weed_match_m = 0.5
+    sim_speed = 1.0  # frames are stamped in wall-clock ns; under --speedup N the sim ran
+    #                  N× faster than real, so real-time playback must stretch gaps by N.
 
     fsm_ticks_ts: list[int] = []
     fsm_ticks_data: list[dict] = []
@@ -237,6 +239,12 @@ def parse_mission(mission_dir: Path) -> dict:
             is_sim = ev.get("is_sim", False)
             sim_truth_file = ev.get("sim_truth_file")
             weed_match_m = float(ev.get("weed_match_m", 0.5))
+
+        elif event == "constants_snapshot":
+            try:
+                sim_speed = float((ev.get("constants") or {}).get("SIM_SPEED", 1.0)) or 1.0
+            except (TypeError, ValueError):
+                sim_speed = 1.0
 
         elif event == "fsm_tick":
             ts = ev.get("time_ns")
@@ -303,6 +311,7 @@ def parse_mission(mission_dir: Path) -> dict:
         "is_sim": is_sim,
         "sim_truth_file": sim_truth_file,
         "weed_match_m": weed_match_m,
+        "sim_speed": sim_speed,
         "fsm_ticks_ts": fsm_ticks_ts,
         "fsm_ticks_data": fsm_ticks_data,
         "fsm_trans_ts": fsm_trans_ts,
@@ -593,13 +602,17 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
 
     stems = [t for t, _ in kept]
     spu = _infer_seconds_per_stem_unit(stems)
-    durations = _frame_durations_seconds(stems, spu)
+    # Frames are stamped in wall-clock ns. Under --speedup N the sim ran N× faster than
+    # real, so the wall-clock gaps are 1/N of simulated time. Stretch by sim_speed so the
+    # video plays back at simulated real time (1×).
+    sim_speed = float(data.get("sim_speed", 1.0)) or 1.0
+    durations = _frame_durations_seconds(stems, spu * sim_speed)
     total_s = sum(durations)
 
     print(f"  Frames: {len(kept)} to render  ({len(frame_images)} JPEGs on disk)")
     print(f"  FSM ticks: {len(data['fsm_ticks_ts'])}")
     print(f"  FSM transitions: {len(data['fsm_trans_ts'])}")
-    print(f"  Mode: real-time  (~{total_s:.1f}s wall time from frame gaps, stem scale ~{spu:g} s/unit)")
+    print(f"  Mode: real-time  (~{total_s:.1f}s playback @ sim_speed×{sim_speed:g}, stem scale ~{spu:g} s/unit)")
 
     truth: list[dict] | None = None
     if data["is_sim"] and data["sim_truth_file"]:

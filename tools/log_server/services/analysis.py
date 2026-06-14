@@ -617,6 +617,19 @@ def _make_frame_row(
     if ds_obj:
         drone_pos = {"lat": ds_obj.latitude, "lon": ds_obj.longitude}
 
+    # Strip the per-tick rotation/gps history deques (~100 entries each, ~30 KB/row) before
+    # returning. The client only needs the scalar drone_state (position/attitude); shipping
+    # the histories on every frame row blew the /frame_events payload up to 300+ MB and broke
+    # the dashboard. Ground projections + footprint are already computed server-side above.
+    slim_drone_state = drone_state_dict
+    if isinstance(drone_state_dict, dict) and (
+        "rotation_history" in drone_state_dict or "gps_history" in drone_state_dict
+    ):
+        slim_drone_state = {
+            k: v for k, v in drone_state_dict.items()
+            if k not in ("rotation_history", "gps_history")
+        }
+
     return {
         "frame_index": frame_index,
         "ts": ts_str,
@@ -626,7 +639,7 @@ def _make_frame_row(
         "photo_path": photo_path,
         "detections": dets,
         "raw_detections": raw_dets if raw_dets else None,
-        "drone_state": drone_state_dict,
+        "drone_state": slim_drone_state,
         "ground_projections": g_logged,
         "raw_ground_projections": g_raw if raw_dets else None,
         "ground_projection_note": note,

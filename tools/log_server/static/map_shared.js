@@ -411,7 +411,20 @@
             ? Number(frame.frame_index)
             : NaN;
       var fiOk = Number.isFinite(navIdx);
-      /* Mission dashboard: data-sd-frame-index → Frames tab selectFrameIndex (frame_events list index). */
+      // Stable nav key: the saved JPEG stem equals the frame time_ns. The map may pass a
+      // dets-only list index that won't line up with the Frames tab's full list, so navigate
+      // by time_ns (resolved against frames/<ns>.jpg). The list index is only a fallback.
+      var frameTns = "";
+      if (photo) {
+        var base = String(frame.photo_path).split("/").pop() || "";
+        var stem = base.replace(/\.[^.]+$/, "");
+        if (/^\d+$/.test(stem)) frameTns = stem;
+      }
+      var navAttr =
+        (frameTns ? ' data-sd-frame-tns="' + frameTns + '"' : "") +
+        (fiOk ? ' data-sd-frame-index="' + String(navIdx) + '"' : "");
+      var canNav = photo && (frameTns !== "" || fiOk);
+      /* Mission dashboard: data-sd-frame-tns / -index → openNearestFrameFromFovTimeNs / selectFrameIndex. */
       var openFullLink =
         !photo
           ? ""
@@ -420,13 +433,13 @@
         '<a class="sd-det-open-full" href="' +
         imgUrl +
         '"' +
-        (fiOk ? ' data-sd-frame-index="' + String(navIdx) + '"' : "") +
-        (fiOk ? "" : ' target="_blank" rel="noopener"') +
+        navAttr +
+        (canNav ? "" : ' target="_blank" rel="noopener"') +
         ">" +
-        (fiOk ? "Open in frame viewer" : "Open full size") +
+        (canNav ? "Open in frame viewer" : "Open full size") +
         "</a></div>";
-      var imgNavAttr = fiOk && photo ? ' data-sd-frame-index="' + String(navIdx) + '"' : "";
-      var imgPointerStyle = fiOk && photo ? ";cursor:pointer" : "";
+      var imgNavAttr = canNav ? navAttr : "";
+      var imgPointerStyle = canNav ? ";cursor:pointer" : "";
       var annotationPlain = "";
       if (tTag) {
         annotationPlain = String(tTag)
@@ -768,6 +781,22 @@
             corners.forEach(function (q) {
               if (q.lat != null && q.lon != null) all.push([q.lat, q.lon]);
             });
+            // A real detection bbox is ~0.1-1 m across — sub-pixel on a field-wide map, so
+            // the true-scale polygon above is invisible when zoomed out. Add a fixed-pixel
+            // center marker (visible at any zoom, like the predicted-weed dots) so detections
+            // are findable; the polygon still shows true scale once you zoom in.
+            var markerColor = (mode === "mission") ? strokeColor : (cfg.color || strokeColor);
+            var dotCenter = (c && c.lat != null && c.lon != null)
+              ? [c.lat, c.lon]
+              : [pts[0][0], pts[0][1]];
+            L.circleMarker(dotCenter, {
+              pane: pane,
+              radius: 4,
+              color: markerColor,
+              fillColor: markerColor,
+              fillOpacity: 0.85,
+              weight: 1,
+            }).bindPopup(popup, { maxWidth: 420, className: "sd-det-leaflet-popup" }).addTo(g);
           } else if (c && c.lat != null && c.lon != null) {
             var cmOpts;
             var pop2;

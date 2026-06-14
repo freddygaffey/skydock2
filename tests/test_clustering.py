@@ -47,6 +47,7 @@ def _install_stubs():
     # mission_logging – capture log_event calls.
     ml = types.ModuleType("mission_logging")
     ml.log_event = MagicMock()
+    ml.get_mission_dir = MagicMock(return_value=None)
     sys.modules.setdefault("mission_logging", ml)
 
     # DB_abstraction – provide a real swappable singleton + a simple Weed type.

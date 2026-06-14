@@ -322,7 +322,13 @@ def mission_frame_events(mission_id: str):
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
     mission_dir = _missions_root(src) / mission_id
-    return jsonify(build_frame_events(p, mission_dir))
+    rows = build_frame_events(p, mission_dir)
+    # The map's BBox-ground layer only needs detection rows. Sim missions can emit one row
+    # per JPEG (>100k empty-ground frames), which makes the full payload too big to render.
+    # ``dets_only=1`` returns just the rows that carry detections.
+    if request.args.get("dets_only") in ("1", "true", "yes"):
+        rows = [r for r in rows if r.get("detections")]
+    return jsonify(rows)
 
 
 @bp.get("/missions/<mission_id>/sim_vision")
@@ -527,6 +533,15 @@ def mission_generate_video(mission_id: str):
             log_f.flush()
             child_env = os.environ.copy()
             child_env["PYTHONUNBUFFERED"] = "1"
+            # Use all the cores (this runs on a beefy M-series / i9), but run the whole
+            # job at low OS priority so the scheduler still hands CPU to this Flask server
+            # on demand and the site stays responsive while a video renders.
+            def _lower_priority() -> None:
+                try:
+                    os.nice(19)
+                except (OSError, AttributeError):
+                    pass
+
             proc = subprocess.Popen(
                 [sys.executable, "-u", str(script), str(mission_dir)],
                 stdout=log_f,
@@ -534,6 +549,7 @@ def mission_generate_video(mission_id: str):
                 cwd=str(repo_root),
                 env=child_env,
                 start_new_session=True,
+                preexec_fn=_lower_priority,
             )
         finally:
             log_f.close()
