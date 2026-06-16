@@ -1,6 +1,6 @@
 from ai_class import Detection
 from drone_state import DroneStateForHoming
-from math import radians, tan
+from math import radians
 import math
 import numpy as np
 
@@ -8,7 +8,7 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     if not drone_state.is_telemetry_ready:
         return float('inf'), float('inf')
     NUM_OF_PIX_X = drone_state.width
-    NUM_OF_PIX_Y = drone_state.hight
+    NUM_OF_PIX_Y = drone_state.height
 
     fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(drone_state.fov_x_deg/2)))
     fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(drone_state.fov_y_deg/2)))
@@ -25,8 +25,8 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     R_cam_to_body = np.eye(3)
 
     ray_body = R_cam_to_body @ cam_ray
-    drone_state.rotaion = drone_state.get_rotation_at_time(detection.time_ns)
-    roll,pitch,yaw = drone_state.rotaion.x,drone_state.rotaion.y,drone_state.rotaion.z
+    drone_state.rotation = drone_state.get_rotation_at_time(detection.time_ns)
+    roll,pitch,yaw = drone_state.rotation.x,drone_state.rotation.y,drone_state.rotation.z
 
     Rx = np.array([
         [1,  0, 0],
@@ -85,7 +85,7 @@ def latlon_to_pixel(drone_state, weed_lat: float, weed_lon: float, time_ns: int 
     otherwise None (point not visible in this frame).
     """
     NUM_OF_PIX_X = drone_state.width
-    NUM_OF_PIX_Y = drone_state.hight
+    NUM_OF_PIX_Y = drone_state.height
 
     fx = NUM_OF_PIX_X / (2 * np.tan(np.radians(drone_state.fov_x_deg / 2)))
     fy = NUM_OF_PIX_Y / (2 * np.tan(np.radians(drone_state.fov_y_deg / 2)))
