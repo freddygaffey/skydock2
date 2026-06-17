@@ -1,3 +1,7 @@
+"""ArduPilot SITL helpers: launch the simulator, configure sim params, arm/take
+off, and load a mission JSON into the database. Used only with `main.py --sim`.
+"""
+
 import os
 import sys
 import json
@@ -64,7 +68,7 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
 
     print("[sitl] waiting for EKF and GPS to be ready (retrying arm)...")
     for i in range(30):
-        print(f"lunch atempt {i}/30")
+        print(f"launch attempt {i}/30")
         conn.mav.command_long_send(
             conn.target_system, conn.target_component,
             mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
@@ -111,8 +115,8 @@ def start_sim(speed: int) -> None:
         if msg is not None:
             print("[sitl] already running on port 14550")
             return
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[sitl] no existing SITL on port 14550 ({type(e).__name__}); starting a new one")
 
     cmd = (
         f"source ~/venv-ardupilot/bin/activate && "
@@ -160,6 +164,16 @@ def load_mission_file(file: str, base_dir: str = "sim_data", start_sim_ai: bool 
     path = file if os.path.exists(file) else f"{base_dir}/{file}"
     with open(path, "r") as f:
         data = json.load(f)
+
+    missing = [k for k in ("weed_locations", "scan_path") if k not in data]
+    if missing:
+        raise ValueError(f"mission file '{path}' missing required keys: {missing}")
+    for i, pt in enumerate(data["scan_path"]):
+        if not (isinstance(pt, (list, tuple)) and len(pt) == 2):
+            raise ValueError(
+                f"mission file '{path}' scan_path[{i}] must be a [lat, lon] pair, got {pt!r}"
+            )
+
     if start_sim_ai:
         ai_storage_singleton.start_sim_ai(data["weed_locations"])
     wps = [Waypoint(*pt, id=i) for i, pt in enumerate(data["scan_path"])]

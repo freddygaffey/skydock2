@@ -4,7 +4,7 @@ import math
 import random
 import numpy as np
 
-from telemetry import telemetry_singlton
+from telemetry import telemetry_singleton
 from ai_class import ai_storage_singleton, Detection, Frame
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
@@ -12,11 +12,11 @@ import constants
 
 
 # Simulated camera mirrors DroneStateForHoming: resolution from its
-# width/hight defaults, FOV/intrinsics from its lens constants — the same
+# width/height defaults, FOV/intrinsics from its lens constants — the same
 # source utils.detection_to_ned uses, so sim pixels round-trip exactly.
 # Frame rate comes from constants.TARGET_FPS, shared with ai_callback.
 NUM_OF_PIX_X = DroneStateForHoming.width
-NUM_OF_PIX_Y = DroneStateForHoming.hight
+NUM_OF_PIX_Y = DroneStateForHoming.height
 
 # Pixel jitter (Gaussian std-dev in pixels) applied to bbox center.
 SIM_AI_PIXEL_NOISE_STD_PX = 2.0
@@ -99,7 +99,7 @@ def _visible_weed_detections(
     alt = drone_state.altitude_rel_home
 
     # Use the same intrinsics utils.detection_to_ned will use, derived from
-    # drone_state.width/hight + lens specs. Keeps sim/projection round-trip exact.
+    # drone_state.width/height + lens specs. Keeps sim/projection round-trip exact.
     fov_x = drone_state.fov_x_deg
     fov_y = drone_state.fov_y_deg
     fx = NUM_OF_PIX_X / (2 * math.tan(math.radians(fov_x / 2)))
@@ -135,9 +135,9 @@ def _visible_weed_detections(
         # Rotate NED offset into body/camera frame using full attitude.
         # Mirrors the inverse of utils.detection_to_ned (Rz@Ry@Rx body→NED),
         # so sim-generated pixels round-trip correctly through detection_to_latlon.
-        roll  = drone_state.rotaion.x
-        pitch = drone_state.rotaion.y
-        yaw   = drone_state.rotaion.z
+        roll  = drone_state.rotation.x
+        pitch = drone_state.rotation.y
+        yaw   = drone_state.rotation.z
 
         Rx = np.array([[1, 0, 0],
                        [0,  np.cos(roll), -np.sin(roll)],
@@ -199,7 +199,7 @@ def _visible_weed_detections(
 def run_sim_ai(weed_locations: list[dict]):
     """
     Start a background 30 FPS loop:
-    - Reads telemetry_singlton.drone_state
+    - Reads telemetry_singleton.drone_state
     - Computes visible weeds
     - Updates ai_storage_singleton with Frame(detections)
     """
@@ -207,10 +207,10 @@ def run_sim_ai(weed_locations: list[dict]):
     # Sim renders detections in NUM_OF_PIX_X × NUM_OF_PIX_Y pixel space — make
     # the live drone_state advertise the same resolution so utils.detection_to_ned
     # uses matching intrinsics.
-    ds = getattr(telemetry_singlton, "drone_state", None)
+    ds = getattr(telemetry_singleton, "drone_state", None)
     if ds is not None:
         ds.width = NUM_OF_PIX_X
-        ds.hight = NUM_OF_PIX_Y
+        ds.height = NUM_OF_PIX_Y
 
     # Log sim vision parameters once per mission
     try:
@@ -234,7 +234,7 @@ def run_sim_ai(weed_locations: list[dict]):
 
         while True:
             # Do work for this frame
-            drone_state = getattr(telemetry_singlton, "drone_state", None)
+            drone_state = getattr(telemetry_singleton, "drone_state", None)
             if drone_state is not None:
                 dets = _visible_weed_detections(drone_state, weed_locations)
 
@@ -255,9 +255,9 @@ def run_sim_ai(weed_locations: list[dict]):
 
                         # Jitter center and size; scale noise by angular rate magnitude
                         omega = math.sqrt(
-                            drone_state.rotaion.dx**2 +
-                            drone_state.rotaion.dy**2 +
-                            drone_state.rotaion.dz**2
+                            drone_state.rotation.dx**2 +
+                            drone_state.rotation.dy**2 +
+                            drone_state.rotation.dz**2
                         )
                         effective_pixel_noise = (
                             SIM_AI_PIXEL_NOISE_STD_PX

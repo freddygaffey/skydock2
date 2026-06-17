@@ -1,3 +1,18 @@
+"""Drone state snapshot built from MAVLink, plus history-based interpolation.
+
+set_pass_message() converts raw MAVLink wire units into SI/degrees:
+  GLOBAL_POSITION_INT: lat/lon degE7 -> deg, relative_alt mm -> m, v cm/s -> m/s,
+    hdg cdeg -> deg (65535 = unknown -> None).
+  ATTITUDE: roll/pitch/yaw radians (kept in rotation + rotation_history).
+  HEARTBEAT: flight mode (custom_mode) and arm_state (base_mode armed flag).
+  RC_CHANNELS: chan16 PWM 3-position switch -> autonomy_enabled / force_homing
+    (>1700 force-homing, <1300 autonomy, mid disables); always-on in sim.
+  DISTANCE_SENSOR: current_distance cm -> rangefinder_m.
+
+get_position_at_time / get_rotation_at_time dead-reckon and Hermite-interpolate
+to a detection timestamp so projections line up with when the frame was captured.
+"""
+
 from dataclasses import dataclass, field
 from pymavlink import mavutil
 from collections import deque
@@ -42,18 +57,19 @@ class DroneStateForHoming:
 
     autonomy_enabled: bool = True
     force_homing: bool = False
+    arm_state: bool = False  # set from HEARTBEAT.base_mode in set_pass_message
     mode: str = 'STABILIZE'
 
     heading: float = 0
     
-    rotaion:Rotation = field(default_factory=lambda: Rotation(0,0,0,0))
-    rotaion_history: deque = field(default_factory=lambda: deque(maxlen=100))
+    rotation:Rotation = field(default_factory=lambda: Rotation(0,0,0,0))
+    rotation_history: deque = field(default_factory=lambda: deque(maxlen=100))
     gps_history: deque = field(default_factory=lambda: deque(maxlen=100))
 
     # MAVLink DISTANCE_SENSOR.current_distance is centimeters (common.xml). Convert to metres here.
     rangefinder_m: float = 0.0  # slant range from co-axial rangefinder, metres; 0 = no data
 
-    hight: int = 1280
+    height: int = 1280
     width: int = 1280
 
     # RPi HQ Camera (IMX477, 1.55 µm pixel pitch, 4056x3040 active) + 6mm CS lens.
@@ -78,9 +94,9 @@ class DroneStateForHoming:
 
     @property
     def is_telemetry_ready(self) -> bool:
-        # First ATTITUDE message populates rotaion_history; before that, projections
+        # First ATTITUDE message populates rotation_history; before that, projections
         # would assume zero attitude and produce wildly wrong NED offsets.
-        return len(self.rotaion_history) > 0
+        return len(self.rotation_history) > 0
 
     def set_pass_message(self,msg):
         if msg is None:
@@ -150,9 +166,9 @@ class DroneStateForHoming:
                     self.force_homing = False
 
             # # TODO: remove
-            # self.rotaion_x = 0.0
-            # self.rotaion_y = 0.0
-            # self.rotaion_z = 0.0
+            # self.rotation_x = 0.0
+            # self.rotation_y = 0.0
+            # self.rotation_z = 0.0
 
         if msg._type == "DISTANCE_SENSOR":
             # current_distance is uint16 cm (see MAVLink DISTANCE_SENSOR).
@@ -168,8 +184,8 @@ class DroneStateForHoming:
                 dy=msg.pitchspeed,
                 dz=msg.yawspeed,
             )
-            self.rotaion_history.append(rot)
-            self.rotaion = rot
+            self.rotation_history.append(rot)
+            self.rotation = rot
 
     def to_db_format(self):
         return (self.time_updated_GLOBAL_POSITION_INT,
@@ -178,9 +194,9 @@ class DroneStateForHoming:
                 self.altitude_rel_home,
                 self.heading,
                 self.autonomy_enabled,
-                self.rotaion.x,
-                self.rotaion.y,
-                self.rotaion.z,
+                self.rotation.x,
+                self.rotation.y,
+                self.rotation.z,
                 self.mode)
 
     def get_position_at_time(self, time_ns: float) -> 'GPSFix':
@@ -196,7 +212,7 @@ class DroneStateForHoming:
     def get_rotation_at_time(self, time_ns: float) -> 'Rotation':
         before = None
         after = None
-        for rot in self.rotaion_history:
+        for rot in self.rotation_history:
             if rot.time_ns <= time_ns:
                 before = rot
             else:
@@ -204,7 +220,7 @@ class DroneStateForHoming:
                 break
 
         if before is None:
-            return self.rotaion
+            return self.rotation
 
         if after is None:
             # Extrapolate forward from the last known entry using its angular rates.

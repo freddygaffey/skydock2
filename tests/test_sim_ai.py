@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 _tel = types.ModuleType("telemetry")
-_tel.telemetry_singlton = None
+_tel.telemetry_singleton = None
 sys.modules.setdefault("telemetry", _tel)
 
 _ml = types.ModuleType("mission_logging")

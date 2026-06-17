@@ -1,6 +1,5 @@
 import fcntl
 import json
-import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,12 +56,19 @@ def allocate_mission_dir(
         if next_id is None or next_id <= 0:
             next_id = scan_next()
 
-        # Avoid collisions if folders were created without updating counter
-        while (missions_root / f"{next_id:0{pad}d}").exists():
-            next_id += 1
-
-        mission_dir = missions_root / f"{next_id:0{pad}d}"
-        mission_dir.mkdir(parents=True, exist_ok=False)
+        # Avoid collisions if folders were created without updating the counter.
+        # The flock serialises allocators in this process; the retry also covers
+        # a directory appearing between the existence check and mkdir.
+        while True:
+            if (missions_root / f"{next_id:0{pad}d}").exists():
+                next_id += 1
+                continue
+            mission_dir = missions_root / f"{next_id:0{pad}d}"
+            try:
+                mission_dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                next_id += 1
 
         counter_path.write_text(str(next_id + 1), encoding="utf-8")
     finally:

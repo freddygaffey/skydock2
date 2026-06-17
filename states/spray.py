@@ -1,14 +1,19 @@
-from telemetry import telemetry_singlton
 from drone_state import DroneStateForHoming
 from ai_class import Frame
-from DB_abstraction import db_abstraction, Weed
-from utils import detection_to_latlon, haversine_distance, detection_to_ned
+from DB_abstraction import db_abstraction
+from utils import detection_to_ned
 from constants import MIN_SPRAY_ERROR
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
 
 def spraying(drone_state:DroneStateForHoming,frame:Frame):
+    """Spray the target weed if a detection is within MIN_SPRAY_ERROR.
+
+    Returns RTL if no unsprayed weed remains. Marks the closest weed sprayed when
+    an in-range detection confirms it, else marks it traveled (skip). Always
+    returns GOTO to advance to the next weed.
+    """
     sprayed = False
     closest_weed = db_abstraction.get_closest_weed(drone_state)
     if closest_weed is None:

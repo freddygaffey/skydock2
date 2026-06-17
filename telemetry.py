@@ -1,3 +1,17 @@
+"""MAVLink telemetry + command interface to the ArduPilot flight controller.
+
+A background thread (start_passer) reads MAVLink messages over serial/UDP and
+populates a single DroneStateForHoming (lat/lon in degrees, altitude/velocity in
+metres and m/s, attitude in radians; see drone_state.py for unit conversions).
+The module-level telemetry_singleton is assigned by main.py at startup; it is
+None at import time.
+
+Velocity commands (send_velocity_command_yaw_stay_same) use a MAVLink type-mask
+and must be re-sent within ~3 s or the FC stops; move_velocity_until_stop_or_max_time
+runs a helper thread to do that. Bitmask integers encode which setpoint fields
+the FC should ignore (position/velocity/accel/yaw) per SET_POSITION_TARGET.
+"""
+
 import threading
 import time
 import serial
@@ -12,16 +26,28 @@ from constants import SIM_SPEED
 
 
 class Telemetry:
+    # ArduCopter flight-mode numbers (HEARTBEAT.custom_mode). Matches the mapping
+    # in drone_state.set_pass_message. LAND (8) must be present or a pilot
+    # switching to LAND raises in move_msg_passer and kills the passer thread.
+    MODE_MAPPING = {
+        'STABILIZE': 0, 'ACRO': 1, 'ALT_HOLD': 2, 'AUTO': 3, 'GUIDED': 4,
+        'LOITER': 5, 'RTL': 6, 'CIRCLE': 7, 'LAND': 8, 'OF_LOITER': 10,
+        'DRIFT': 11, 'SPORT': 13, 'FLIP': 14, 'AUTOTUNE': 15, 'POSHOLD': 16,
+        'BRAKE': 17, 'THROW': 18, 'AVOID_ADSB': 19, 'GUIDED_NOGPS': 20,
+        'SMART_RTL': 21, 'FLOWHOLD': 22, 'FOLLOW': 23, 'ZIGZAG': 24,
+        'SYSTEMIDLE': 25, 'AUTOROTATE': 26, 'RALLY': 27,
+    }
+
     def __init__(self, connection_string: str = None):
         self.drone_state = DroneStateForHoming()
         # connect to drone
 
         if connection_string is not None:
-            connection_palths = [connection_string, None]
+            connection_paths = [connection_string, None]
         else:
-            connection_palths = ["/dev/ttyACM1", "/dev/ttyACM0", "/dev/ttyACM10", None]
+            connection_paths = ["/dev/ttyACM1", "/dev/ttyACM0", "/dev/ttyACM10", None]
 
-        for i in connection_palths:
+        for i in connection_paths:
             if i is None:
                 raise ConnectionError("could not connect to the fc")
             try:
@@ -31,9 +57,9 @@ class Telemetry:
             except serial.serialutil.SerialException:
                 print(f"cant connect to {i}")
 
-        self.wp_q = Queue(maxsize=1000) 
+        self.wp_q = Queue(maxsize=1000)
 
-        self.mode_mapping = {'STABILIZE': 0,'ACRO': 1,'ALT_HOLD': 2,'AUTO': 3,'GUIDED': 4,'LOITER': 5,'RTL': 6,'CIRCLE': 7,'OF_LOITER': 10,'DRIFT': 11,'SPORT': 13,'FLIP': 14,'AUTOTUNE': 15,'POSHOLD': 16,'BRAKE': 17,'THROW': 18,'AVOID_ADSB': 19,'GUIDED_NOGPS': 20,'SMART_RTL': 21,'FLOWHOLD': 22,'FOLLOW': 23,'ZIGZAG': 24,'SYSTEMIDLE': 25,'AUTOTUNE': 26,'RALLY': 27}
+        self.mode_mapping = dict(self.MODE_MAPPING)
         self.current_mode = None
         self.arm_state = False
 
@@ -54,7 +80,11 @@ class Telemetry:
         while True:
             try:
                 msg = self.connection.recv_msg()
-            except serial.SerialException: pass
+            except serial.SerialException:
+                # Drop the read and fall through to the retry/sleep path. Without
+                # this, msg would be unbound on the first iteration (NameError) or
+                # stale (the previous message reprocessed) on later ones.
+                msg = None
             if msg is None:
                 time.sleep(0.0003/SIM_SPEED)
                 continue
@@ -186,10 +216,10 @@ class Telemetry:
                 0, 0         # yaw and yaw_rate ignored
                 )
 
-    def send_volocity_command_yaw_stay_same(self,mx,my,mz,bitmask=int(0b10111000111)):
+    def send_velocity_command_yaw_stay_same(self,mx,my,mz,bitmask=int(0b10111000111)):
         # this command must be sent every 3 seconds to continue moving
         if not bitmask:
-            raise ValueError("bit mask not set for volocity command")
+            raise ValueError("bit mask not set for velocity command")
 
         log_event(
             "move_command",
@@ -214,9 +244,9 @@ class Telemetry:
         self.set_mode("BRAKE")
         time.sleep(3)
         self.set_mode(old_mode)
-        self.stop_volocity_command()
-    def move_volocity_until_stop_or_max_time(self,direction,max_time,change_yaw=False):
-        self.stop_volocity_command()
+        self.stop_velocity_command()
+    def move_velocity_until_stop_or_max_time(self,direction,max_time,change_yaw=False):
+        self.stop_velocity_command()
         log_event(
             "move_command",
             logger="telemetry",
@@ -234,8 +264,8 @@ class Telemetry:
                 bitmask = no_dyaw
             start_time = time.time()
             while time.time() < start_time + max_time and not self._v_thread_stop_event.is_set():
-                print("sending volocity command on thread")
-                self.send_volocity_command_yaw_stay_same(direction[0],direction[1],direction[2],bitmask)
+                print("sending velocity command on thread")
+                self.send_velocity_command_yaw_stay_same(direction[0],direction[1],direction[2],bitmask)
                 time.sleep(0.03/SIM_SPEED)
                 
         if self._v_thread is None or not self._v_thread.is_alive(): # this will check if none like after init or later is not runing
@@ -243,11 +273,11 @@ class Telemetry:
             self._v_thread = threading.Thread(target=repeatedly_send_v_command,args=(direction,max_time,change_yaw))
             self._v_thread.start()
             print("started sending move command")
-    def stop_volocity_command(self):
+    def stop_velocity_command(self):
         if self._v_thread and self._v_thread.is_alive():
             self._v_thread_stop_event.set()
             self._v_thread.join()
-            self.send_volocity_command_yaw_stay_same(0,0,0)
+            self.send_velocity_command_yaw_stay_same(0,0,0)
             self._v_thread = None 
     def arm(self): # dange UNTESTED
         # TODO: test in real world
@@ -263,14 +293,14 @@ class Telemetry:
             if msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
                 return True
             time.sleep(1)
-    def arm_and_take_off_to_hight(self,hight): # danger UNTESTED
+    def arm_and_take_off_to_height(self,height): # danger UNTESTED
         # TODO: test in real world
             self.arm()
             self.connection.mav.command_long_send(
                 self.connection.target_system,
                 self.connection.target_component,
                 mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-                0, 0, 0, 0, 0, 0, 0, hight
+                0, 0, 0, 0, 0, 0, 0, height
             )
     def fly_to_point(self,lat,lon,alt_above_home,bitmask=3576,speed_ms=None):
         if speed_ms is None:
@@ -335,10 +365,10 @@ class Telemetry:
         for i in new_array:print(i)
         return new_array
 
-telemetry_singlton: "Telemetry|None" = None
+telemetry_singleton: "Telemetry|None" = None
 
 if __name__ == "__main__":
-    telemetry_singlton = Telemetry()
+    telemetry_singleton = Telemetry()
     while 1:
-        print(telemetry_singlton.drone_state)
+        print(telemetry_singleton.drone_state)
         time.sleep(1)

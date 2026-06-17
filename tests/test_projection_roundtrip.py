@@ -21,10 +21,10 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Stub the two modules with side effects: telemetry pulls in pyserial and
-# sim_ai only reads telemetry_singlton (None until main.py sets it);
+# sim_ai only reads telemetry_singleton (None until main.py sets it);
 # mission_logging would try to write mission.jsonl.
 _tel = types.ModuleType("telemetry")
-_tel.telemetry_singlton = None
+_tel.telemetry_singleton = None
 sys.modules.setdefault("telemetry", _tel)
 
 _ml = types.ModuleType("mission_logging")
@@ -65,10 +65,10 @@ def make_state(lat, lon, alt, roll=0.0, pitch=0.0, yaw=0.0) -> DroneStateForHomi
     s.longitude = lon
     s.altitude_rel_home = alt
     s.width = sim_ai.NUM_OF_PIX_X
-    s.hight = sim_ai.NUM_OF_PIX_Y
+    s.height = sim_ai.NUM_OF_PIX_Y
     rot = Rotation(time_ns=now, x=roll, y=pitch, z=yaw)
-    s.rotaion = rot
-    s.rotaion_history.append(rot)  # makes is_telemetry_ready True
+    s.rotation = rot
+    s.rotation_history.append(rot)  # makes is_telemetry_ready True
     s.gps_history.append(GPSFix(time_ns=now, lat=lat, lon=lon, vx=0.0, vy=0.0))
     return s
 

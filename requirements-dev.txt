@@ -1,0 +1,10 @@
+# Minimal dependencies for running the flight-stack test suite on a dev machine
+# (macOS/Linux, no drone hardware or SITL required).
+# Full runtime dependencies: pip install -r requirements.txt
+pytest>=8.0
+numpy
+sqlalchemy>=2.0
+pymavlink
+pyserial
+# The log_server test suite (tools/log_server/tests) additionally needs:
+# flask

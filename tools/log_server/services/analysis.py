@@ -64,7 +64,7 @@ def weed_prediction_points_from_detections(
     """
     Recompute predicted weed points by reclustering projected detection centers.
 
-    This reclustering mirrors the intent of `states/scan.py::prosess_all_scan_data()`:
+    This reclustering mirrors the intent of `states/scan.py::process_all_scan_data()`:
     - project `frame.detections[]` bbox centers to (lat, lon)
     - add a detection to the nearest cluster if distance < `spacing_m`
     - otherwise create a new cluster
@@ -497,7 +497,7 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
     sim_truth_raw = header.get("sim_truth_file")
     sim_truth_file = Path(str(sim_truth_raw)).name if sim_truth_raw else None
 
-    # Defaults used by the in-run `prosess_all_scan_data()` clustering in `states/scan.py`.
+    # Defaults used by the in-run `process_all_scan_data()` clustering in `states/scan.py`.
     # Mission logs currently store `weed_match_m`, but not the clustering constants; we expose
     # these code defaults so the UI can show an "Actual (default)" marker next to sliders.
     if header is not None and isinstance(header, dict):
@@ -604,7 +604,7 @@ def _make_frame_row(
 
     footprint: list[dict[str, float]] = []
     if ds_obj and ds_obj.altitude_rel_home > 0:
-        w, h = ds_obj.width, ds_obj.hight
+        w, h = ds_obj.width, ds_obj.height
         for u, v in [(0, 0), (w, 0), (w, h), (0, h)]:
             try:
                 pt = Detection(label="", confidence=0.0, bbox=[(u, v), (u, v)])

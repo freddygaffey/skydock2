@@ -1,3 +1,9 @@
+"""Mission tunables. Distances in metres, speeds in m/s, times in seconds.
+
+SIM_SPEED is the SITL speedup factor, parsed from argv at import (1 on real
+hardware). Homing timeouts are divided by it so they fire in wall-clock terms.
+"""
+
 #########################
 # global
 #########################
@@ -10,7 +16,7 @@ SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys
 ###########################
 
 # Scan state
-SCAN_HIGHT = 10
+SCAN_HEIGHT = 10
 SCAN_SPEED_MS = 2
 MIN_DIST_FROM_WAYPOINT = 1.0
 MIN_WEED_SPACING = 2.0

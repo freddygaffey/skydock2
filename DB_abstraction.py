@@ -6,11 +6,8 @@ Database abstraction layer using SQLAlchemy.
 Provides high-level operations for waypoints, weeds, drone states, and detections.
 """
 
-import sqlite3
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, List, Tuple
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from typing import ClassVar, Optional, List
 
 from DB import (
     WaypointModel, WeedModel, DroneStateModel, DetectionModel, DatabaseSession
@@ -286,12 +283,12 @@ class DBAbstraction:
                 velocity_z=drone_state.velocity_z,
                 autonomy_enabled=drone_state.autonomy_enabled,
                 heading=drone_state.heading,
-                rotation_x=drone_state.rotaion.x,
-                rotation_y=drone_state.rotaion.y,
-                rotation_z=drone_state.rotaion.z,
-                rotation_dx=drone_state.rotaion.dx,
-                rotation_dy=drone_state.rotaion.dy,
-                rotation_dz=drone_state.rotaion.dz,
+                rotation_x=drone_state.rotation.x,
+                rotation_y=drone_state.rotation.y,
+                rotation_z=drone_state.rotation.z,
+                rotation_dx=drone_state.rotation.dx,
+                rotation_dy=drone_state.rotation.dy,
+                rotation_dz=drone_state.rotation.dz,
                 mode=drone_state.mode
             )
             
@@ -360,7 +357,7 @@ class DBAbstraction:
                     velocity_z=state_model.velocity_z,
                     autonomy_enabled=state_model.autonomy_enabled,
                     heading=state_model.heading,
-                    rotaion=Rotation(
+                    rotation=Rotation(
                         time_ns=0,
                         x=state_model.rotation_x,
                         y=state_model.rotation_y,
@@ -371,11 +368,11 @@ class DBAbstraction:
                     ),
                     mode=state_model.mode
                 )
-                # Seed rotaion_history so is_telemetry_ready is True. time_ns=inf so
-                # get_rotation_at_time falls back to self.rotaion instead of extrapolating.
+                # Seed rotation_history so is_telemetry_ready is True. time_ns=inf so
+                # get_rotation_at_time falls back to self.rotation instead of extrapolating.
                 _seed = Rotation(time_ns=float('inf'),
-                                 x=drone_state.rotaion.x, y=drone_state.rotaion.y, z=drone_state.rotaion.z)
-                drone_state.rotaion_history.append(_seed)
+                                 x=drone_state.rotation.x, y=drone_state.rotation.y, z=drone_state.rotation.z)
+                drone_state.rotation_history.append(_seed)
 
                 # Reconstruct Frame with detections
                 detections = []
@@ -435,7 +432,7 @@ class DBAbstraction:
                 velocity_z=state_model.velocity_z,
                 autonomy_enabled=state_model.autonomy_enabled,
                 heading=state_model.heading,
-                rotaion=Rotation(
+                rotation=Rotation(
                     time_ns=0,
                     x=state_model.rotation_x,
                     y=state_model.rotation_y,
@@ -555,12 +552,12 @@ class DBAbstraction:
                     "velocity_z": snap.drone_state.velocity_z,
                     "autonomy_enabled": snap.drone_state.autonomy_enabled,
                     "heading": snap.drone_state.heading,
-                    "rotation_x": snap.drone_state.rotaion.x,
-                    "rotation_y": snap.drone_state.rotaion.y,
-                    "rotation_z": snap.drone_state.rotaion.z,
-                    "rotation_dx": snap.drone_state.rotaion.dx,
-                    "rotation_dy": snap.drone_state.rotaion.dy,
-                    "rotation_dz": snap.drone_state.rotaion.dz,
+                    "rotation_x": snap.drone_state.rotation.x,
+                    "rotation_y": snap.drone_state.rotation.y,
+                    "rotation_z": snap.drone_state.rotation.z,
+                    "rotation_dx": snap.drone_state.rotation.dx,
+                    "rotation_dy": snap.drone_state.rotation.dy,
+                    "rotation_dz": snap.drone_state.rotation.dz,
                     "mode": snap.drone_state.mode
                 },
                 "detections": []
@@ -601,10 +598,8 @@ db_abstraction = DBAbstraction()
 
 
 if __name__ == "__main__":
-    from telemetry import telemetry_singlton
     import random
-    import time
-    
+
     # Initialize database
     db = DBAbstraction()
     

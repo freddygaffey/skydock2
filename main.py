@@ -1,11 +1,17 @@
-import sys
+"""Entry point. Connects telemetry, loads a mission, then runs the FSM at ~30 Hz.
+
+Init order is load-bearing: the telemetry singleton and the per-mission DB path
+(set_db_path) must be set before fsm/DB_abstraction are imported, since those
+bind module-level singletons at import time. Run sim with `python main.py --sim`.
+"""
+
 import os
 import time
 import json
 import argparse
 
 
-def _ask_for_mission(telemetry_singlton):
+def _ask_for_mission(telemetry_singleton):
     from mission_gen import save_mission
 
     # List existing mission files
@@ -40,7 +46,7 @@ def _ask_for_mission(telemetry_singlton):
         if input("make a new file? press y: ").lower() != "y":
             return None
         print("waiting for GPS fix...")
-        while telemetry_singlton.drone_state.latitude == 0 and telemetry_singlton.drone_state.longitude == 0:
+        while telemetry_singleton.drone_state.latitude == 0 and telemetry_singleton.drone_state.longitude == 0:
             time.sleep(0.1)
         print("GPS fix acquired")
         print("move the drone above each weed and press enter, type 'f' when done q to cancel")
@@ -51,8 +57,8 @@ def _ask_for_mission(telemetry_singlton):
                 break
             if i.lower() == "q":
                 return None
-            lat = telemetry_singlton.drone_state.latitude
-            lon = telemetry_singlton.drone_state.longitude
+            lat = telemetry_singleton.drone_state.latitude
+            lon = telemetry_singleton.drone_state.longitude
             weeds.append({"id": len(weeds), "lat": lat, "lon": lon})
             print(f"  weed {len(weeds)} at ({lat:.6f}, {lon:.6f})")
         if not weeds:
@@ -81,8 +87,8 @@ def main():
     # Imports that connect to the drone must happen after SITL is running
     import telemetry
     from telemetry import Telemetry
-    telemetry.telemetry_singlton = Telemetry(connection_string=connection_string)
-    telemetry_singlton = telemetry.telemetry_singlton
+    telemetry.telemetry_singleton = Telemetry(connection_string=connection_string)
+    telemetry_singleton = telemetry.telemetry_singleton
 
     from mission_logging import allocate_mission_dir, configure_mission_dir, init_mission_log, log_event
     from pathlib import Path
@@ -98,7 +104,7 @@ def main():
         from sitl import get_sim_files
         mission_file = get_sim_files()[0]
     else:
-        mission_file = _ask_for_mission(telemetry_singlton)
+        mission_file = _ask_for_mission(telemetry_singleton)
         if mission_file is None:
             return
 
@@ -108,7 +114,7 @@ def main():
 
     if _mission_data.get("is_sim") and not is_sim:
         from utils import haversine_distance
-        drone = telemetry_singlton.drone_state
+        drone = telemetry_singleton.drone_state
         print(f"\n[WARNING] '{os.path.basename(mission_file)}' is a sim file!")
         print("Weed distances from drone:")
         for w in _mission_data.get("weed_locations", []):
@@ -130,12 +136,12 @@ def main():
     # Pre-flight
     if is_sim:
         from sitl import set_sim_speed, setup_rangefinder, arm_and_takeoff, enable_sim_rc
-        conn = telemetry_singlton.connection
+        conn = telemetry_singleton.connection
         set_sim_speed(conn, speed)
         setup_rangefinder(conn)
         enable_sim_rc(conn)
         time.sleep(0.5)
-        if not arm_and_takeoff(conn, telemetry_singlton, speed=speed):
+        if not arm_and_takeoff(conn, telemetry_singleton, speed=speed):
             print("[main] arm/takeoff failed, aborting")
             from sitl import kill_sim
             kill_sim()

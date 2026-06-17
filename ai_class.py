@@ -1,7 +1,5 @@
 import threading
 import time
-import os
-from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
@@ -36,7 +34,7 @@ class Frame:
     def __init__(self, det: list[Detection], photo_path="No photo taken", drone_state=None):
         self.photo_path = photo_path
         self.detection = det
-        self.hight = 1280
+        self.height = 1280
         self.width = 1280
         self.drone_state = drone_state  # state at generation time, for correct back-projection
 
