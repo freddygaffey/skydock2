@@ -1,33 +1,40 @@
 from dataclasses import dataclass
 from ai_class import Detection
 
-from telemetry import telemetry_singlton
+from telemetry import telemetry_singleton
 from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
-from utils import detection_to_latlon, haversine_distance, detection_to_ned
-from constants import SCAN_HIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET, GOTO_ALT, SIM_SPEED
+from utils import detection_to_latlon, haversine_distance
+from constants import SCAN_HEIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET, GOTO_ALT, SIM_SPEED
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
 _scan_data_processed = False
 
 def scan(drone_state:DroneStateForHoming,frame:Frame):
+    """Fly the lawnmower waypoints, logging a snapshot each tick.
+
+    Flies to the next un-traveled waypoint at SCAN_HEIGHT and marks it traveled
+    within MIN_DIST_FROM_WAYPOINT. When all waypoints are done, holds position,
+    runs process_all_scan_data() once to cluster detections into weeds, then
+    returns GOTO.
+    """
     global _scan_data_processed
     point = db_abstraction.get_next_waypoint()
     if point == None:
         if not _scan_data_processed:
-            print("prosesing all data")
-            telemetry_singlton.fly_to_point(drone_state.latitude,drone_state.longitude,GOTO_ALT)
-            prosess_all_scan_data()
-            print("prosess_all_scan_data is compleate")
+            print("processing all data")
+            telemetry_singleton.fly_to_point(drone_state.latitude,drone_state.longitude,GOTO_ALT)
+            process_all_scan_data()
+            print("process_all_scan_data is complete")
             _scan_data_processed = True
             import time
             time.sleep(10/SIM_SPEED)
         return DroneStateEnum.GOTO
     db_abstraction.log_drone_state_and_frame(drone_state,frame)
 
-    telemetry_singlton.fly_to_point(point.lat,point.lon,SCAN_HIGHT)
+    telemetry_singleton.fly_to_point(point.lat,point.lon,SCAN_HEIGHT)
     if MIN_DIST_FROM_WAYPOINT > (haversine_distance(drone_state.latitude,drone_state.longitude,point.lat,point.lon)):
         db_abstraction.mark_waypoint_traveled(point)
 
@@ -56,7 +63,13 @@ class Point:
         return haversine_distance(*self.location,*poss)
 
 
-def prosess_all_scan_data():
+def process_all_scan_data():
+    """Cluster all logged detections into weeds and persist them.
+
+    Back-projects every detection to lat/lon, greedily groups points within
+    MIN_WEED_SPACING into running-centroid clusters, drops clusters with fewer
+    than MIN_NUM_DET detections, and logs each survivor as a weed.
+    """
     all_points : list[Point] = []
     frame_state = db_abstraction.get_all_snapshots()
     all_det : list[detState] = []

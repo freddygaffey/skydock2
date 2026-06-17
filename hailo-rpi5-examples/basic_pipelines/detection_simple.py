@@ -122,7 +122,7 @@ def app_callback(pad, info, user_data):
     ts = getattr(telemetry, "telemetry_singlton", None)
     if ts is not None:
         ts.drone_state.width = width
-        ts.drone_state.hight = height
+        ts.drone_state.height = height
     for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):
         label = str(detection.get_label())
         # print(f"seen {label}")

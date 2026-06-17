@@ -23,12 +23,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # utils itself only pulls in ai_class + drone_state (both light), but be defensive
-# about anything that might try to open a serial port / write a log.
-sys.modules.setdefault("mission_logging", types.ModuleType("mission_logging"))
-sys.modules["mission_logging"].log_event = MagicMock()
-sys.modules["mission_logging"].get_mission_dir = MagicMock(return_value=None)
+# about anything that might try to open a serial port / write a log. Only install a
+# stub if mission_logging is not already loaded — overwriting log_event on the real
+# module would corrupt it for tests that run later in the session.
+if "mission_logging" not in sys.modules:
+    _ml = types.ModuleType("mission_logging")
+    _ml.log_event = MagicMock()
+    _ml.get_mission_dir = MagicMock(return_value=None)
+    sys.modules["mission_logging"] = _ml
 _tel = types.ModuleType("telemetry")
-_tel.telemetry_singlton = None
+_tel.telemetry_singleton = None
 sys.modules.setdefault("telemetry", _tel)
 
 from ai_class import Detection  # noqa: E402
@@ -58,11 +62,11 @@ def make_state(lat=HOME_LAT, lon=HOME_LON, alt=10.0,
     s.longitude = lon
     s.altitude_rel_home = alt
     s.width = width
-    s.hight = height
+    s.height = height
     s.rangefinder_m = rangefinder_m
     rot = Rotation(time_ns=0, x=roll, y=pitch, z=yaw)
-    s.rotaion = rot
-    s.rotaion_history.append(rot)          # makes is_telemetry_ready True
+    s.rotation = rot
+    s.rotation_history.append(rot)          # makes is_telemetry_ready True
     s.gps_history.append(GPSFix(time_ns=0, lat=lat, lon=lon, vx=0.0, vy=0.0))
     return s
 
@@ -70,7 +74,7 @@ def make_state(lat=HOME_LAT, lon=HOME_LON, alt=10.0,
 def centre_detection(state):
     """A detection whose bbox centre is the principal point (image centre)."""
     cx = state.width / 2.0
-    cy = state.hight / 2.0
+    cy = state.height / 2.0
     return Detection(label="sports ball", confidence=0.9,
                      bbox=[(cx - 5, cy - 5), (cx + 5, cy + 5)], time_ns=0)
 
@@ -144,7 +148,7 @@ class TestDetectionToNed:
         det_px = None
         s1 = make_state(alt=10.0)
         s2 = make_state(alt=20.0)
-        px, py = s1.width / 2.0 + 200, s1.hight / 2.0
+        px, py = s1.width / 2.0 + 200, s1.height / 2.0
         n1, e1 = detection_to_ned(s1, pixel_detection(s1, px, py))
         n2, e2 = detection_to_ned(s2, pixel_detection(s2, px, py))
         assert math.hypot(n2, e2) == pytest.approx(2 * math.hypot(n1, e1), rel=1e-6)
@@ -154,7 +158,7 @@ class TestDetectionToNed:
         # (+u, same row) is North-positive with ~zero East.
         s = make_state(alt=10.0, yaw=0.0)
         px = s.width / 2.0 + 300
-        py = s.hight / 2.0
+        py = s.height / 2.0
         n, e = detection_to_ned(s, pixel_detection(s, px, py))
         assert n > 0
         assert abs(e) < abs(n)
@@ -163,7 +167,7 @@ class TestDetectionToNed:
         # +v (down the image) is East-positive with ~zero North.
         s = make_state(alt=10.0, yaw=0.0)
         px = s.width / 2.0
-        py = s.hight / 2.0 + 300
+        py = s.height / 2.0 + 300
         n, e = detection_to_ned(s, pixel_detection(s, px, py))
         assert e > 0
         assert abs(n) < abs(e)
@@ -178,7 +182,7 @@ class TestLatLonToPixel:
         s = make_state(alt=10.0)
         px, py = latlon_to_pixel(s, HOME_LAT, HOME_LON, time_ns=0)
         assert px == pytest.approx(s.width / 2.0, abs=1e-3)
-        assert py == pytest.approx(s.hight / 2.0, abs=1e-3)
+        assert py == pytest.approx(s.height / 2.0, abs=1e-3)
 
     def test_far_away_weed_is_not_visible(self):
         s = make_state(alt=10.0)
@@ -193,7 +197,7 @@ class TestLatLonToPixel:
         assert result is not None
         px, py = result
         assert px > s.width / 2.0
-        assert py == pytest.approx(s.hight / 2.0, abs=1e-3)
+        assert py == pytest.approx(s.height / 2.0, abs=1e-3)
 
     def test_weed_to_the_east_projects_below_centre(self):
         # East maps to the +v (py) axis.
@@ -202,7 +206,7 @@ class TestLatLonToPixel:
         result = latlon_to_pixel(s, HOME_LAT, east_lon, time_ns=0)
         assert result is not None
         px, py = result
-        assert py > s.hight / 2.0
+        assert py > s.height / 2.0
         assert px == pytest.approx(s.width / 2.0, abs=1e-3)
 
     def test_zero_altitude_returns_none(self):

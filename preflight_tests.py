@@ -59,7 +59,7 @@ def test_telemetry_connection(results: TestResults):
         from telemetry import Telemetry
         import telemetry as _telemetry_module
         telem = Telemetry()
-        _telemetry_module.telemetry_singlton = telem
+        _telemetry_module.telemetry_singleton = telem
     except Exception as e:
         results.fail(f"Cannot connect to FC: {e}")
         return None, None
@@ -160,9 +160,9 @@ def test_attitude_data(results: TestResults, state):
         results.fail("No drone state available")
         return
 
-    roll = math.degrees(state.rotaion.x)
-    pitch = math.degrees(state.rotaion.y)
-    yaw = math.degrees(state.rotaion.z)
+    roll = math.degrees(state.rotation.x)
+    pitch = math.degrees(state.rotation.y)
+    yaw = math.degrees(state.rotation.z)
 
     results.ok(f"Roll: {roll:.1f}°, Pitch: {pitch:.1f}°, Yaw: {yaw:.1f}°")
 
@@ -288,12 +288,12 @@ def test_coordinate_transform(results: TestResults):
     # Create a mock drone state - level at 15m altitude
     mock_state = DroneStateForHoming()
     mock_state.altitude_rel_home = 15.0
-    mock_state.rotaion.x = 0   # roll
-    mock_state.rotaion.y = 0   # pitch
-    mock_state.rotaion.z = 0   # yaw
-    mock_state.rotaion.dx = 0  # roll rate
-    mock_state.rotaion.dy = 0  # pitch rate
-    mock_state.rotaion.dz = 0  # yaw rate
+    mock_state.rotation.x = 0   # roll
+    mock_state.rotation.y = 0   # pitch
+    mock_state.rotation.z = 0   # yaw
+    mock_state.rotation.dx = 0  # roll rate
+    mock_state.rotation.dy = 0  # pitch rate
+    mock_state.rotation.dz = 0  # yaw rate
 
     try:
         ned = detection_to_ned(mock_state, fake_det)

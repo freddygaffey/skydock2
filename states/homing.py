@@ -1,45 +1,16 @@
 import time
 import math
 
-from telemetry import telemetry_singlton
+from telemetry import telemetry_singleton
 from drone_state import DroneStateForHoming
-from ai_class import Frame, Detection
+from ai_class import Frame
 from utils import detection_to_dist, detection_to_ned
-from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT, MAX_HOMING_DIST
+from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
-# MIN_HOMING_SCORE = 0.05        # detections below this score are treated as no-detection
-# def score_detection(drone_state: DroneStateForHoming, det: Detection, max_dist_m: float) -> tuple[float, float]:
-#     """Multi-factor credibility score. Returns (score, dist_m). score in 0..~1.
-#     Combines confidence (sigmoid around SCORE_CONF_MIDPOINT), proximity (exp decay
-#     over max_dist_m), bbox size relative to image, and aspect-ratio sanity."""
-#
-#     SCORE_CONF_MIDPOINT = 0.3      # sigmoid midpoint: confidence at this value scores ~0.5
-#     SCORE_CONF_STEEPNESS = 10.0    # sigmoid steepness around midpoint
-#     SCORE_CONF_FLOOR = 0.1         # ignore detections below this raw confidence
-#     SCORE_BBOX_FRAC = 0.1          # bbox sqrt-area as fraction of image diag = full size_term
-#     SCORE_ASPECT_MAX = 2.0         # bboxes more elongated than this are penalized
-#     SCORE_ASPECT_PENALTY = 0.5     # multiplier applied when aspect ratio exceeds threshold
-#
-#     dist_m = detection_to_dist(drone_state, det)
-#     if det.confidence < SCORE_CONF_FLOOR or not math.isfinite(dist_m):
-#         return 0.0, dist_m
-#
-#     conf_term = 1.0 / (1.0 + math.exp(-SCORE_CONF_STEEPNESS * (det.confidence - SCORE_CONF_MIDPOINT)))
-#     decay = max(max_dist_m / 3.0, 1.0)
-#     dist_term = math.exp(-dist_m / decay)
-#
-#     p1, p2 = det.bbox
-#     bw = abs(p2[0] - p1[0])
-#     bh = abs(p2[1] - p1[1])
-#     image_diag_px = math.sqrt(drone_state.width**2 + drone_state.hight**2)
-#     size_term = min(1.0, math.sqrt(bw * bh) / max(image_diag_px * SCORE_BBOX_FRAC, 1.0))
-#
-#     ar = max(bw, bh) / max(min(bw, bh), 1e-6)
-#     aspect_term = 1.0 if ar < SCORE_ASPECT_MAX else SCORE_ASPECT_PENALTY
-#
-#     return conf_term * dist_term * size_term * aspect_term, dist_m
+# NOTE: a commented-out multi-factor detection-scoring prototype (score_detection)
+# previously lived here. Its design is captured in docs/refactor_plan.md (Phase 4).
 
 last_det_time = None
 start_homing_time = None
@@ -52,6 +23,16 @@ def _alt_warn(key: str, msg: str, period_s: float = 5.0):
         print(msg)
     
 def homing(drone_state:DroneStateForHoming,frame:Frame):
+    """Close in on the weed under the camera using velocity control.
+
+    Picks the nearest detection and drives horizontal velocity toward it
+    (vN/vE = copysign(min(0.7*sqrt|offset|, 2 m/s))), descending toward MIN_ALT.
+    With no detection it climbs to search up to MAX_HOMING_ALT. Gives up to GOTO
+    on either timeout (MAX_HOMING_TIME total, or TIME_WAIT_FOR_DET since the last
+    detection). Returns SPRAY once within MIN_SPRAY_ERROR and low enough (unless
+    force_homing keeps it homing). Uses module-level timers last_det_time /
+    start_homing_time, reset on every exit.
+    """
     # intate last_det_time
     global last_det_time
     if last_det_time is None:
@@ -79,7 +60,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                   min_dist_m=float(min_dist))
         last_det_time = None
         start_homing_time = None
-        telemetry_singlton.stop_volocity_command()
+        telemetry_singleton.stop_velocity_command()
         return DroneStateEnum.GOTO
 
 ######## If detection is None
@@ -94,7 +75,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                   elapsed_no_det_s=float(time.time() - last_det_time))
         last_det_time = None
         start_homing_time = None
-        telemetry_singlton.stop_volocity_command()
+        telemetry_singleton.stop_velocity_command()
         return DroneStateEnum.GOTO
 
     # move up to try and find weed (cap at MAX_HOMING_ALT)
@@ -105,9 +86,9 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                       drone_state=drone_state, frame=frame,
                       altitude_rel_home=float(drone_state.altitude_rel_home),
                       max_homing_alt=float(MAX_HOMING_ALT))
-            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, 0.5)  # move down
+            telemetry_singleton.send_velocity_command_yaw_stay_same(0, 0, 0.5)  # move down
         else:
-            telemetry_singlton.send_volocity_command_yaw_stay_same(0, 0, -0.4) # move up
+            telemetry_singleton.send_velocity_command_yaw_stay_same(0, 0, -0.4) # move up
         return DroneStateEnum.HOMING
 
 ####### Detection is there
@@ -123,7 +104,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             # reset things
             last_det_time = None
             start_homing_time = None
-            telemetry_singlton.stop_volocity_command()
+            telemetry_singleton.stop_velocity_command()
             if drone_state.force_homing: 
                 return DroneStateEnum.HOMING
             else:
@@ -147,7 +128,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
         vD = -0.3
     else:
         vD = 0.3
-    telemetry_singlton.send_volocity_command_yaw_stay_same(mx=vN,my=vE,mz=vD)
+    telemetry_singleton.send_velocity_command_yaw_stay_same(mx=vN,my=vE,mz=vD)
 
     log_event("homing_tick", logger="homing", level="DEBUG",
               drone_state=drone_state, frame=frame,

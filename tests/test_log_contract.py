@@ -66,7 +66,7 @@ EXPECTED_DRONE_STATE_KEYS = {
     "latitude", "longitude", "altitude_rel_home",
     "velocity_x", "velocity_y", "velocity_z",
     "heading", "mode", "arm_state", "autonomy_enabled", "force_homing",
-    "rangefinder_m", "width", "hight",
+    "rangefinder_m", "width", "height",
     "rotation", "rotation_history", "gps_history",
 }
 

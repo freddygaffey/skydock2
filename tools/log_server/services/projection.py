@@ -11,7 +11,7 @@ from utils import detection_to_latlon
 
 
 _DEFAULT_W = DroneStateForHoming.__dataclass_fields__["width"].default
-_DEFAULT_H = DroneStateForHoming.__dataclass_fields__["hight"].default
+_DEFAULT_H = DroneStateForHoming.__dataclass_fields__["height"].default
 # Camera FOV is a fixed property of the lens + sensor, independent of the lores buffer
 # resolution. Take it straight from drone_state (the single source of truth) — deriving it
 # from the 1280px image width understated it ~3x (18.8deg vs the real 55.3x31.2deg).
@@ -19,34 +19,47 @@ _FOV_X_DEG = DroneStateForHoming().fov_x_deg
 _FOV_Y_DEG = DroneStateForHoming().fov_y_deg
 
 
+def _first_key(ds: dict, *keys: str) -> Any:
+    """Return the first present, non-None value among keys (new name first, legacy fallback)."""
+    for k in keys:
+        v = ds.get(k)
+        if v is not None:
+            return v
+    return None
+
+
 def drone_state_from_dict(ds: dict | None) -> Any | None:
     """Build a state object compatible with `utils.detection_to_ned` / `detection_to_latlon`.
 
-    Mission JSON stores attitude under ``rotation`` (nested ``x,y,z``; schema v2 corrected the
-    dataclass's ``rotaion`` typo on disk). Live code also calls ``get_rotation_at_time`` on the
-    state object; log replay must supply the same interface.
+    Mission JSON stores attitude under ``rotation`` (nested ``x,y,z`` from the drone
+    dataclass), not flat ``rotation_x``/``_y``/``_z``. Logs written before the 2026-06
+    typo-rename used ``rotaion``/``hight``; those legacy keys are still accepted so
+    historical missions remain replayable. Live code also calls ``get_rotation_at_time``
+    on the state object; log replay must supply the same interface.
     """
     if not ds or not isinstance(ds, dict):
         return None
-    rot_d = ds.get("rotation")
+    rot_d = _first_key(ds, "rotation", "rotaion")
     if isinstance(rot_d, dict):
         rx = float(rot_d.get("x") or 0.0)
         ry = float(rot_d.get("y") or 0.0)
         rz = float(rot_d.get("z") or 0.0)
     else:
-        rx = ry = rz = 0.0
+        rx = float(_first_key(ds, "rotation_x", "rotaion_x") or 0.0)
+        ry = float(_first_key(ds, "rotation_y", "rotaion_y") or 0.0)
+        rz = float(_first_key(ds, "rotation_z", "rotaion_z") or 0.0)
 
     class _LogDroneState:
-        # `rotaion` must be assignable: `utils.detection_to_ned` sets it from
+        # `rotation` must be assignable: `utils.detection_to_ned` sets it from
         # `get_rotation_at_time` each call (matches real DroneStateForHoming).
         __slots__ = (
             "latitude",
             "longitude",
             "altitude_rel_home",
             "rangefinder_m",
-            "rotaion",
+            "rotation",
             "width",
-            "hight",
+            "height",
             "is_telemetry_ready",
             "_rx",
             "_ry",
@@ -59,11 +72,11 @@ def drone_state_from_dict(ds: dict | None) -> Any | None:
             self.altitude_rel_home = float(ds.get("altitude_rel_home") or 0.0)
             self.rangefinder_m = float(ds.get("rangefinder_m") or 0.0)
             self.width = int(ds.get("width") or _DEFAULT_W)
-            self.hight = int(ds.get("hight") or _DEFAULT_H)
+            self.height = int(_first_key(ds, "height", "hight") or _DEFAULT_H)
             # utils.detection_to_ned now gates on this; logged states were live at write time.
             self.is_telemetry_ready = True
             self._rx, self._ry, self._rz = rx, ry, rz
-            self.rotaion = SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)
+            self.rotation = SimpleNamespace(x=self._rx, y=self._ry, z=self._rz)
 
         @property
         def fov_x_deg(self) -> float:
@@ -129,13 +142,13 @@ def ground_project_one(det: dict, ds: Any) -> dict | None:
 def camera_fov_footprint_from_drone_dict(ds_dict: dict | None) -> list[dict[str, float]] | None:
     """Project the four image corners to ground using ``utils.detection_to_latlon``.
 
-    Resolution and FOV come from the logged ``drone_state`` (``width``/``hight``
+    Resolution and FOV come from the logged ``drone_state`` (``width``/``height``
     + lens specs), matching the live geometry in ``utils.detection_to_ned``.
     """
     ds_obj = drone_state_from_dict(ds_dict)
     if ds_obj is None or ds_obj.altitude_rel_home <= 0:
         return None
-    w, h = ds_obj.width, ds_obj.hight
+    w, h = ds_obj.width, ds_obj.height
     footprint: list[dict[str, float]] = []
     for u, v in ((0, 0), (w, 0), (w, h), (0, h)):
         try:

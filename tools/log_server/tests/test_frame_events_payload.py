@@ -34,7 +34,7 @@ _BIG_HISTORY_DS = {
     "velocity_x": 0.0, "velocity_y": 0.0, "velocity_z": 0.0,
     "heading": 0, "mode": "GUIDED", "arm_state": None,
     "autonomy_enabled": True, "force_homing": False, "rangefinder_m": 0.0,
-    "width": 1280, "hight": 1280,
+    "width": 1280, "height": 1280,
     "rotation": {"time_ns": 0, "x": 0, "y": 0, "z": 0, "dx": 0, "dy": 0, "dz": 0},
     "rotation_history": [
         {"time_ns": i, "x": 0, "y": 0, "z": 0, "dx": 0, "dy": 0, "dz": 0} for i in range(100)

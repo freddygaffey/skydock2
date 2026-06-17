@@ -20,7 +20,6 @@ import enum as _enum
 import dataclasses as _dataclasses
 import fcntl
 import json
-import os
 import sys
 import threading
 from collections import deque
@@ -160,10 +159,9 @@ def _encode_drone_state(ds: Any) -> Optional[dict[str, Any]]:
         "force_homing": getattr(ds, "force_homing", None),
         "rangefinder_m": getattr(ds, "rangefinder_m", None),
         "width": getattr(ds, "width", None),
-        "hight": getattr(ds, "hight", None),
-        # NB: corrected spelling on disk. Source field is the dataclass's `rotaion`.
-        "rotation": _encode_rotation(getattr(ds, "rotaion", None)),
-        "rotation_history": [_encode_rotation(r) for r in getattr(ds, "rotaion_history", []) or []],
+        "height": getattr(ds, "height", None),
+        "rotation": _encode_rotation(getattr(ds, "rotation", None)),
+        "rotation_history": [_encode_rotation(r) for r in getattr(ds, "rotation_history", []) or []],
         "gps_history": [_encode_gpsfix(g) for g in getattr(ds, "gps_history", []) or []],
     }
 
@@ -187,11 +185,11 @@ def _encode_frame(frame: Any) -> Optional[dict[str, Any]]:
     if photo_path is not None:
         out["photo_path"] = _encode(photo_path)
     width = getattr(frame, "width", None)
-    hight = getattr(frame, "hight", None)
+    height = getattr(frame, "height", None)
     if width is not None:
         out["width"] = width
-    if hight is not None:
-        out["hight"] = hight
+    if height is not None:
+        out["height"] = height
     dets = getattr(frame, "detection", None)
     if dets is not None:
         out["detections"] = [_encode_detection(d) for d in dets]
@@ -240,12 +238,19 @@ def allocate_mission_dir(
         if next_id is None or next_id <= 0:
             next_id = scan_next()
 
-        # Avoid collisions if folders were created without updating counter
-        while (missions_root / f"{next_id:0{pad}d}").exists():
-            next_id += 1
-
-        mission_dir = missions_root / f"{next_id:0{pad}d}"
-        mission_dir.mkdir(parents=True, exist_ok=False)
+        # Avoid collisions if folders were created without updating the counter.
+        # The flock serialises allocators in this process; the retry also covers
+        # a directory appearing between the existence check and mkdir.
+        while True:
+            if (missions_root / f"{next_id:0{pad}d}").exists():
+                next_id += 1
+                continue
+            mission_dir = missions_root / f"{next_id:0{pad}d}"
+            try:
+                mission_dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                next_id += 1
 
         counter_path.write_text(str(next_id + 1), encoding="utf-8")
     finally:

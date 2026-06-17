@@ -4,13 +4,13 @@ Pytest tests for the scan-data clustering logic in states/scan.py.
 Covers:
   * Point.add_det      – running-centroid of a weed cluster
   * Point.dist_to_cord – haversine distance from cluster centroid to a point
-  * prosess_all_scan_data – the full pipeline: back-project every detection,
+  * process_all_scan_data – the full pipeline: back-project every detection,
     greedily cluster within MIN_WEED_SPACING, drop clusters with fewer than
     MIN_NUM_DET detections, and log the survivors as weeds.
 
 states/scan.py imports telemetry (serial), DB_abstraction (SQLite) and
 mission_logging (file I/O), so those are stubbed before import. We then drive
-prosess_all_scan_data through a fake db_abstraction that yields synthetic
+process_all_scan_data through a fake db_abstraction that yields synthetic
 snapshots and records the weeds it would have written.
 
 Run with:  python -m pytest tests/test_clustering.py
@@ -38,10 +38,10 @@ HOME_LON = 149.165230
 # ---------------------------------------------------------------------------
 
 def _install_stubs():
-    # telemetry – scan.py reads telemetry_singlton (only used by scan(), not by
+    # telemetry – scan.py reads telemetry_singleton (only used by scan(), not by
     # the clustering function, but the import must succeed).
     tel = types.ModuleType("telemetry")
-    tel.telemetry_singlton = MagicMock()
+    tel.telemetry_singleton = MagicMock()
     sys.modules.setdefault("telemetry", tel)
 
     # mission_logging – capture log_event calls.
@@ -97,17 +97,17 @@ def make_state(lat=HOME_LAT, lon=HOME_LON, alt=10.0):
     s.longitude = lon
     s.altitude_rel_home = alt
     s.width = 1280
-    s.hight = 1280
+    s.height = 1280
     rot = Rotation(time_ns=0, x=0.0, y=0.0, z=0.0)
-    s.rotaion = rot
-    s.rotaion_history.append(rot)
+    s.rotation = rot
+    s.rotation_history.append(rot)
     s.gps_history.append(GPSFix(time_ns=0, lat=lat, lon=lon, vx=0.0, vy=0.0))
     return s
 
 
 def centre_detection(state):
     """Detection at the image centre → back-projects to directly below the drone."""
-    cx, cy = state.width / 2.0, state.hight / 2.0
+    cx, cy = state.width / 2.0, state.height / 2.0
     return Detection(label="sports ball", confidence=0.9,
                      bbox=[(cx - 5, cy - 5), (cx + 5, cy + 5)], time_ns=0)
 
@@ -134,7 +134,7 @@ def run_pipeline(snapshots):
     """Reset the fake DB, feed snapshots, run clustering, return logged weeds."""
     _dba_mod.db_abstraction.snapshots = snapshots
     _dba_mod.db_abstraction.logged_weeds = []
-    scan.prosess_all_scan_data()
+    scan.process_all_scan_data()
     return _dba_mod.db_abstraction.logged_weeds
 
 
@@ -170,7 +170,7 @@ class TestPoint:
 
 
 # ---------------------------------------------------------------------------
-# prosess_all_scan_data – the full clustering pipeline
+# process_all_scan_data – the full clustering pipeline
 # ---------------------------------------------------------------------------
 
 class TestClusteringPipeline:

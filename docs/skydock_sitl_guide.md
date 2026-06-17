@@ -46,13 +46,13 @@ sim_vehicle.py -v ArduCopter -w --console --map \
 
 Notes:
 
-- The important part for `skydock2` is `--out=udp:127.0.0.1:14552` – this matches the first entry in `connection_palths` in `telemetry.py`, so no code changes are needed.
+- The important part for `skydock2` is `--out=udp:127.0.0.1:14552` – this matches the first entry in `connection_paths` in `telemetry.py`, so no code changes are needed.
 - The extra TCP output (`--out=tcp:127.0.0.1:5760`) is fine and can be used by a GCS/MAVProxy.
 - Wait until SITL has fully booted and is sending heartbeats before starting `skydock2`.
 
 If you ever change the UDP port, you must:
 
-1. Change the corresponding entry in `connection_palths` in `telemetry.py`, **or**
+1. Change the corresponding entry in `connection_paths` in `telemetry.py`, **or**
 2. Add a second `--out` in `sim_vehicle.py` that matches `udp:127.0.0.1:14552`.
 
 ---
@@ -122,14 +122,14 @@ press r/n/c/w
 Meaning:
 
 - **`n` (new mission)**  
-  - Downloads the current AUTO mission from the FC via `telemetry_singlton.get_auto_mission_wp()`.
+  - Downloads the current AUTO mission from the FC via `telemetry_singleton.get_auto_mission_wp()`.
   - Converts it into `Waypoint` objects and stores them in the DB (replacing existing waypoints).
 
 - **`r` (resume)**  
   - Uses the mission already stored in the DB (no changes).
 
 - **`w` (mark weed/home)**  
-  - Takes the current drone GPS position from `telemetry_singlton.drone_state`.
+  - Takes the current drone GPS position from `telemetry_singleton.drone_state`.
   - Stores it as a single `Waypoint` (weed/home location).
 
 - **`c` (cancel)**  
@@ -177,8 +177,8 @@ Key components:
 
 - **`telemetry.Telemetry`**
   - Connects to SITL via `pymavlink.mavutil.mavlink_connection`.
-  - Tries several `connection_palths`, starting with `udp:127.0.0.1:14552`.
-  - Populates a `DroneStateForHoming` instance (`telemetry_singlton.drone_state`).
+  - Tries several `connection_paths`, starting with `udp:127.0.0.1:14552`.
+  - Populates a `DroneStateForHoming` instance (`telemetry_singleton.drone_state`).
 
 - **`drone_state.DroneStateForHoming`**
   - Tracks:
@@ -196,10 +196,10 @@ Key components:
 
 - **`fsm.StateMachine`**
   - Reads:
-    - `drone_state` from `telemetry_singlton`.
+    - `drone_state` from `telemetry_singleton`.
     - `frame` from `ai_storage_singleton.get_latest_frame()`.
   - Manages states (`OVERRIDE`, `SCAN`, `GOTO`, `HOMING`, `SPRAY`, `RTL`, `DONE`).
-  - Uses `_overide_and_rtl_checks` to:
+  - Uses `_override_and_rtl_checks` to:
     - Force `RTL` state if the FC mode is `RTL`.
     - Force `OVERRIDE` if mode is anything other than `GUIDED`.
     - Force `OVERRIDE` (and stop velocity commands) if `enable_homing_and_autonomy` is `False`.

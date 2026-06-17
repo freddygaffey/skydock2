@@ -48,7 +48,8 @@ def project_detection(bbox, drone_state, R_cam_to_body):
 
     ray_body = R_cam_to_body @ cam_ray
 
-    rot = drone_state.get("rotation", {})
+    # "rotaion" is the pre-2026-06 typo'd key; keep as fallback for old mission logs.
+    rot = drone_state.get("rotation") or drone_state.get("rotaion") or {}
     roll = float(rot.get("x", 0))
     pitch = float(rot.get("y", 0))
     yaw = float(rot.get("z", 0))
