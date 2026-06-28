@@ -26,16 +26,16 @@ MIN_NUM_DET = 3
 GOTO_ALT = 5
 
 # Homing state
-MAX_HOMING_DIST = 3
-MIN_ALT = 5
+MAX_HOMING_DIST = 10 
+MIN_ALT = 1
 MAX_HOMING_ALT = 30
 
 # Spray state
 MIN_SPRAY_ERROR = 2.0
 
 # Homing timeouts (real-time seconds; states/homing.py divides by SIM_SPEED)
-TIME_WAIT_FOR_DET = 30
-MAX_HOMING_TIME = 60
+TIME_WAIT_FOR_DET = 1000
+MAX_HOMING_TIME = 1000
 
 
 ###########################
@@ -69,4 +69,4 @@ SIM_AI_RENDER_SIZE = 640
 # so saving every frame makes a long mission produce >100k JPEGs — slow to turn into a
 # video and heavy on disk. Saving a handful per sim-second is plenty for a review video
 # / camera stream. Set >= TARGET_FPS to save every frame.
-SIM_AI_RENDER_MAX_FPS = 6
+SIM_AI_RENDER_MAX_FPS = 100

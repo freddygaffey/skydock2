@@ -37,13 +37,13 @@ def test_mode_mapping_has_land_and_autorotate():
     assert Telemetry.MODE_MAPPING["AUTOTUNE"] == 15
 
 
-def test_move_msg_passer_handles_land_without_raising():
+def test_mode_arm_passer_handles_land_without_raising():
     t = Telemetry.__new__(Telemetry)
     t.mode_mapping = dict(Telemetry.MODE_MAPPING)
     t.arm_state = False
     t.current_mode = None
 
-    t.move_msg_passer(heartbeat_msg(custom_mode=8, armed=True))  # LAND
+    t.mode_arm_passer(heartbeat_msg(custom_mode=8, armed=True))  # LAND
 
     assert t.current_mode == "LAND"
     assert t.arm_state is True

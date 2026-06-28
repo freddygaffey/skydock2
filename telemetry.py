@@ -28,7 +28,7 @@ from constants import SIM_SPEED
 class Telemetry:
     # ArduCopter flight-mode numbers (HEARTBEAT.custom_mode). Matches the mapping
     # in drone_state.set_pass_message. LAND (8) must be present or a pilot
-    # switching to LAND raises in move_msg_passer and kills the passer thread.
+    # switching to LAND raises in mode_arm_passer and kills the passer thread.
     MODE_MAPPING = {
         'STABILIZE': 0, 'ACRO': 1, 'ALT_HOLD': 2, 'AUTO': 3, 'GUIDED': 4,
         'LOITER': 5, 'RTL': 6, 'CIRCLE': 7, 'LAND': 8, 'OF_LOITER': 10,
@@ -37,6 +37,7 @@ class Telemetry:
         'SMART_RTL': 21, 'FLOWHOLD': 22, 'FOLLOW': 23, 'ZIGZAG': 24,
         'SYSTEMIDLE': 25, 'AUTOROTATE': 26, 'RALLY': 27,
     }
+
 
     def __init__(self, connection_string: str = None):
         self.drone_state = DroneStateForHoming()
@@ -77,6 +78,7 @@ class Telemetry:
         self.set_a_message_interval("HEARTBEAT", 1/2)
 
         last_log_s = 0.0
+        log_rate_s = 0.1
         while True:
             try:
                 msg = self.connection.recv_msg()
@@ -91,7 +93,7 @@ class Telemetry:
             self.drone_state.set_pass_message(msg)
             # Throttle telemetry logging; high-rate raw logs are noisy.
             now = time.time()
-            if (now - last_log_s) >= 1.0:
+            if (now - last_log_s) >= log_rate_s:
                 last_log_s = now
                 ds = self.drone_state
                 log_event(
@@ -101,8 +103,8 @@ class Telemetry:
                     drone_state=ds,
                 )
 
-            self.move_msg_passer(msg)
-            
+            self.mode_arm_passer(msg)
+
             if msg._type in ["MISSION_ITEM_INT","MISSION_COUNT"]:
                 try:
                     self.wp_q.put_nowait(msg)
@@ -178,8 +180,13 @@ class Telemetry:
     def is_armed(self):
         # TODO: this is not garityed to work 
         return self.arm_state
-    def move_msg_passer(self,msg:str):
-        """retuns the currnt mode (in eglish)"""
+
+    def mode_arm_passer(self,msg:str):
+        """
+        retuns the currnt mode (in eglish)
+        it also updates the arm state
+        """
+
         if msg._type == "HEARTBEAT":
             mode_id = msg.custom_mode
             current_mode = None
@@ -273,12 +280,14 @@ class Telemetry:
             self._v_thread = threading.Thread(target=repeatedly_send_v_command,args=(direction,max_time,change_yaw))
             self._v_thread.start()
             print("started sending move command")
+
     def stop_velocity_command(self):
         if self._v_thread and self._v_thread.is_alive():
             self._v_thread_stop_event.set()
             self._v_thread.join()
             self.send_velocity_command_yaw_stay_same(0,0,0)
             self._v_thread = None 
+
     def arm(self): # dange UNTESTED
         # TODO: test in real world
         self.connection.mav.command_long_send(

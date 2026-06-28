@@ -3,6 +3,7 @@ import time
 import math
 import random
 import numpy as np
+import os
 
 from telemetry import telemetry_singleton
 from ai_class import ai_storage_singleton, Detection, Frame
@@ -385,7 +386,6 @@ def run_sim_ai(weed_locations: list[dict]):
                         # Sometimes wrong class label
                         if rng.random() < SIM_AI_WRONG_LABEL_PROB:
                             d.label = rng.choice(wrong_labels)
-
                         noisy.append(d)
 
                     # False positives: sometimes hallucinate a ball. Labelled
@@ -439,14 +439,24 @@ def run_sim_ai(weed_locations: list[dict]):
                         except Exception:
                             predicted_weeds = []
                         last_pred_refresh = time.perf_counter()
-                    try:
-                        img = _render_frame(drone_state, frame.detection, weed_locations, predicted_weeds)
-                        out_path = frames_dir / f"{frame_ts}.jpg"
-                        cv2.imwrite(str(out_path), img)
-                        frame.photo_path = str(out_path)
-                    except Exception:
-                        # Rendering must never crash sim AI.
-                        pass
+
+                    img = _render_frame(drone_state, frame.detection, weed_locations, predicted_weeds)
+
+                    # the time_ns.jpg
+                    out_path = frames_dir / f"{frame_ts}.jpg"
+                    cv2.imwrite(str(out_path), img)
+                    frame.photo_path = str(out_path)
+
+                    # frame latest this will get overwritten 
+                    # this is a atomic write
+                    
+                    
+                    out_path = frames_dir / "tmp_latest.jpg"
+                    cv2.imwrite(str(out_path), img)
+                    os.replace(f"{frames_dir}/tmp_latest.jpg",f"{frames_dir}/latest.jpg")
+
+                    # Rendering must never crash sim AI.
+                    pass
 
                 ai_storage_singleton.set_latest_frame(frame)
 

@@ -78,7 +78,17 @@ def frame_saver_thread():
             frames_dir = mission_dir / "frames"
             frames_dir.mkdir(exist_ok=True)
             frame = np.frombuffer(data, dtype=np.uint8).reshape((height, width, 3))
+
+            # the time_ns.jpg
             cv2.imwrite(str(frames_dir / f"{timestamp_ns}.jpg"), frame)
+
+            # frame latest this will get overwritten 
+            # this is a atomic write
+            out_path = frames_dir / "tmp_latest.jpg"
+            cv2.imwrite(str(out_path), img)
+            os.replace(f"{frames_dir}/tmp_latest.jpg",f"{frames_dir}/latest.jpg")
+            # cv2.imwrite(str(frames_dir / "latest.jpg"), frame)
+
         except queue_module.Empty:
             continue
 

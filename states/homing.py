@@ -53,6 +53,8 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             best_det = i
 
     # stop it just sitting there check timout
+    # TODO: make leaving condtinal on wether or not the gc has given all clear
+
     if (time.time() - start_homing_time) > MAX_HOMING_TIME / SIM_SPEED:
         log_event("homing_give_up_timeout", logger="homing", level="WARNING",
                   drone_state=drone_state, frame=frame,
@@ -69,6 +71,8 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
 
     # This block tests to ensure that if a weed has been lost for more than
     # TIME_WAIT_FOR_DET seconds, it doesn't continue searching
+
+    # TODO: make leaving condtinal on wether or not the gc has given all clear
     if best_det is None and (time.time() - last_det_time) > TIME_WAIT_FOR_DET / SIM_SPEED:
         log_event("homing_give_up_no_det", logger="homing", level="WARNING",
                   drone_state=drone_state, frame=frame,
@@ -91,7 +95,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             telemetry_singleton.send_velocity_command_yaw_stay_same(0, 0, -0.4) # move up
         return DroneStateEnum.HOMING
 
-####### Detection is there
+    ####### Detection is there
     # spray weed
     if min_dist <= MIN_SPRAY_ERROR:
         # if low enough
@@ -108,9 +112,10 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             if drone_state.force_homing: 
                 return DroneStateEnum.HOMING
             else:
+                # TODO: make leaving condtinal on wether or not the gc has given all clear
                 return DroneStateEnum.SPRAY
         else:
-            ...
+            pass
             # this needs to pass then it will run homing as nomal
             # the homing will make it move down
             

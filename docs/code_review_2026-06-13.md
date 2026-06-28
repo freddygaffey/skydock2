@@ -115,6 +115,7 @@ or unbound when checked. Low frequency (pre-flight only); flagged for the refact
 ### M7 — `main.py` truncates fractional `--speed` — OPEN
 `int(args.speed)` silently floors e.g. `--speed 2.5` to 2. Minor; document or use
 float. → refactor plan Phase 3.
+THIS IS THE LIMTAOIN OF THE SIM 
 
 ---
 

@@ -9,6 +9,8 @@ import os
 import time
 import json
 import argparse
+import threading
+
 
 
 def _ask_for_mission(telemetry_singleton):
@@ -159,6 +161,13 @@ def main():
 
     # FSM loop (~30 Hz; SIM_SPEED=1 on real hardware)
     fsm = StateMachine()
+
+
+    #start the server
+    from server import app_runner
+    t = threading.Thread(target=app_runner, kwargs={"port":3,"fsm":fsm})
+    t.start()
+
     try:
         while fsm.update() is not False:
             time.sleep((1 / 30) / constants.SIM_SPEED)
