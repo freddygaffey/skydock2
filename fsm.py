@@ -35,6 +35,13 @@ class StateMachine:
         self._last_state_print = 0.0
         self._last_printed_state = None
 
+        # this is for the image streaming server to work not used for the fsm
+        # --- 
+        self.frame = None
+        self.drone_state = None
+        # --- 
+
+
     def update(self):
         """Run one FSM tick. Returns False to stop the loop, None otherwise.
 
@@ -43,6 +50,15 @@ class StateMachine:
         """
         frame = ai_storage_singleton.get_latest_frame()
         drone_state = telemetry_singleton.drone_state
+
+        # this is for the image streaming server to work not used for the fsm
+        # --- 
+        self.frame = frame
+        self.drone_state = drone_state
+        # --- 
+
+
+
         if not drone_state.is_telemetry_ready:
             return
         prev_state = self.current_state
