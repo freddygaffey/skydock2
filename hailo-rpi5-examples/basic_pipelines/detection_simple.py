@@ -85,7 +85,7 @@ def frame_saver_thread():
             # frame latest this will get overwritten 
             # this is a atomic write
             out_path = frames_dir / "tmp_latest.jpg"
-            cv2.imwrite(str(out_path), img)
+            cv2.imwrite(str(out_path), frame)
             os.replace(f"{frames_dir}/tmp_latest.jpg",f"{frames_dir}/latest.jpg")
             # cv2.imwrite(str(frames_dir / "latest.jpg"), frame)
 

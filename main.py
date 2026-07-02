@@ -165,7 +165,7 @@ def main():
 
     #start the server
     from server import app_runner
-    t = threading.Thread(target=app_runner, kwargs={"port":3,"fsm":fsm})
+    t = threading.Thread(target=app_runner, kwargs={"port":8080,"fsm":fsm})
     t.start()
 
     try:
