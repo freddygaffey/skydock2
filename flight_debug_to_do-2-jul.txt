@@ -1,0 +1,7 @@
+- add compresion to images 
+- do cam calibration on the logs (if posible 
+- auto reload on the server 
+- verifi the modle acuresy with a better modle 
+  - if bad make a new modle
+  - fix the rfcomm scrip that is anoying)
+- make the server show the boundry boxes

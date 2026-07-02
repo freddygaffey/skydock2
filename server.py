@@ -23,7 +23,9 @@ def app_runner(port=3,fsm=None):
 
          cv2.putText(imgcv,f"{fsm.current_state}",org=(20,35),fontScale=1,fontFace=cv2.FONT_HERSHEY_PLAIN,color=(250,225,100))
 
-         ok, buf = cv2.imencode(".jpg",imgcv)
+         imgcv = cv2.resize(imgcv, None, fx=0.5, fy=0.5)
+         ok, buf = cv2.imencode(".jpg",imgcv, [cv2.IMWRITE_JPEG_QUALITY,60])
+
          return send_file(io.BytesIO(buf.tobytes()),mimetype='image/jpeg')
 
 
