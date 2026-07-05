@@ -1,7 +1,7 @@
 # from ai_class import ai_storage, Frame, Detection
 from ai_class import ai_storage_singleton, Detection, Frame
 from mission_logging import get_mission_dir
-import telemetry  # lazy: telemetry.telemetry_singlton set by main.py at runtime
+import telemetry  # lazy: telemetry.telemetry_singleton set by main.py at runtime
 
 import threading
 import time
@@ -103,6 +103,7 @@ class user_app_callback_class(app_callback_class):
 # User-defined callback function: This is the callback function that will be called when data is available from the pipeline
 _det_print_last = 0
 _det_print_count = 0
+_telemetry_missing_warn_last = 0.0
 
 def app_callback(pad, info, user_data):
     global _det_print_last, _det_print_count
@@ -116,23 +117,40 @@ def app_callback(pad, info, user_data):
     width = structure.get_value('width')
     height = structure.get_value('height')
 
-    # Capture wall-clock time = now - (pipeline_now - buffer.pts). buffer.pts is in
-    # pipeline clock ns at sensor capture; subtracting from current pipeline clock
-    # gives buffer age, then offset from time.time_ns() recovers true capture time.
+    # Capture wall-clock time = now - buffer age. buffer.pts is measured against the
+    # pipeline RUNNING time (clock - base_time), not raw clock time; comparing pts to
+    # the raw clock left a constant skew equal to the pipeline start time (observed as
+    # frame timestamps ~606 s off). Ages outside [0, 2 s] mean the clock math is not
+    # trustworthy for this buffer, so fall back to plain wall-clock time.
     capture_time_ns = time.time_ns()
     if buffer.pts != Gst.CLOCK_TIME_NONE:
         elem = pad.get_parent_element()
         clock = elem.get_clock() if elem is not None else None
         if clock is not None:
             pipeline_now = clock.get_time()
-            if pipeline_now != Gst.CLOCK_TIME_NONE and pipeline_now >= buffer.pts:
-                capture_time_ns = time.time_ns() - (pipeline_now - buffer.pts)
+            base_time = elem.get_base_time()
+            if pipeline_now != Gst.CLOCK_TIME_NONE and base_time != Gst.CLOCK_TIME_NONE:
+                age_ns = (pipeline_now - base_time) - buffer.pts
+                if 0 <= age_ns <= 2_000_000_000:
+                    capture_time_ns = time.time_ns() - age_ns
 
-    frame = Frame([])
-    ts = getattr(telemetry, "telemetry_singlton", None)
+    frame = Frame([], width=width, height=height)
+    ts = getattr(telemetry, "telemetry_singleton", None)
     if ts is not None:
         ts.drone_state.width = width
         ts.drone_state.height = height
+    else:
+        # Resolution not reaching drone_state makes every projection wrong
+        # (this exact failure flew undetected for weeks as a silent getattr
+        # miss after a singleton rename) - so complain loudly, every frame's
+        # worth of 5 s, until someone notices.
+        global _telemetry_missing_warn_last
+        now = time.time()
+        if now - _telemetry_missing_warn_last >= 5:
+            _telemetry_missing_warn_last = now
+            print("ERROR ai_callback: telemetry.telemetry_singleton is missing/None - "
+                  "camera resolution is NOT reaching drone_state; detection projections "
+                  "will be wrong. Was the singleton renamed or telemetry not initialised?")
     for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):
         label = str(detection.get_label())
         # print(f"seen {label}")

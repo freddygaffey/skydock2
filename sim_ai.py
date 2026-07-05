@@ -422,7 +422,8 @@ def run_sim_ai(weed_locations: list[dict]):
                 # Route through add_detection so sim detections pass the same
                 # label gate as the real pipeline (ai_callback.py). Wrong-label
                 # noise gets dropped here, exactly as it would on the drone.
-                frame = Frame([], drone_state=drone_state)
+                frame = Frame([], drone_state=drone_state,
+                              width=NUM_OF_PIX_X, height=NUM_OF_PIX_Y)
                 for d in dets:
                     frame.add_detection(d)
 

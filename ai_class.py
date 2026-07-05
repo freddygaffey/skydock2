@@ -31,11 +31,14 @@ class Detection():
                 self.time_ns)
          
 class Frame:
-    def __init__(self, det: list[Detection], photo_path="No photo taken", drone_state=None):
+    def __init__(self, det: list[Detection], photo_path="No photo taken", drone_state=None,
+                 width=None, height=None):
         self.photo_path = photo_path
         self.detection = det
-        self.height = 1280
-        self.width = 1280
+        # pixel size of the image the detections are in; producers (real callback,
+        # sim_ai) pass the actual source size. None = unknown.
+        self.width = width
+        self.height = height
         self.drone_state = drone_state  # state at generation time, for correct back-projection
 
     def add_detection(self,det:Detection):
