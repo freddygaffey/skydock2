@@ -68,6 +68,18 @@ this symptom.)
 - `server.py` `fontScale=100` (commit f3a2c0c) makes the fps/state text
   unreadable — looks like a debug leftover.
 
+**Follow-up (2026-07-05, camera-orientation re-check):** the June camera-mount analysis
+("~18 deg roll boresight" from the +3-4 m body-right offset) suffered the SAME bug class:
+`tools/estimate_camera_mount.py` hardcodes W=H=640 (~line 176) while the May-era logs it
+read are in 1280x1280 pixel space. At correct intrinsics the right-offset artifact
+vanishes. What the May logs actually support (verified against the surveyed 2-ball truth
+in logs/0063, sub-metre residuals on both scan headings; corroborated by 0049/0051/0031):
+a MIRRORED-90 pixel-to-body mapping — image-right = body-BACKWARD, image-down =
+body-RIGHT (image likely horizontally mirrored by the sensor/ISP path). Applies to the
+MAY 1280 pipeline only; whether the current 640 lores config maps the same way must be
+confirmed by the calibration flight (tools/calibration_orbit.py) before touching
+utils.detection_to_ned. Also fix the 640 hardcode in estimate_camera_mount.py.
+
 **Proposed fix (not yet applied — Fred to approve scope):**
 1. In `detection_simple.py`, use the current name (`telemetry_singleton`), and
    fail LOUDLY (log/print once) if the telemetry module/singleton is absent,
