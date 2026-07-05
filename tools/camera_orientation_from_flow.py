@@ -132,6 +132,9 @@ def main():
     g_prev = None
     for i, f in enumerate(files):
         g = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
+        if g is None or g.size == 0:  # corrupt/truncated save — break the pair chain
+            g_prev = None
+            continue
         small = cv2.resize(g, (DW, DW)).astype(np.float32)
         angp = cv2.resize(g, (AW, AH))
         if g_prev is not None:
@@ -181,6 +184,9 @@ def main():
             continue
         us.append(u / fwd * alt[i] / 10)   # px/s per m/s, normalised to 10 m
         vs.append(v / fwd * alt[i] / 10)
+    if len(us) < 30:
+        sys.exit(f"\nINSUFFICIENT DATA: only {len(us)} forward-flight flow samples "
+                 "(need >= 30). Fly longer / save more frames — refusing to give a verdict.")
     mu, mv = np.median(us), np.median(vs)
     print(f"\nforward-flight flow (n={len(us)}): u {mu:+.0f} px/s, v {mv:+.0f} px/s per m/s at 10 m")
 
@@ -194,18 +200,23 @@ def main():
           f"({agree:.0f}% agreement) -> {'MIRRORED' if hand > 0 else 'proper' if hand < 0 else '?'}")
 
     # --- verdict ---
+    hand_s = "+1" if hand > 0 else "-1" if hand < 0 else "?"
     print("\ncandidate signatures (u/fwd, v/fwd, handedness) vs measured "
-          f"({mu:+.0f}, {mv:+.0f}, {'+1' if hand > 0 else '-1'}):")
+          f"({mu:+.0f}, {mv:+.0f}, {hand_s}):")
     scored = []
     for name, R in CANDIDATES.items():
         su, sv, sh = signature(R, fx, fy)
-        d = math.hypot(su - mu, sv - mv) + (0 if sh == hand else 1000)
+        d = math.hypot(su - mu, sv - mv) + (0 if (hand == 0 or sh == hand) else 1000)
         scored.append((d, name, su, sv, sh))
         print(f"  {name:44s} ({su:+4.0f}, {sv:+4.0f}, {sh:+d})   score {d:6.0f}")
     scored.sort()
-    print(f"\n>>> VERDICT: {scored[0][1]}")
-    if scored[0][0] > 200:
-        print("    (weak match — inspect the numbers above before trusting it)")
+    if hand == 0:
+        print(f"\n>>> handedness UNDETERMINED (no yaw turns in the log): flow alone "
+              f"narrows it to {scored[0][1]} or {scored[1][1]} — fly a turn to resolve.")
+    else:
+        print(f"\n>>> VERDICT: {scored[0][1]}")
+        if scored[0][0] > 200:
+            print("    (weak match — inspect the numbers above before trusting it)")
 
 
 if __name__ == "__main__":
