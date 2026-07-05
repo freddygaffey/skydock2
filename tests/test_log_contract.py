@@ -41,7 +41,7 @@ ml = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ml)
 
 from ai_class import Detection, Frame  # noqa: E402
-from drone_state import DroneStateForHoming  # noqa: E402
+from drone_state import DroneStateForHoming, Rotation, GPSFix  # noqa: E402
 from states.enum import DroneStateEnum  # noqa: E402
 
 # Files that emit events. Keep this list in step with the codebase; the source
@@ -150,6 +150,31 @@ class TestEncoderContract(unittest.TestCase):
         self.assertEqual(
             set(encoded["rotation"].keys()), {"time_ns", "x", "y", "z", "dx", "dy", "dz"}
         )
+
+    def test_history_buffers_collapse_to_newest_used_sample(self):
+        # The rolling rotation/gps buffers (maxlen 100) must NOT be dumped in full on every
+        # record — that O(n) per-line blowup produced 14 GB mission logs. Only the newest
+        # sample (the value actually used for this record's projection) is logged.
+        ds = DroneStateForHoming()
+        for i in range(100):
+            ds.rotation_history.append(Rotation(time_ns=i, x=float(i), y=0.0, z=0.0))
+            ds.gps_history.append(GPSFix(time_ns=i, lat=float(i), lon=0.0, vx=0.0, vy=0.0))
+        rec = _emit_one("telemetry_sample", logger="telemetry", drone_state=ds)
+        encoded = rec["drone_state"]
+        # Keys unchanged (schema stable), but each history is now exactly the last entry.
+        self.assertEqual(set(encoded.keys()), EXPECTED_DRONE_STATE_KEYS)
+        self.assertEqual(len(encoded["rotation_history"]), 1)
+        self.assertEqual(len(encoded["gps_history"]), 1)
+        self.assertEqual(encoded["rotation_history"][0]["x"], 99.0)
+        self.assertEqual(encoded["rotation_history"][0]["time_ns"], 99)
+        self.assertEqual(encoded["gps_history"][0]["lat"], 99.0)
+
+    def test_empty_history_encodes_as_empty_list(self):
+        ds = DroneStateForHoming()  # fresh buffers are empty
+        encoded = _emit_one("telemetry_sample", logger="telemetry",
+                            drone_state=ds)["drone_state"]
+        self.assertEqual(encoded["rotation_history"], [])
+        self.assertEqual(encoded["gps_history"], [])
 
     def test_detection_uses_time_detected_not_time_ns(self):
         det = Detection(label="sports ball", confidence=0.9,

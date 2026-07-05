@@ -161,9 +161,21 @@ def _encode_drone_state(ds: Any) -> Optional[dict[str, Any]]:
         "width": getattr(ds, "width", None),
         "height": getattr(ds, "height", None),
         "rotation": _encode_rotation(getattr(ds, "rotation", None)),
-        "rotation_history": [_encode_rotation(r) for r in getattr(ds, "rotation_history", []) or []],
-        "gps_history": [_encode_gpsfix(g) for g in getattr(ds, "gps_history", []) or []],
+        # History collapsed to the single most-recent sample — the value actually used for
+        # this record's projection (detection_to_ned/latlon match on time and leave it as the
+        # newest entry). The full rolling buffers (~100 each) were re-serialised on every
+        # high-frequency record and bloated mission.jsonl ~30x for zero readers: replay
+        # (projection.py) reads only the scalar rotation and the dashboard strips the history.
+        "rotation_history": _last_as_list(getattr(ds, "rotation_history", None), _encode_rotation),
+        "gps_history": _last_as_list(getattr(ds, "gps_history", None), _encode_gpsfix),
     }
+
+
+def _last_as_list(buf: Any, encode: Any) -> list[Any]:
+    """Encode only the newest entry of a history buffer as a one-element list ([] if empty)."""
+    if not buf:
+        return []
+    return [encode(buf[-1])]
 
 
 def _encode_detection(d: Any) -> dict[str, Any]:
