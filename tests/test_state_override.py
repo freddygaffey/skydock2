@@ -55,6 +55,25 @@ def test_autonomy_in_guided_goes_to_scan(monkeypatch, make_drone_state):
     assert result == DroneStateEnum.SCAN
 
 
+def test_force_homing_requires_autonomy(monkeypatch, make_drone_state):
+    # The autonomy kill-switch outranks the force-homing switch.
+    state = make_drone_state(mode="GUIDED", force_homing=True, autonomy_enabled=False)
+    result, _ = run_override(monkeypatch, state)
+    assert result == DroneStateEnum.OVERRIDE
+
+
+def test_rtl_beats_force_homing(monkeypatch, make_drone_state):
+    state = make_drone_state(mode="RTL", force_homing=True)
+    result, _ = run_override(monkeypatch, state)
+    assert result == DroneStateEnum.RTL
+
+
+def test_force_homing_outside_guided_stays_in_override(monkeypatch, make_drone_state):
+    state = make_drone_state(mode="LOITER", force_homing=True)
+    result, _ = run_override(monkeypatch, state)
+    assert result == DroneStateEnum.OVERRIDE
+
+
 def test_velocity_always_stopped(monkeypatch, make_drone_state):
     # The very first thing override() does is halt any running velocity thread,
     # regardless of which branch it then takes.

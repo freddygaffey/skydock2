@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tests.support import FakeTelemetry, FakeDB  # noqa: E402
 import states.scan as scan_mod  # noqa: E402
 from states.enum import DroneStateEnum  # noqa: E402
-from constants import SCAN_HEIGHT, GOTO_ALT  # noqa: E402
+from constants import SCAN_HEIGHT, GOTO_ALT, MIN_DIST_FROM_WAYPOINT  # noqa: E402
 
 
 def setup_scan(monkeypatch, waypoints=()):
@@ -71,6 +71,44 @@ def test_far_waypoint_not_marked(monkeypatch, make_drone_state, make_frame,
     scan_mod.scan(state, make_frame())
 
     assert db.traveled_waypoints == []
+
+
+def test_waypoint_at_exact_min_dist_not_marked(monkeypatch, make_drone_state, make_frame,
+                                               reset_state_globals):
+    # The arrival gate is strict: dist == MIN_DIST_FROM_WAYPOINT is NOT arrival.
+    state = make_drone_state()
+    wp = waypoint(state.latitude, state.longitude)
+    _, db = setup_scan(monkeypatch, [wp])
+    monkeypatch.setattr(scan_mod, "haversine_distance",
+                        lambda *a: MIN_DIST_FROM_WAYPOINT)
+
+    scan_mod.scan(state, make_frame())
+
+    assert db.traveled_waypoints == []
+
+
+def test_waypoint_just_inside_min_dist_marked(monkeypatch, make_drone_state, make_frame,
+                                              reset_state_globals):
+    state = make_drone_state()
+    wp = waypoint(state.latitude, state.longitude)
+    _, db = setup_scan(monkeypatch, [wp])
+    monkeypatch.setattr(scan_mod, "haversine_distance",
+                        lambda *a: MIN_DIST_FROM_WAYPOINT - 0.01)
+
+    scan_mod.scan(state, make_frame())
+
+    assert db.traveled_waypoints == [wp]
+
+
+def test_exhausted_tick_does_not_log_snapshot(monkeypatch, make_drone_state, make_frame,
+                                              reset_state_globals):
+    # Snapshots feed the clusterer; once waypoints are done nothing more is logged.
+    state = make_drone_state()
+    _, db = setup_scan(monkeypatch, waypoints=[])
+
+    scan_mod.scan(state, make_frame())
+
+    assert db.logged_states == []
 
 
 def test_waypoints_exhausted_processes_once_and_goes_to_goto(monkeypatch, make_drone_state,

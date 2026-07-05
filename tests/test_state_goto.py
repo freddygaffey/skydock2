@@ -13,7 +13,7 @@ from tests.support import FakeTelemetry, FakeDB  # noqa: E402
 import states.goto as goto_mod  # noqa: E402
 import states.shared_data as shared_data  # noqa: E402
 from states.enum import DroneStateEnum  # noqa: E402
-from constants import GOTO_ALT  # noqa: E402
+from constants import GOTO_ALT, MAX_HOMING_DIST  # noqa: E402
 
 
 def setup_goto(monkeypatch, closest_weed=None):
@@ -62,6 +62,35 @@ def test_far_weed_flies_toward_it(monkeypatch, make_drone_state, make_frame,
     assert result == DroneStateEnum.GOTO
     assert tel.fly_to_calls == [(w.lat, w.lon, GOTO_ALT)]
     assert db.traveled_weeds == []
+
+
+def test_weed_at_exact_homing_distance_keeps_flying(monkeypatch, make_drone_state, make_frame,
+                                                    reset_state_globals):
+    # The handoff gate is strict: dist == MAX_HOMING_DIST must NOT start homing.
+    state = make_drone_state()
+    w = weed(state.latitude, state.longitude)
+    tel, db = setup_goto(monkeypatch, closest_weed=w)
+    monkeypatch.setattr(goto_mod, "haversine_distance", lambda *a: MAX_HOMING_DIST)
+
+    result = goto_mod.goto(state, make_frame())
+
+    assert result == DroneStateEnum.GOTO
+    assert db.traveled_weeds == []
+    assert tel.fly_to_calls == [(w.lat, w.lon, GOTO_ALT)]
+
+
+def test_weed_just_inside_homing_distance_hands_off(monkeypatch, make_drone_state, make_frame,
+                                                    reset_state_globals):
+    state = make_drone_state()
+    w = weed(state.latitude, state.longitude)
+    tel, db = setup_goto(monkeypatch, closest_weed=w)
+    monkeypatch.setattr(goto_mod, "haversine_distance", lambda *a: MAX_HOMING_DIST - 0.01)
+
+    result = goto_mod.goto(state, make_frame())
+
+    assert result == DroneStateEnum.HOMING
+    assert db.traveled_weeds == [w]
+    assert tel.fly_to_calls == []
 
 
 def test_goto_updates_shared_timestamp(monkeypatch, make_drone_state, make_frame,

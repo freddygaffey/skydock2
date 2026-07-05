@@ -147,6 +147,43 @@ def test_done_state_stops_the_loop(monkeypatch, make_drone_state):
     assert sm.current_state == DroneStateEnum.DONE
 
 
+def test_unknown_state_falls_back_to_override(monkeypatch, make_drone_state):
+    sm, mocks = setup_machine(monkeypatch, make_drone_state(mode="GUIDED"))
+    sm.current_state = "BOGUS"  # not a DroneStateEnum member
+
+    result = sm.update()
+
+    assert result is None
+    assert sm.current_state == DroneStateEnum.OVERRIDE
+    for m in mocks.values():
+        m.assert_not_called()
+
+
+def test_scan_receives_frame_drone_state_when_present(monkeypatch, make_drone_state,
+                                                      make_frame):
+    # SCAN projects detections, so it must use the drone state captured WITH the
+    # frame, not the (newer) live telemetry state.
+    live_state = make_drone_state(mode="GUIDED")
+    frame_state = make_drone_state(mode="GUIDED", lat=live_state.latitude + 0.001)
+    frame = make_frame(drone_state=frame_state)
+    sm, mocks = setup_machine(monkeypatch, live_state, frame=frame,
+                              start=DroneStateEnum.SCAN)
+
+    sm.update()
+
+    mocks["scan"].assert_called_once_with(frame_state, frame)
+
+
+def test_scan_falls_back_to_telemetry_state_without_frame(monkeypatch, make_drone_state):
+    live_state = make_drone_state(mode="GUIDED")
+    sm, mocks = setup_machine(monkeypatch, live_state, frame=None,
+                              start=DroneStateEnum.SCAN)
+
+    sm.update()
+
+    mocks["scan"].assert_called_once_with(live_state, None)
+
+
 def test_transition_is_logged_as_fsm_transition(monkeypatch, make_drone_state, make_frame):
     state = make_drone_state(mode="GUIDED")
     sm, mocks = setup_machine(monkeypatch, state, frame=make_frame(),

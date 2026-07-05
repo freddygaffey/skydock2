@@ -114,6 +114,36 @@ def test_close_and_low_transitions_to_spray(monkeypatch, make_drone_state, make_
     assert event == "spray_ready"
 
 
+def test_detection_refreshes_no_det_timer(monkeypatch, make_drone_state, make_frame,
+                                          make_detection, reset_state_globals):
+    # A detection arriving after a long blind stretch must reset the no-det
+    # clock and keep homing (not give up to GOTO).
+    setup_homing(monkeypatch)
+    now = time.time()
+    homing_mod.start_homing_time = now
+    homing_mod.last_det_time = now - (TIME_WAIT_FOR_DET / SIM_SPEED + 5)  # stale
+
+    result = homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+
+    assert result == DroneStateEnum.HOMING
+    assert homing_mod.last_det_time is not None
+    assert time.time() - homing_mod.last_det_time < 1.0  # refreshed to "now"
+
+
+def test_spray_gate_boundaries_are_inclusive(monkeypatch, make_drone_state, make_frame,
+                                             make_detection, reset_state_globals):
+    # dist == MIN_SPRAY_ERROR and alt == MIN_ALT + 1 are both still in-gate.
+    tel = setup_homing(monkeypatch)
+    monkeypatch.setattr(homing_mod, "detection_to_dist", lambda ds, det: MIN_SPRAY_ERROR)
+    monkeypatch.setattr(homing_mod, "detection_to_ned", lambda ds, det: (0.0, 0.0))
+    state = make_drone_state(alt=MIN_ALT + 1)
+
+    result = homing_mod.homing(state, make_frame(make_detection()))
+
+    assert result == DroneStateEnum.SPRAY
+    assert tel.stop_calls == 1
+
+
 def test_force_homing_blocks_spray_transition(monkeypatch, make_drone_state, make_frame,
                                               make_detection, reset_state_globals):
     setup_homing(monkeypatch)
