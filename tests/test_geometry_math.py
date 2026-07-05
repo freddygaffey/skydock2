@@ -153,14 +153,15 @@ class TestDetectionToNed:
         n2, e2 = detection_to_ned(s2, pixel_detection(s2, px, py))
         assert math.hypot(n2, e2) == pytest.approx(2 * math.hypot(n1, e1), rel=1e-6)
 
-    def test_pixel_right_of_centre_maps_to_north(self):
-        # detection_to_ned: N ∝ (u - cx), E ∝ (v - cy). A pixel to the right
-        # (+u, same row) is North-positive with ~zero East.
+    def test_pixel_right_of_centre_maps_to_south(self):
+        # Measured mapping (drone_state.CAM_TO_BODY, July 2026): image x is
+        # MIRRORED vs body-forward, so a pixel to the right (+u, same row) is
+        # North-NEGATIVE (behind the drone at yaw 0) with ~zero East.
         s = make_state(alt=10.0, yaw=0.0)
         px = s.width / 2.0 + 300
         py = s.height / 2.0
         n, e = detection_to_ned(s, pixel_detection(s, px, py))
-        assert n > 0
+        assert n < 0
         assert abs(e) < abs(n)
 
     def test_pixel_below_centre_maps_to_east(self):
@@ -189,14 +190,15 @@ class TestLatLonToPixel:
         far_lat = HOME_LAT + 1000.0 / M_PER_DEG_LAT     # 1 km north
         assert latlon_to_pixel(s, far_lat, HOME_LON, time_ns=0) is None
 
-    def test_weed_to_the_north_projects_right_of_centre(self):
-        # Forward projection mirrors detection_to_ned: North maps to the +u (px) axis.
+    def test_weed_to_the_north_projects_left_of_centre(self):
+        # Forward projection matches detection_to_ned's measured mapping
+        # (drone_state.CAM_TO_BODY): North maps to the NEGATIVE u (px) axis.
         s = make_state(alt=10.0, yaw=0.0)
         north_lat = HOME_LAT + 2.0 / M_PER_DEG_LAT
         result = latlon_to_pixel(s, north_lat, HOME_LON, time_ns=0)
         assert result is not None
         px, py = result
-        assert px > s.width / 2.0
+        assert px < s.width / 2.0
         assert py == pytest.approx(s.height / 2.0, abs=1e-3)
 
     def test_weed_to_the_east_projects_below_centre(self):

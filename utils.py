@@ -1,8 +1,10 @@
 from ai_class import Detection
-from drone_state import DroneStateForHoming
+from drone_state import DroneStateForHoming, CAM_TO_BODY
 from math import radians
 import math
 import numpy as np
+
+_R_CAM_TO_BODY = np.array(CAM_TO_BODY)
 
 def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     if not drone_state.is_telemetry_ready:
@@ -21,10 +23,9 @@ def detection_to_ned(drone_state: DroneStateForHoming, detection: Detection):
     cam_ray = np.array([x_cam,y_cam,1])
     cam_ray = cam_ray / np.linalg.norm(cam_ray)
 
-    # Camera is nadir-mounted, frame aligned with body: x=forward(N), y=right(E), z=down
-    R_cam_to_body = np.eye(3)
-
-    ray_body = R_cam_to_body @ cam_ray
+    # Camera is nadir-mounted; the pixel->body axis mapping was MEASURED from flight
+    # logs (drone_state.CAM_TO_BODY): image x is mirrored vs body-forward.
+    ray_body = _R_CAM_TO_BODY @ cam_ray
     drone_state.rotation = drone_state.get_rotation_at_time(detection.time_ns)
     roll,pitch,yaw = drone_state.rotation.x,drone_state.rotation.y,drone_state.rotation.z
 
@@ -128,12 +129,13 @@ def latlon_to_pixel(drone_state, weed_lat: float, weed_lon: float, time_ns: int 
 
     ned_vec = np.array([N, E, h])
     ray_body = ray_to_ned.T @ ned_vec  # inverse rotation
+    ray_cam = _R_CAM_TO_BODY.T @ ray_body  # body -> camera axes (orthogonal: inv = T)
 
-    if ray_body[2] <= 0:
+    if ray_cam[2] <= 0:
         return None  # behind the camera
 
-    x_cam = ray_body[0] / ray_body[2]
-    y_cam = ray_body[1] / ray_body[2]
+    x_cam = ray_cam[0] / ray_cam[2]
+    y_cam = ray_cam[1] / ray_cam[2]
     px = cx + fx * x_cam
     py = cy + fy * y_cam
 

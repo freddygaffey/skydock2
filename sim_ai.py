@@ -7,7 +7,7 @@ import os
 
 from telemetry import telemetry_singleton
 from ai_class import ai_storage_singleton, Detection, Frame
-from drone_state import DroneStateForHoming
+from drone_state import DroneStateForHoming, CAM_TO_BODY
 from mission_logging import log_event, get_mission_dir
 import constants
 
@@ -136,12 +136,14 @@ def _project_latlon_to_pixel(drone_state: DroneStateForHoming, lat: float, lon: 
     ned = np.array([N, E, alt])
     # Inverse of (Rz@Ry@Rx) is (Rz@Ry@Rx).T = Rx.T @ Ry.T @ Rz.T
     ray_body = (Rx.T @ Ry.T @ Rz.T) @ ned
+    # body -> camera axes (measured mapping, drone_state.CAM_TO_BODY; orthogonal: inv = T)
+    ray_cam = np.array(CAM_TO_BODY).T @ ray_body
 
-    if ray_body[2] <= 0:
+    if ray_cam[2] <= 0:
         return None  # weed is behind or above the camera
 
-    u = fx * (ray_body[0] / ray_body[2]) + cx
-    v = fy * (ray_body[1] / ray_body[2]) + cy
+    u = fx * (ray_cam[0] / ray_cam[2]) + cx
+    v = fy * (ray_cam[1] / ray_cam[2]) + cy
     return (u, v)
 
 

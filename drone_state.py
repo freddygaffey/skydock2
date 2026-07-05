@@ -19,6 +19,19 @@ from collections import deque
 import math
 from math import cos, radians
 import time
+
+# EXPERIMENTAL camera pixel->body axis mapping: ray_body = CAM_TO_BODY @ [x_cam, y_cam, 1].
+# Measured from the May 2026 flight logs by three independent methods (surveyed-truth fit,
+# forward optical flow, yaw-rotation handedness) — see tools/camera_orientation_from_flow.py
+# and docs/Bug Notes.md. Result: image-right = body-BACKWARD (x mirrored), image-down =
+# body-RIGHT. Same sensor and mount on every flight since, so it should hold for the
+# current 640x640 config — re-verify on the first flight with the flow tool.
+# The old (wrong) assumption was identity.
+CAM_TO_BODY = (
+    (-1.0, 0.0, 0.0),
+    ( 0.0, 1.0, 0.0),
+    ( 0.0, 0.0, 1.0),
+)
 @dataclass
 class GPSFix:
     time_ns: float
