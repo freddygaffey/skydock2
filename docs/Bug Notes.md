@@ -80,6 +80,16 @@ MAY 1280 pipeline only; whether the current 640 lores config maps the same way m
 confirmed by the calibration flight (tools/calibration_orbit.py) before touching
 utils.detection_to_ned. Also fix the 640 hardcode in estimate_camera_mount.py.
 
+CONFIRMED 2026-07-05 by pixel motion (Fred's method, truth-free, no survey needed):
+`tools/camera_orientation_from_flow.py` phase-correlates consecutive saved frames and
+tracks rotation through the yaw turns. On logs/0063: forward flight streams the scene at
++118 px/s per m/s on the image u-axis (mirror90 predicts +122; identity predicts -122),
+and the image rotates the SAME sense as the compass at 100% of 454 decisive turning
+moments — only a mirrored mapping does that. mirror90 wins with a 20x score margin.
+Three independent methods now agree (truth fit, forward flow, rotation handedness).
+Run that tool on the FIRST flight of the current 640 config (any flight with saved
+frames works) to get the mapping for today's camera before trusting projections.
+
 **Proposed fix (not yet applied — Fred to approve scope):**
 1. In `detection_simple.py`, use the current name (`telemetry_singleton`), and
    fail LOUDLY (log/print once) if the telemetry module/singleton is absent,
