@@ -27,7 +27,7 @@ GOTO_ALT = 5
 
 # Homing state
 MAX_HOMING_DIST = 10 
-MIN_ALT = 1
+MIN_ALT = 3
 MAX_HOMING_ALT = 30
 
 # Spray state
