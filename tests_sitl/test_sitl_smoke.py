@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tests_sitl.conftest import SITL_SPEEDUP, wait_for  # noqa: E402
+from tests_sitl.conftest import SITL_SPEEDUP, ensure_on_ground, wait_for  # noqa: E402
 from constants import TARGET_SIM_SPEED  # noqa: E402
 import sitl as sitl_mod  # noqa: E402
 
@@ -40,6 +40,7 @@ def test_sim_speed_estimator_converges(telemetry):
 
 
 def test_arm_and_takeoff(telemetry):
+    assert ensure_on_ground(telemetry), "could not reach a landed state to start from"
     assert sitl_mod.arm_and_takeoff(
         telemetry.connection, telemetry, altitude=8, speed=SITL_SPEEDUP
     ), "SITL failed to arm/takeoff"

@@ -105,9 +105,16 @@ def sitl():
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    # sim_vehicle re-parents children on some platforms; make sure nothing lingers.
-    subprocess.run(["pkill", "-f", "bin/arducopter"], check=False)
-    subprocess.run(["pkill", "-f", "mavproxy"], check=False)
+    # sim_vehicle re-parents children on some platforms; make sure nothing
+    # lingers — a surviving SITL poisons the next session's fixture, which
+    # would "reuse" a vehicle in an arbitrary flight state.
+    for _ in range(10):
+        subprocess.run(["pkill", "-9", "-f", "sim_vehicle.py"], check=False)
+        subprocess.run(["pkill", "-9", "-f", "bin/arducopter"], check=False)
+        subprocess.run(["pkill", "-9", "-f", "mavproxy"], check=False)
+        if not _heartbeat_on_14550(1):
+            break
+        time.sleep(1)
 
 
 @pytest.fixture(scope="session")
@@ -147,3 +154,19 @@ def wait_for(predicate, timeout_s: float, interval_s: float = 0.2):
             return True
         time.sleep(interval_s)
     return predicate()
+
+
+def ensure_on_ground(telemetry, timeout_s: float = 120):
+    """Bring the vehicle to landed+disarmed (mode LAND) so a test starts from a
+    known state — a reused SITL may be mid-flight or mid-RTL."""
+    ds = telemetry.drone_state
+    if not telemetry.arm_state and ds.altitude_rel_home < 1.0:
+        return True
+    conn = telemetry.connection
+    from pymavlink import mavutil
+    conn.mav.command_long_send(
+        conn.target_system, conn.target_component,
+        mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
+        1, 9, 0, 0, 0, 0, 0)  # ArduCopter custom_mode 9 = LAND
+    return wait_for(
+        lambda: not telemetry.arm_state and ds.altitude_rel_home < 1.0, timeout_s)
