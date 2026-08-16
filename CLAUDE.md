@@ -9,16 +9,20 @@ When work reveals a needed change here, report the finding with the exact
 file:line and the suggested replacement, and let Fred apply it:
   telemetry.py, drone_state.py, ai_class.py, ai_callback.py /
   detection_simple.py, constants.py, utils.py, fsm.py, states/* (all state
-  files), main.py, mission_gen.py, server.py, preflight_tests.py
+  files), main.py, mission_gen.py, server.py, preflight_tests.py,
+  .github/workflows/ (CI — Fred is learning it; explain, don't do)
 
 COLLABORATIVE — propose scope first, implement only after Fred agrees:
   DB.py, DB_abstraction.py, mission_logging.py, sim_ai.py,
   sim_data/ + real_missions/ (Fred owns real mission data; Claude may add sim
-  fixtures for tests), pull_logs_rpi.sh, tools/push_real_missions.sh
+  fixtures for tests), pull_logs_rpi.sh, tools/push_real_missions.sh,
+  CLAUDE.md + .gitignore
 
 CLAUDE'S FILES — act autonomously, keep tests green, report what changed:
   tools/ (including tools/log_server — "the website"), sitl.py, tests/,
-  tests_sitl/, tools/log_server/tests/, .github/workflows/
+  tests_sitl/, tools/log_server/tests/, requirements*.txt
+
+Generated output (missions/, logs/) — nobody hand-edits.
 
 Cross-boundary rule: a failing test caused by Fred's files is a REPORT, not a
 fix. Diagnose, point at the line, hand it over.
