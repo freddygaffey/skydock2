@@ -1,3 +1,4 @@
+import copy
 import threading
 import time
 from dataclasses import dataclass, field
@@ -39,7 +40,9 @@ class Frame:
         # sim_ai) pass the actual source size. None = unknown.
         self.width = width
         self.height = height
-        self.drone_state = drone_state  # state at generation time, for correct back-projection
+        # state at generation time, for correct back-projection; deep-copied so
+        # later telemetry updates can't retroactively move this frame
+        self.drone_state = copy.deepcopy(drone_state) if drone_state is not None else None
 
     def add_detection(self,det:Detection):
         # match "sports ball" or "sports_ball" depending on model format
