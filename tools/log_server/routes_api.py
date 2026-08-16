@@ -504,6 +504,12 @@ def mission_generate_video(mission_id: str):
     script = repo_root / "tools" / "make_video.py"
     if not script.exists():
         return jsonify({"ok": False, "error": f"make_video.py not found at {script}"}), 404
+    # Privacy setting: round the lat/lon shown in the video overlay to ~±100-200 km
+    # so a shared video doesn't reveal the field's location.
+    obfuscate_gps = request.args.get("obfuscate_gps", "").lower() in ("1", "true", "yes", "on")
+    cmd = [sys.executable, "-u", str(script), str(mission_dir)]
+    if obfuscate_gps:
+        cmd.append("--obfuscate-gps")
     gen_log = mission_dir / "generate_video.log"
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -531,7 +537,7 @@ def mission_generate_video(mission_id: str):
         log_f = open(gen_log, "a", encoding="utf-8", buffering=1)
         try:
             log_f.write(f"\n--- {stamp} generate_video start ---\n")
-            log_f.write(f"cmd: {sys.executable} -u {script} {mission_dir}\n")
+            log_f.write(f"cmd: {' '.join(cmd)}\n")
             log_f.flush()
             child_env = os.environ.copy()
             child_env["PYTHONUNBUFFERED"] = "1"
@@ -545,7 +551,7 @@ def mission_generate_video(mission_id: str):
                     pass
 
             proc = subprocess.Popen(
-                [sys.executable, "-u", str(script), str(mission_dir)],
+                cmd,
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
                 cwd=str(repo_root),
@@ -566,6 +572,7 @@ def mission_generate_video(mission_id: str):
                 "mission_dir": str(mission_dir),
                 "pid": proc.pid,
                 "log": str(gen_log),
+                "obfuscate_gps": obfuscate_gps,
             }
         )
     except Exception as exc:

@@ -426,6 +426,12 @@
           <div id="videoNotFound" class="alert alert-secondary d-none">
             <span id="videoNotFoundMsg">Video not found.</span>
             <button type="button" id="generateVideoBtn" class="btn btn-sm btn-primary ms-2">Generate video</button>
+            <div class="form-check mt-2 mb-0">
+              <input class="form-check-input" type="checkbox" id="obfuscateGpsChk">
+              <label class="form-check-label small" for="obfuscateGpsChk">
+                Hide precise GPS in overlay (rounds shown lat/lon to ~&plusmn;100&ndash;200&nbsp;km, for sharing)
+              </label>
+            </div>
             <div id="videoGenError" class="text-danger small mt-2 d-none" role="alert"></div>
           </div>
           <video id="missionVideo" class="d-none" controls style="width:100%;border-radius:8px;background:#000;max-height:min(80vh,720px)" preload="metadata">
@@ -2948,7 +2954,9 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn=>{
     setGenError('');
     genBtn.disabled = true;
     genBtn.textContent = 'Starting…';
-    fetch(`/missions/${MID}/generate_video?src=${encodeURIComponent(SRC)}`, {method:'POST'})
+    const obfChk = document.getElementById('obfuscateGpsChk');
+    const obfParam = (obfChk && obfChk.checked) ? '&obfuscate_gps=1' : '';
+    fetch(`/missions/${MID}/generate_video?src=${encodeURIComponent(SRC)}${obfParam}`, {method:'POST'})
       .then(r => r.json())
       .then(d => {
         if(d.ok){

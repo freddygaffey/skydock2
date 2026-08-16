@@ -57,6 +57,14 @@ from mission_logging import iter_events  # noqa: E402  (the one authoritative re
 
 # ── Timestamp lookup ──────────────────────────────────────────────────────────
 
+# Detections are stamped with the frame's capture time (the same value used as the
+# JPEG filename stem — see detection_simple.py app_callback / sim_ai frame_ts), so a
+# saved frame's detections match its stem exactly. Detections from unsaved frames
+# (SAVE_EVERY_N_FRAMES) sit one AI frame interval away (33.3 ms @ 30 FPS); the
+# tolerance admits those but nothing further.
+DET_MATCH_TOL_NS = 35_000_000
+
+
 def nearest_by_ts(sorted_ts: list[int], sorted_vals: list[Any], ts_ns: int) -> Any | None:
     if not sorted_ts:
         return None
@@ -67,6 +75,27 @@ def nearest_by_ts(sorted_ts: list[int], sorted_vals: list[Any], ts_ns: int) -> A
         if abs(sorted_ts[idx + 1] - ts_ns) < abs(sorted_ts[idx] - ts_ns):
             idx += 1
     return sorted_vals[idx]
+
+
+def detections_for_frame(data: dict, ts_ns: int) -> list[dict]:
+    """Detections captured from the frame whose JPEG stem is *ts_ns*.
+
+    Matches by the detections' own capture stamp (``time_detected``), NOT by the
+    enclosing fsm_tick's log time — the tick is logged ~0.8 s after capture on real
+    hardware (pipeline latency), which put every bbox that far behind the image.
+    """
+    keys = data["det_ts_keys"]
+    if not keys:
+        return []
+    idx = bisect_right(keys, ts_ns) - 1
+    best = None
+    for j in (idx, idx + 1):
+        if 0 <= j < len(keys):
+            if best is None or abs(keys[j] - ts_ns) < abs(keys[best] - ts_ns):
+                best = j
+    if best is None or abs(keys[best] - ts_ns) > DET_MATCH_TOL_NS:
+        return []
+    return data["det_by_ts"][keys[best]]
 
 
 # ── Accuracy helpers (mirrors tools/sim_accuracy.py) ──────────────────────────
@@ -102,6 +131,21 @@ def match_accuracy(preds: list[dict], truth: list[dict], thresh_m: float) -> tup
 
 # ── Overlay drawing ──────────────────────────────────────────────────────��────
 
+# GPS obfuscation for shareable videos: displayed lat/lon are rounded to the
+# nearest GPS_OBFUSCATE_DEG degrees. 1° of latitude ≈ 111 km, so 2° leaves the
+# true position anywhere within roughly ±100–220 km of the shown value.
+# Deterministic rounding (not a random offset) means repeat missions from the
+# same field always display the same value — nothing to average back out.
+GPS_OBFUSCATE_DEG = 2.0
+
+
+def format_latlon(lat: float, lon: float, obfuscate: bool) -> str:
+    if not obfuscate:
+        return f"Lat: {lat:.7f}  Lon: {lon:.7f}"
+    q = GPS_OBFUSCATE_DEG
+    return f"Lat: ~{round(lat / q) * q:.0f}  Lon: ~{round(lon / q) * q:.0f}  (GPS hidden)"
+
+
 FSM_COLORS = {
     "OVERRIDE": (0, 0, 255),
     "SCAN":     (0, 200, 255),
@@ -119,6 +163,7 @@ def draw_overlay(
     fsm_state: str | None,
     elapsed_s: float,
     accuracy: dict | None = None,
+    obfuscate_gps: bool = False,
 ) -> np.ndarray:
     h, w = frame.shape[:2]
     overlay = frame.copy()
@@ -163,7 +208,7 @@ def draw_overlay(
         auto_c = (0, 255, 0) if auto else (0, 0, 255)
         cv2.putText(frame, "AUTO: ON" if auto else "AUTO: OFF", (w - 210, y), font, fs, auto_c, th)
         y += lh
-        cv2.putText(frame, f"Lat: {lat:.7f}  Lon: {lon:.7f}", (8, y), font, fs, white, th)
+        cv2.putText(frame, format_latlon(lat, lon, obfuscate_gps), (8, y), font, fs, white, th)
         y += lh
         cv2.putText(frame, f"Alt: {alt:.1f}m  Hdg: {hdg:.1f}°  Spd: {speed:.1f}m/s", (8, y), font, fs, white, th)
         if rng is not None:
@@ -230,10 +275,28 @@ def parse_mission(mission_dir: Path) -> dict:
     weed_events_ts: list[int] = []
     weed_events_data: list[dict] = []
 
+    # Detections keyed by capture stamp (== JPEG stem). The FSM re-logs the same
+    # latest frame across many ticks, so dedupe on first sight of each stamp.
+    det_by_ts: dict[int, list[dict]] = {}
+
     start_ts_ns: int | None = None
 
     for ev in iter_events(log_path):
         event = ev.get("event", "")
+
+        if event in ("fsm_tick", "fsm_transition"):
+            groups: dict[int, list[dict]] = {}
+            for det in (ev.get("frame") or {}).get("detections") or []:
+                td = det.get("time_detected")
+                if td is None:
+                    continue
+                try:
+                    groups.setdefault(int(td), []).append(det)
+                except (TypeError, ValueError):
+                    continue
+            for td, group in groups.items():
+                if td not in det_by_ts:
+                    det_by_ts[td] = group
 
         if event == "mission_start":
             is_sim = ev.get("is_sim", False)
@@ -318,6 +381,8 @@ def parse_mission(mission_dir: Path) -> dict:
         "fsm_trans_state": fsm_trans_state,
         "weed_events_ts": weed_events_ts,
         "weed_events_data": weed_events_data,
+        "det_ts_keys": sorted(det_by_ts),
+        "det_by_ts": det_by_ts,
         "start_ts_ns": start_ts_ns,
     }
 
@@ -409,6 +474,7 @@ def compose_frame(
     data: dict,
     start_ns: int,
     truth: list[dict] | None,
+    obfuscate_gps: bool = False,
 ) -> np.ndarray | None:
     """Load JPEG, apply overlay, return BGR image or None if unreadable."""
     frame = cv2.imread(str(img_path))
@@ -417,8 +483,9 @@ def compose_frame(
     elapsed_s = (ts_ns - start_ns) / 1e9
     tick = nearest_by_ts(data["fsm_ticks_ts"], data["fsm_ticks_data"], ts_ns)
     drone_state = tick.get("drone_state") if tick else None
-    fr_obj = (tick.get("frame") or {}) if tick else {}
-    detections = fr_obj.get("detections") or []
+    # Bboxes are matched by their own capture stamp, not the tick's log time — the
+    # nearest tick's embedded frame is ~0.8 s older than this JPEG (pipeline latency).
+    detections = detections_for_frame(data, ts_ns)
     fsm_state = nearest_by_ts(data["fsm_trans_ts"], data["fsm_trans_state"], ts_ns)
     accuracy = None
     if truth is not None:
@@ -429,7 +496,8 @@ def compose_frame(
         ]
         tp, fp, fn = match_accuracy(preds_so_far, truth, data["weed_match_m"])
         accuracy = {"tp": tp, "fp": fp, "fn": fn}
-    return draw_overlay(frame, drone_state, detections, fsm_state, elapsed_s, accuracy)
+    return draw_overlay(frame, drone_state, detections, fsm_state, elapsed_s, accuracy,
+                        obfuscate_gps=obfuscate_gps)
 
 
 def _ffmpeg_x264_fast() -> list[str]:
@@ -513,7 +581,8 @@ def transcode_h264_for_web(path: Path, dst: Path | None = None) -> bool:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
-def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
+def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float,
+                          obfuscate_gps: bool = False):
     """Equal time per frame (legacy). OpenCV mp4v then H.264 transcode."""
     print(f"Parsing: {mission_dir}")
     data = parse_mission(mission_dir)
@@ -527,6 +596,8 @@ def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
     print(f"  FSM ticks: {len(data['fsm_ticks_ts'])}")
     print(f"  FSM transitions: {len(data['fsm_trans_ts'])}")
     print(f"  Mode: fixed FPS  {fps}")
+    if obfuscate_gps:
+        print(f"  GPS obfuscation: ON (displayed lat/lon rounded to {GPS_OBFUSCATE_DEG:g} deg)")
 
     truth: list[dict] | None = None
     if data["is_sim"] and data["sim_truth_file"]:
@@ -537,7 +608,8 @@ def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
 
     start_ns = data["start_ts_ns"] or frame_images[0][0]
 
-    first = compose_frame(frame_images[0][1], frame_images[0][0], data, start_ns, truth)
+    first = compose_frame(frame_images[0][1], frame_images[0][0], data, start_ns, truth,
+                          obfuscate_gps=obfuscate_gps)
     if first is None:
         print(f"Error: could not read {frame_images[0][1]}")
         sys.exit(1)
@@ -553,7 +625,8 @@ def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
             )
 
         for i, (ts_ns, img_path) in enumerate(frame_images):
-            frame = compose_frame(img_path, ts_ns, data, start_ns, truth)
+            frame = compose_frame(img_path, ts_ns, data, start_ns, truth,
+                                  obfuscate_gps=obfuscate_gps)
             if frame is None:
                 print(f"  Warning: could not read {img_path}, skipping")
                 continue
@@ -577,7 +650,7 @@ def build_video_fixed_fps(mission_dir: Path, output_path: Path, fps: float):
     print(f"Video saved (H.264, web-ready): {output_path}")
 
 
-def build_video_realtime(mission_dir: Path, output_path: Path):
+def build_video_realtime(mission_dir: Path, output_path: Path, obfuscate_gps: bool = False):
     """Wall-clock timing from sorted JPEG stems; FFmpeg concat → H.264."""
     ffmpeg = resolve_ffmpeg_exe()
     if not ffmpeg:
@@ -613,6 +686,8 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
     print(f"  FSM ticks: {len(data['fsm_ticks_ts'])}")
     print(f"  FSM transitions: {len(data['fsm_trans_ts'])}")
     print(f"  Mode: real-time  (~{total_s:.1f}s playback @ sim_speed×{sim_speed:g}, stem scale ~{spu:g} s/unit)")
+    if obfuscate_gps:
+        print(f"  GPS obfuscation: ON (displayed lat/lon rounded to {GPS_OBFUSCATE_DEG:g} deg)")
 
     truth: list[dict] | None = None
     if data["is_sim"] and data["sim_truth_file"]:
@@ -635,7 +710,8 @@ def build_video_realtime(mission_dir: Path, output_path: Path):
     jpeg_q = int(os.environ.get("SKYDOCK_VIDEO_JPEG_Q", "90"))
 
     def _render_one(j: int, ts_ns: int, img_path: Path, dur: float) -> tuple[int, Path, float, str | None]:
-        frame = compose_frame(img_path, ts_ns, data, start_ns, truth)
+        frame = compose_frame(img_path, ts_ns, data, start_ns, truth,
+                              obfuscate_gps=obfuscate_gps)
         if frame is None:
             return j, Path(), dur, str(img_path)
         out = tmp_path / f"f_{j:06d}.jpg"
@@ -734,6 +810,13 @@ def main():
         action="store_true",
         help="Only re-encode existing mission_video.mp4 to H.264 (no frame re-render)",
     )
+    ap.add_argument(
+        "--obfuscate-gps",
+        action="store_true",
+        help="Round displayed lat/lon to the nearest "
+        f"{GPS_OBFUSCATE_DEG:g} deg (~±100-200 km) so shared videos don't reveal the "
+        "field's location. Ignored with --reencode-only (no overlay re-render).",
+    )
     args = ap.parse_args()
 
     mission_dir = args.mission_dir
@@ -765,9 +848,10 @@ def main():
         return
 
     if args.fps is not None:
-        build_video_fixed_fps(mission_dir, output_path, float(args.fps))
+        build_video_fixed_fps(mission_dir, output_path, float(args.fps),
+                              obfuscate_gps=args.obfuscate_gps)
     else:
-        build_video_realtime(mission_dir, output_path)
+        build_video_realtime(mission_dir, output_path, obfuscate_gps=args.obfuscate_gps)
 
 
 if __name__ == "__main__":

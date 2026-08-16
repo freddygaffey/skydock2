@@ -273,3 +273,38 @@ def test_detection_popup_link_opens_frames_tab(live_server, browser):
         "document.querySelectorAll('#framelist .frame-item.active').length === 1", timeout=10000)
     assert not errors, f"JS errors following frame-viewer link: {errors}"
     page.close()
+
+
+def test_generate_video_gps_obfuscation_checkbox(live_server, browser):
+    """The Video tab's privacy checkbox adds obfuscate_gps=1 to the generate request.
+
+    The POST is intercepted before it reaches the server, so no real make_video
+    job is started; this asserts the real click handler builds the right URL.
+    """
+    page, errors = _open_dashboard(browser, live_server)
+    posted: list[str] = []
+
+    def _intercept(route):
+        posted.append(route.request.url)
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"ok": false, "error": "intercepted-by-test"}')
+
+    page.route("**/generate_video*", _intercept)
+    page.click('button[data-bs-target="#tabVideo"]')
+    page.wait_for_selector("#videoNotFound:not(.d-none)", timeout=10000)
+
+    # Checked -> obfuscate_gps=1 present.
+    page.check("#obfuscateGpsChk")
+    page.click("#generateVideoBtn")
+    page.wait_for_function("()=>!document.getElementById('generateVideoBtn').disabled",
+                           timeout=10000)
+    assert len(posted) == 1 and "obfuscate_gps=1" in posted[0], posted
+
+    # Unchecked -> parameter absent.
+    page.uncheck("#obfuscateGpsChk")
+    page.click("#generateVideoBtn")
+    page.wait_for_function("()=>!document.getElementById('generateVideoBtn').disabled",
+                           timeout=10000)
+    assert len(posted) == 2 and "obfuscate_gps" not in posted[1], posted
+    assert not errors, f"JS errors using GPS-obfuscation checkbox: {errors}"
+    page.close()
