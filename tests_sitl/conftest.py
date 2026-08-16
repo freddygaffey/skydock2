@@ -37,9 +37,17 @@ def _unavailable(reason: str):
 LAUNCH_CMD = (
     f"source {VENV_ACTIVATE} && "
     f"cd {ARDUPILOT_DIR}/ArduCopter && "
-    f"sim_vehicle.py -v Copter -N --speedup {SITL_SPEEDUP} "
+    f"python {ARDUPILOT_DIR}/Tools/autotest/sim_vehicle.py "
+    f"-v Copter -N --speedup {SITL_SPEEDUP} "
     f"--location CMAC --auto-offset-line 90,10 -m --daemon"
 )
+
+
+def _log_tail(log_path, max_chars: int = 3000) -> str:
+    try:
+        return Path(log_path).read_text(errors="replace")[-max_chars:]
+    except OSError:
+        return "<no log>"
 
 
 def _heartbeat_on_14550(timeout_s: float) -> bool:
@@ -60,6 +68,15 @@ def sitl():
         yield "reused"
         return  # leave an externally started SITL alone
 
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind(("127.0.0.1", 14550))
+        s.close()
+    except OSError:
+        _unavailable("udp:14550 is bound by another process (a live sim session?); "
+                     "not launching a competing SITL")
+
     if not (ARDUPILOT_DIR / "ArduCopter").is_dir() or not VENV_ACTIVATE.exists():
         _unavailable("ArduPilot checkout or venv-ardupilot missing; cannot launch SITL")
 
@@ -76,11 +93,11 @@ def sitl():
         if _heartbeat_on_14550(3):
             break
         if proc.poll() is not None:
-            _unavailable(f"SITL exited during boot; see {log_path}")
+            _unavailable(f"SITL exited during boot; log tail:\n{_log_tail(log_path)}")
         time.sleep(1)
     else:
         os.killpg(proc.pid, signal.SIGKILL)
-        _unavailable(f"SITL never produced a heartbeat; see {log_path}")
+        _unavailable(f"SITL never produced a heartbeat; log tail:\n{_log_tail(log_path)}")
 
     yield proc
 
