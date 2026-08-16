@@ -7,6 +7,7 @@ on:
 jobs:
   core:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,6 +20,7 @@ jobs:
 
   log-server:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,6 +48,7 @@ jobs:
           path: ~/ardupilot
           key: ardupilot-sitl-${{ env.AP_COMMIT }}
       - name: Build ArduPilot SITL (on cache miss)
+       
         run: |
           if [ ! -f ~/ardupilot/build/sitl/bin/arducopter ]; then
             pip install "empy==3.3.4" future pexpect
