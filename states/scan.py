@@ -63,6 +63,41 @@ class Point:
         return haversine_distance(*self.location,*poss)
 
 
+def cluster_latlon_points(det_locs, min_spacing_m: float, min_num_det: int) -> list[Point]:
+    """Greedily group (lat, lon) points within min_spacing_m into running-centroid
+    clusters; drop clusters with fewer than min_num_det points. Order-dependent
+    by design (matches in-flight behaviour); tools/tune_clustering.py sweeps the
+    two thresholds over recorded flights using this exact function."""
+    all_points: list[Point] = []
+    for det_loc in det_locs:
+        min_dist = float("inf")
+        min_point = None
+        for j in all_points:
+            d = j.dist_to_cord(det_loc)
+            if d < min_dist:
+                min_point = j
+                min_dist = d
+        if min_dist < min_spacing_m and min_point is not None:
+            min_point.add_det(*det_loc)
+        else:
+            new_point = Point()
+            new_point.add_det(*det_loc)
+            all_points.append(new_point)
+    return [p for p in all_points if len(p.det_location) >= min_num_det]
+
+
+def snapshots_to_latlon_points(frame_state) -> list[tuple[float, float]]:
+    """Back-project every snapshot detection to lat/lon, dropping non-finite ones."""
+    import math
+    det_locs = []
+    for i in frame_state:
+        for j in i.frame.detection:
+            det_loc = detection_to_latlon(i.drone_state, j)
+            if math.isfinite(det_loc[0]) and math.isfinite(det_loc[1]):
+                det_locs.append(det_loc)
+    return det_locs
+
+
 def process_all_scan_data():
     """Cluster all logged detections into weeds and persist them.
 
@@ -70,46 +105,8 @@ def process_all_scan_data():
     MIN_WEED_SPACING into running-centroid clusters, drops clusters with fewer
     than MIN_NUM_DET detections, and logs each survivor as a weed.
     """
-    all_points : list[Point] = []
-    frame_state = db_abstraction.get_all_snapshots()
-    all_det : list[detState] = []
-
-    # unpack to a array of
-    for i in frame_state:
-        for j in i.frame.detection:
-            all_det.append(detState(j,i.drone_state))
-    # print(f"[PROCESS] snapshots={len(frame_state)} total_dets={len(all_det)}")
-
-    import math
-    skipped = 0
-    for idx, i in enumerate(all_det):
-        det_loc = detection_to_latlon(i.state,i.det)
-        if not (math.isfinite(det_loc[0]) and math.isfinite(det_loc[1])):
-            skipped += 1
-            # print(f"[PROCESS]   det {idx}: non-finite latlon, skip")
-            continue
-        min_dist = float("inf")
-        min_point = None
-        for j in all_points:
-            if j.dist_to_cord(det_loc) < min_dist:
-                min_point = j
-                min_dist = j.dist_to_cord(det_loc)
-        if min_dist < MIN_WEED_SPACING and min_point is not None:
-            min_point.add_det(*det_loc)
-            # print(f"[PROCESS]   det {idx} loc=({det_loc[0]:.6f},{det_loc[1]:.6f}) -> cluster at ({min_point.location[0]:.6f},{min_point.location[1]:.6f}) min_dist={min_dist:.2f}")
-        else:
-           new_point = Point()
-           new_point.add_det(*det_loc)
-           all_points.append(new_point)
-        #    print(f"[PROCESS]   det {idx} loc=({det_loc[0]:.6f},{det_loc[1]:.6f}) -> NEW cluster #{len(all_points)-1}")
-    # print(f"[PROCESS] skipped={skipped} clusters={len(all_points)} (need >= {MIN_NUM_DET} dets)")
-    to_remove = []
-    for i in all_points:
-        if len(i.det_location) < MIN_NUM_DET:
-            to_remove.append(i)
-    for i in to_remove:
-        # print(f"[PROCESS]   drop cluster at ({i.location[0]:.6f},{i.location[1]:.6f}) dets={len(i.det_location)} < {MIN_NUM_DET}")
-        all_points.remove(i)
+    det_locs = snapshots_to_latlon_points(db_abstraction.get_all_snapshots())
+    all_points = cluster_latlon_points(det_locs, MIN_WEED_SPACING, MIN_NUM_DET)
     for i in all_points:
         weed = Weed(lat=i.location[0], lon=i.location[1])
         db_abstraction.log_weed(weed)
