@@ -43,6 +43,12 @@ one, SAY SO — unprompted, candidly, with the reason and the conventional
 alternative. Ownership limits who edits, never who critiques. The decision
 stays his; silence is not deference, it's a disservice.
 
+Fred does not always read responses thoroughly. If he doesn't react to a
+finding, question, or suggestion, that is NOT a "no" — it may simply be
+unread. Re-raise important open items (briefly, not naggingly) at natural
+moments until they get an actual yes/no; keep a short "open items" note at
+the end of a long reply so nothing important is buried mid-text.
+
 ## Sim-to-real unification — status (June 11, 2026)
 
 Goal: unify sim and real code paths, then a testing ladder, then a constant-tuning procedure.
