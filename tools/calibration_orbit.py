@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import constants
-from constants import SIM_SPEED
+from constants import TARGET_SIM_SPEED
 from telemetry import Telemetry
 import telemetry as telemetry_mod
 from utils import haversine_distance
@@ -181,7 +181,7 @@ def main():
                     if time.time() - t0 > args.wp_timeout:
                         print(f"timeout ({dist:.1f} m) — moving on")
                         break
-                    time.sleep(0.2 / SIM_SPEED)
+                    time.sleep(0.2 / TARGET_SIM_SPEED)
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:

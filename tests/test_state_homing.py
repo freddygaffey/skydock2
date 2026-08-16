@@ -1,8 +1,8 @@
 """Tests for the homing() state function in states/homing.py.
 
-homing() keeps two module-level globals (last_det_time, start_homing_time);
-the reset_state_globals fixture clears them around every test, and timeout
-tests pre-set them relative to the real clock.
+homing() keeps two timers in states/shared_data.py (last_det_time,
+start_homing_time); the reset_state_globals fixture clears them around every
+test, and timeout tests pre-set them relative to the real clock.
 
 Run with:  python -m pytest tests/test_state_homing.py
 """
@@ -17,9 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.support import FakeTelemetry  # noqa: E402
 import states.homing as homing_mod  # noqa: E402
+import states.shared_data as shared_data  # noqa: E402
 from states.enum import DroneStateEnum  # noqa: E402
 from constants import (  # noqa: E402
-    MIN_ALT, MAX_HOMING_ALT, MAX_HOMING_TIME, TIME_WAIT_FOR_DET, MIN_SPRAY_ERROR, SIM_SPEED,
+    MIN_ALT, MAX_HOMING_ALT, MAX_HOMING_TIME, TIME_WAIT_FOR_DET, MIN_SPRAY_ERROR, TARGET_SIM_SPEED,
 )
 
 
@@ -33,29 +34,50 @@ def setup_homing(monkeypatch):
 def test_first_call_initialises_timers(monkeypatch, make_drone_state, make_frame,
                                        reset_state_globals):
     setup_homing(monkeypatch)
-    assert homing_mod.last_det_time is None
-    assert homing_mod.start_homing_time is None
+    assert shared_data.last_det_time is None
+    assert shared_data.start_homing_time is None
 
     homing_mod.homing(make_drone_state(alt=10.0), make_frame())
 
-    assert homing_mod.last_det_time is not None
-    assert homing_mod.start_homing_time is not None
+    assert shared_data.last_det_time is not None
+    assert shared_data.start_homing_time is not None
 
 
 def test_total_timeout_gives_up_to_goto(monkeypatch, make_drone_state, make_frame,
                                         make_detection, reset_state_globals):
     tel = setup_homing(monkeypatch)
     now = time.time()
-    homing_mod.start_homing_time = now - (MAX_HOMING_TIME / SIM_SPEED + 5)
-    homing_mod.last_det_time = now
+    shared_data.start_homing_time = now - (MAX_HOMING_TIME / TARGET_SIM_SPEED + 5)
+    shared_data.last_det_time = now
 
     # Fires even with a perfectly good detection in frame.
     result = homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
 
     assert result == DroneStateEnum.GOTO
     assert tel.stop_calls == 1
-    assert homing_mod.start_homing_time is None  # timers reset for next session
-    assert homing_mod.last_det_time is None
+    assert shared_data.start_homing_time is None  # timers reset for next session
+    assert shared_data.last_det_time is None
+    event = homing_mod.log_event.call_args_list[0][0][0]
+    assert event == "homing_give_up_timeout"
+
+
+def test_total_timeout_uses_measured_sim_speed(monkeypatch, make_drone_state, make_frame,
+                                               make_detection, reset_state_globals):
+    # Timeout must scale with the measured drone_state.sim_speed, not the
+    # requested TARGET_SIM_SPEED: an elapsed time inside the nominal budget
+    # fires once the measured speedup shrinks the wall-clock budget below it.
+    tel = setup_homing(monkeypatch)
+    now = time.time()
+    elapsed = MAX_HOMING_TIME / (TARGET_SIM_SPEED * 2)
+    shared_data.start_homing_time = now - elapsed
+    shared_data.last_det_time = now
+
+    state = make_drone_state(alt=10.0)
+    state.sim_speed = TARGET_SIM_SPEED * 4  # budget becomes MAX/(4*TARGET) < elapsed
+    result = homing_mod.homing(state, make_frame(make_detection()))
+
+    assert result == DroneStateEnum.GOTO
+    assert tel.stop_calls == 1
     event = homing_mod.log_event.call_args_list[0][0][0]
     assert event == "homing_give_up_timeout"
 
@@ -64,14 +86,14 @@ def test_no_detection_timeout_gives_up_to_goto(monkeypatch, make_drone_state, ma
                                                reset_state_globals):
     tel = setup_homing(monkeypatch)
     now = time.time()
-    homing_mod.start_homing_time = now
-    homing_mod.last_det_time = now - (TIME_WAIT_FOR_DET / SIM_SPEED + 5)
+    shared_data.start_homing_time = now
+    shared_data.last_det_time = now - (TIME_WAIT_FOR_DET / TARGET_SIM_SPEED + 5)
 
     result = homing_mod.homing(make_drone_state(alt=10.0), make_frame())  # empty frame
 
     assert result == DroneStateEnum.GOTO
     assert tel.stop_calls == 1
-    assert homing_mod.last_det_time is None
+    assert shared_data.last_det_time is None
     event = homing_mod.log_event.call_args_list[0][0][0]
     assert event == "homing_give_up_no_det"
 
@@ -108,8 +130,8 @@ def test_close_and_low_transitions_to_spray(monkeypatch, make_drone_state, make_
 
     assert result == DroneStateEnum.SPRAY
     assert tel.stop_calls == 1
-    assert homing_mod.last_det_time is None       # session reset
-    assert homing_mod.start_homing_time is None
+    assert shared_data.last_det_time is None       # session reset
+    assert shared_data.start_homing_time is None
     event = homing_mod.log_event.call_args_list[0][0][0]
     assert event == "spray_ready"
 
@@ -120,14 +142,14 @@ def test_detection_refreshes_no_det_timer(monkeypatch, make_drone_state, make_fr
     # clock and keep homing (not give up to GOTO).
     setup_homing(monkeypatch)
     now = time.time()
-    homing_mod.start_homing_time = now
-    homing_mod.last_det_time = now - (TIME_WAIT_FOR_DET / SIM_SPEED + 5)  # stale
+    shared_data.start_homing_time = now
+    shared_data.last_det_time = now - (TIME_WAIT_FOR_DET / TARGET_SIM_SPEED + 5)  # stale
 
     result = homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
 
     assert result == DroneStateEnum.HOMING
-    assert homing_mod.last_det_time is not None
-    assert time.time() - homing_mod.last_det_time < 1.0  # refreshed to "now"
+    assert shared_data.last_det_time is not None
+    assert time.time() - shared_data.last_det_time < 1.0  # refreshed to "now"
 
 
 def test_spray_gate_boundaries_are_inclusive(monkeypatch, make_drone_state, make_frame,
@@ -171,20 +193,72 @@ def test_close_but_too_high_keeps_homing_and_descends(monkeypatch, make_drone_st
     assert vD == 0.3
 
 
-def test_velocity_law_sqrt_with_cap(monkeypatch, make_drone_state, make_frame,
-                                    make_detection, reset_state_globals):
+def test_velocity_law_pid_with_cap(monkeypatch, make_drone_state, make_frame,
+                                   make_detection, reset_state_globals):
     tel = setup_homing(monkeypatch)
-    # Inject a known NED offset: vN = copysign(min(0.7*sqrt|N|, 2), N).
-    monkeypatch.setattr(homing_mod, "detection_to_ned", lambda ds, det: (4.0, -9.0))
-    monkeypatch.setattr(homing_mod, "detection_to_dist", lambda ds, det: math.hypot(4.0, 9.0))
+    # Inject a known NED offset: vN/vE = clamp(p*e + i*sum(history) + d*de, ±max_v).
+    monkeypatch.setattr(homing_mod, "detection_to_ned", lambda ds, det: (9.0, -1.0))
+    monkeypatch.setattr(homing_mod, "detection_to_dist", lambda ds, det: math.hypot(9.0, 1.0))
 
     result = homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
 
     assert result == DroneStateEnum.HOMING
+    n_pid, e_pid = shared_data.N_pid, shared_data.E_pid
     vN, vE, vD = tel.velocity_calls[0]
-    assert vN == pytest_approx(0.7 * 4.0 ** 0.5)   # 1.4, under the 2 m/s cap
-    assert vE == -2.0                              # 0.7*sqrt(9)=2.1 capped at 2, sign kept
-    assert vD == 0.3                               # in-band altitude drifts down
+    assert vN == n_pid.max_v                                  # p*9 = 6.3, clamped
+    assert vE == pytest_approx(-1.0 * e_pid.p + -1.0 * e_pid.i)  # linear regime
+    assert vD == 0.3                                          # in-band altitude drifts down
+
+
+def test_each_axis_uses_its_own_pid(monkeypatch, make_drone_state, make_frame,
+                                    make_detection, reset_state_globals):
+    # Regression guard: vN must come from N_pid(N) and vE from E_pid(E) —
+    # sharing one instance mixes both axes' integrator history.
+    tel = setup_homing(monkeypatch)
+    monkeypatch.setattr(homing_mod, "detection_to_ned", lambda ds, det: (4.0, -9.0))
+    monkeypatch.setattr(homing_mod, "detection_to_dist", lambda ds, det: math.hypot(4.0, 9.0))
+
+    class StubPid:
+        def __init__(self, out):
+            self.out = out
+            self.calls = []
+
+        def get_v(self, error):
+            self.calls.append(error)
+            return self.out
+
+        def clear_history(self):
+            pass
+
+    stub_n, stub_e = StubPid(0.11), StubPid(-0.22)
+    monkeypatch.setattr(shared_data, "N_pid", stub_n)
+    monkeypatch.setattr(shared_data, "E_pid", stub_e)
+
+    homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+
+    assert stub_n.calls == [4.0]
+    assert stub_e.calls == [-9.0]
+    assert tel.velocity_calls[0][:2] == (0.11, -0.22)
+
+
+def test_give_up_resets_pid_history(monkeypatch, make_drone_state, make_frame,
+                                    make_detection, reset_state_globals):
+    tel = setup_homing(monkeypatch)
+    monkeypatch.setattr(homing_mod, "detection_to_ned", lambda ds, det: (1.0, 1.0))
+    monkeypatch.setattr(homing_mod, "detection_to_dist", lambda ds, det: math.hypot(1.0, 1.0))
+
+    # Accumulate integrator state over a couple of ticks.
+    homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+    homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+    assert len(shared_data.N_pid.error_history) > 1
+
+    # Force the total-timeout exit; the integrator must not leak into the next weed.
+    shared_data.start_homing_time = time.time() - (MAX_HOMING_TIME / TARGET_SIM_SPEED + 5)
+    result = homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+
+    assert result == DroneStateEnum.GOTO
+    assert shared_data.N_pid.error_history == [0]
+    assert shared_data.E_pid.error_history == [0]
 
 
 def test_below_min_alt_climbs_while_homing(monkeypatch, make_drone_state, make_frame,

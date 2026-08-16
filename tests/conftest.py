@@ -140,18 +140,23 @@ def _reset_flight_globals():
     """Reset module-level mutable state, tolerating stubbed/absent modules."""
     homing = sys.modules.get("states.homing")
     if homing is not None:
-        if hasattr(homing, "last_det_time"):
-            homing.last_det_time = None
-        if hasattr(homing, "start_homing_time"):
-            homing.start_homing_time = None
         if hasattr(homing, "_last_alt_warn"):
             homing._last_alt_warn = {}
     scan = sys.modules.get("states.scan")
     if scan is not None and hasattr(scan, "_scan_data_processed"):
         scan._scan_data_processed = False
     shared = sys.modules.get("states.shared_data")
-    if shared is not None and hasattr(shared, "last_goto_time"):
-        shared.last_goto_time = 0.0
+    if shared is not None:
+        if hasattr(shared, "last_goto_time"):
+            shared.last_goto_time = 0.0
+        if hasattr(shared, "last_det_time"):
+            shared.last_det_time = None
+        if hasattr(shared, "start_homing_time"):
+            shared.start_homing_time = None
+        for pid_name in ("N_pid", "E_pid"):
+            pid = getattr(shared, pid_name, None)
+            if pid is not None:
+                pid.clear_history()
     ai = sys.modules.get("ai_class")
     if ai is not None and getattr(ai, "ai_storage_singleton", None) is not None:
         ai.ai_storage_singleton.is_ai_running = False

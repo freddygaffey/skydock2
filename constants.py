@@ -1,14 +1,16 @@
 """Mission tunables. Distances in metres, speeds in m/s, times in seconds.
 
-SIM_SPEED is the SITL speedup factor, parsed from argv at import (1 on real
-hardware). Homing timeouts are divided by it so they fire in wall-clock terms.
+TARGET_SIM_SPEED is the *requested* SITL speedup factor, parsed from argv at
+import (1 on real hardware). The speedup SITL actually delivers is CPU-limited
+and measured at runtime as DroneStateForHoming.sim_speed (seeded from this).
 """
 
 #########################
 # global
 #########################
 import sys
-SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys.argv else (int(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1)
+TARGET_SIM_SPEED = int(sys.argv[sys.argv.index("--speedup") + 1]) if "--speedup" in sys.argv else (int(sys.argv[sys.argv.index("--speed") + 1]) if "--speed" in sys.argv else 1)
+
 
 
 ###########################
@@ -33,7 +35,8 @@ MAX_HOMING_ALT = 30
 # Spray state
 MIN_SPRAY_ERROR = 2.0
 
-# Homing timeouts (real-time seconds; states/homing.py divides by SIM_SPEED)
+# Homing timeouts (real-time seconds; states/homing.py divides by the measured
+# drone_state.sim_speed)
 TIME_WAIT_FOR_DET = 1000
 MAX_HOMING_TIME = 1000
 
@@ -53,6 +56,11 @@ TARGET_FPS = 30
 # False = perfect camera: every weed detected exactly, no false positives
 # True  = realistic camera: pixel jitter, missed detections, false positives, wrong labels
 SIM_AI_ENABLE_IMPERFECTIONS = True
+
+# Detection pipeline latency in sim-time milliseconds: frames are captured (and
+# timestamped) immediately but published this much later, emulating the real
+# camera -> GStreamer -> Hailo inference delay. 0 = publish instantly.
+SIM_AI_LATENCY_MS = 200
 
 # When True, sim_ai renders a synthetic camera frame each tick and saves it to
 # missions/NNNN/frames/{time_ns}.jpg — the same path/naming the real pipeline uses —

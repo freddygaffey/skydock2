@@ -6,7 +6,7 @@ from drone_state import DroneStateForHoming
 from ai_class import Frame
 from DB_abstraction import db_abstraction, Weed
 from utils import detection_to_latlon, haversine_distance
-from constants import SCAN_HEIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET, GOTO_ALT, SIM_SPEED
+from constants import SCAN_HEIGHT, MIN_DIST_FROM_WAYPOINT, MIN_WEED_SPACING, MIN_NUM_DET, GOTO_ALT, TARGET_SIM_SPEED
 from states.enum import DroneStateEnum
 from mission_logging import log_event
 
@@ -30,7 +30,7 @@ def scan(drone_state:DroneStateForHoming,frame:Frame):
             print("process_all_scan_data is complete")
             _scan_data_processed = True
             import time
-            time.sleep(10/SIM_SPEED)
+            time.sleep(10/TARGET_SIM_SPEED)
         return DroneStateEnum.GOTO
     db_abstraction.log_drone_state_and_frame(drone_state,frame)
 

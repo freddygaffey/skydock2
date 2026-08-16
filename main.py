@@ -159,7 +159,7 @@ def main():
     if not is_sim:
         ai_storage_singleton.start_sim_ai(None)
 
-    # FSM loop (~30 Hz; SIM_SPEED=1 on real hardware)
+    # FSM loop (~30 Hz; TARGET_SIM_SPEED=1 on real hardware)
     fsm = StateMachine()
 
 
@@ -170,7 +170,7 @@ def main():
 
     try:
         while fsm.update() is not False:
-            time.sleep((1 / 30) / constants.SIM_SPEED)
+            time.sleep((1 / 30) / constants.TARGET_SIM_SPEED)
     except KeyboardInterrupt:
         pass
     finally:

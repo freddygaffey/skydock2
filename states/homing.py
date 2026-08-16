@@ -5,15 +5,11 @@ from telemetry import telemetry_singleton
 from drone_state import DroneStateForHoming
 from ai_class import Frame
 from utils import detection_to_dist, detection_to_ned
-from constants import MIN_ALT, MIN_SPRAY_ERROR, SIM_SPEED, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT
+from constants import MIN_ALT, MIN_SPRAY_ERROR, TIME_WAIT_FOR_DET, MAX_HOMING_TIME, MAX_HOMING_ALT
 from states.enum import DroneStateEnum
 from mission_logging import log_event
+import states.shared_data as shared_data
 
-# NOTE: a commented-out multi-factor detection-scoring prototype (score_detection)
-# previously lived here. Its design is captured in docs/refactor_plan.md (Phase 4).
-
-last_det_time = None
-start_homing_time = None
 _last_alt_warn = {}  # key -> last time printed
 
 def _alt_warn(key: str, msg: str, period_s: float = 5.0):
@@ -22,6 +18,8 @@ def _alt_warn(key: str, msg: str, period_s: float = 5.0):
         _last_alt_warn[key] = now
         print(msg)
     
+
+
 def homing(drone_state:DroneStateForHoming,frame:Frame):
     """Close in on the weed under the camera using velocity control.
 
@@ -30,18 +28,25 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     With no detection it climbs to search up to MAX_HOMING_ALT. Gives up to GOTO
     on either timeout (MAX_HOMING_TIME total, or TIME_WAIT_FOR_DET since the last
     detection). Returns SPRAY once within MIN_SPRAY_ERROR and low enough (unless
-    force_homing keeps it homing). Uses module-level timers last_det_time /
+    force_homing keeps it homing). Uses shared_data timers last_det_time /
     start_homing_time, reset on every exit.
     """
+
+    """
+    1. check max time not exceced
+    2. none check on detection
+    3. climb to search if no detection
+    4. check if to spray
+    5. check alt limits when moving to weed
+    """
+
     # intate last_det_time
-    global last_det_time
-    if last_det_time is None:
-        last_det_time = time.time()
+    if shared_data.last_det_time is None:
+        shared_data.last_det_time = time.time()
 
     # intate total time homing
-    global start_homing_time
-    if start_homing_time is None:
-        start_homing_time = time.time()
+    if shared_data.start_homing_time is None:
+        shared_data.start_homing_time = time.time()
 
     # calulate closet detecion
     best_det = None
@@ -55,30 +60,34 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     # stop it just sitting there check timout
     # TODO: make leaving condtinal on wether or not the gc has given all clear
 
-    if (time.time() - start_homing_time) > MAX_HOMING_TIME / SIM_SPEED:
+    if (time.time() - shared_data.start_homing_time) > MAX_HOMING_TIME / drone_state.sim_speed:
         log_event("homing_give_up_timeout", logger="homing", level="WARNING",
                   drone_state=drone_state, frame=frame,
-                  elapsed_total_s=float(time.time() - start_homing_time),
+                  elapsed_total_s=float(time.time() - shared_data.start_homing_time),
                   min_dist_m=float(min_dist))
-        last_det_time = None
-        start_homing_time = None
+        shared_data.last_det_time = None
+        shared_data.start_homing_time = None
+        shared_data.N_pid.clear_history()
+        shared_data.E_pid.clear_history()
         telemetry_singleton.stop_velocity_command()
         return DroneStateEnum.GOTO
 
 ######## If detection is None
     if best_det is not None:
-        last_det_time = time.time()
+        shared_data.last_det_time = time.time()
 
     # This block tests to ensure that if a weed has been lost for more than
     # TIME_WAIT_FOR_DET seconds, it doesn't continue searching
 
     # TODO: make leaving condtinal on wether or not the gc has given all clear
-    if best_det is None and (time.time() - last_det_time) > TIME_WAIT_FOR_DET / SIM_SPEED:
+    if best_det is None and (time.time() - shared_data.last_det_time) > TIME_WAIT_FOR_DET / drone_state.sim_speed:
         log_event("homing_give_up_no_det", logger="homing", level="WARNING",
                   drone_state=drone_state, frame=frame,
-                  elapsed_no_det_s=float(time.time() - last_det_time))
-        last_det_time = None
-        start_homing_time = None
+                  elapsed_no_det_s=float(time.time() - shared_data.last_det_time))
+        shared_data.last_det_time = None
+        shared_data.start_homing_time = None
+        shared_data.N_pid.clear_history()
+        shared_data.E_pid.clear_history()
         telemetry_singleton.stop_velocity_command()
         return DroneStateEnum.GOTO
 
@@ -106,8 +115,10 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
                       min_spray_error_m=float(MIN_SPRAY_ERROR),
                       closest_detection={"time_detected": best_det.time_ns})
             # reset things
-            last_det_time = None
-            start_homing_time = None
+            shared_data.last_det_time = None
+            shared_data.start_homing_time = None
+            shared_data.N_pid.clear_history()
+            shared_data.E_pid.clear_history()
             telemetry_singleton.stop_velocity_command()
             if drone_state.force_homing: 
                 return DroneStateEnum.HOMING
@@ -121,9 +132,9 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             
     N, E = detection_to_ned(drone_state, best_det)
 
-
-    vN = math.copysign(min(0.7*abs(N)**0.5,2),N) # just got of desmos
-    vE = math.copysign(min(0.7*abs(E)**0.5,2),E) # just got of desmos
+    
+    vN = shared_data.N_pid.get_v(N)
+    vE = shared_data.E_pid.get_v(E)
 
     if drone_state.altitude_rel_home > MAX_HOMING_ALT:
         _alt_warn("max", "exceed max alt")
@@ -138,8 +149,8 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
     log_event("homing_tick", logger="homing", level="DEBUG",
               drone_state=drone_state, frame=frame,
               min_dist_m=float(min_dist), velocity_ned=[vN, vE, vD],
-              elapsed_total_s=float(time.time() - start_homing_time),
-              elapsed_no_det_s=float(time.time() - last_det_time))
+              elapsed_total_s=float(time.time() - shared_data.start_homing_time),
+              elapsed_no_det_s=float(time.time() - shared_data.last_det_time))
 
     return DroneStateEnum.HOMING
 

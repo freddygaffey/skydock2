@@ -4,6 +4,7 @@ import math
 import random
 import numpy as np
 import os
+from collections import deque
 
 from telemetry import telemetry_singleton
 from ai_class import ai_storage_singleton, Detection, Frame
@@ -269,6 +270,23 @@ def _render_frame(drone_state: DroneStateForHoming, dets: list[Detection],
     return img
 
 
+class LatencyBuffer:
+    """Delay frames by a fixed number of ticks to emulate the real
+    capture -> inference -> publish pipeline latency. Frames keep their
+    capture timestamp; push() returns the frame due for publishing now,
+    or None while the pipeline is still 'processing'. 0 = no delay."""
+
+    def __init__(self, latency_frames: int):
+        self.latency_frames = max(0, int(latency_frames))
+        self._pending = deque()
+
+    def push(self, frame):
+        self._pending.append(frame)
+        if len(self._pending) > self.latency_frames:
+            return self._pending.popleft()
+        return None
+
+
 def run_sim_ai(weed_locations: list[dict]):
     """
     Start a background 30 FPS loop:
@@ -324,6 +342,10 @@ def run_sim_ai(weed_locations: list[dict]):
         start = time.perf_counter()
         frame_idx = 0
         rng = random.Random(SIM_AI_RANDOM_SEED)
+
+        # Latency is in sim-time milliseconds; the loop ticks TARGET_FPS times
+        # per sim-second, so the delay is a fixed tick count (speedup-independent).
+        latency_buffer = LatencyBuffer(round(constants.SIM_AI_LATENCY_MS / 1000 * constants.TARGET_FPS))
 
         # Save at most SIM_AI_RENDER_MAX_FPS JPEGs per sim-second: render every Nth loop.
         save_stride = max(1, round(constants.TARGET_FPS / max(1e-6, constants.SIM_AI_RENDER_MAX_FPS)))
@@ -461,11 +483,13 @@ def run_sim_ai(weed_locations: list[dict]):
                     # Rendering must never crash sim AI.
                     pass
 
-                ai_storage_singleton.set_latest_frame(frame)
+                delayed_frame = latency_buffer.push(frame)
+                if delayed_frame is not None:
+                    ai_storage_singleton.set_latest_frame(delayed_frame)
 
             # Schedule next frame based on absolute time
             frame_idx += 1
-            next_time = start + frame_idx * dt / constants.SIM_SPEED
+            next_time = start + frame_idx * dt / constants.TARGET_SIM_SPEED
 
             now = time.perf_counter()
             sleep_time = next_time - now

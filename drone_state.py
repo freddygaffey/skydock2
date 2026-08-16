@@ -14,11 +14,13 @@ to a detection timestamp so projections line up with when the frame was captured
 """
 
 from dataclasses import dataclass, field
+from sys import exc_info
 from pymavlink import mavutil
 from collections import deque
 import math
 from math import cos, radians
 import time
+import constants
 
 # EXPERIMENTAL camera pixel->body axis mapping: ray_body = CAM_TO_BODY @ [x_cam, y_cam, 1].
 # Measured from the May 2026 flight logs by three independent methods (surveyed-truth fit,
@@ -58,6 +60,8 @@ class DroneStateForHoming:
     # time_to_boot_real_time_ofset:float = 0
     time_updated_GLOBAL_POSITION_INT: float = 0
     time_updated_angle: float = 0
+    wall_sim_time: deque = field(default_factory=lambda: deque(maxlen=100))
+    sim_speed: float = constants.TARGET_SIM_SPEED
     # Global position in degrees/meters
     latitude: float = 0
     longitude: float = 0
@@ -200,6 +204,10 @@ class DroneStateForHoming:
             self.rotation_history.append(rot)
             self.rotation = rot
 
+        if msg._type == "SYSTEM_TIME":
+            self.wall_sim_time.append([time.time_ns(),msg.time_boot_ms])
+            self.update_sim_speedup()
+
     def to_db_format(self):
         return (self.time_updated_GLOBAL_POSITION_INT,
                 self.longitude,
@@ -272,3 +280,12 @@ class DroneStateForHoming:
             dy = before.dy + t * (after.dy - before.dy),
             dz = before.dz + t * (after.dz - before.dz),
         )
+
+    def update_sim_speedup(self):
+        try:
+            d_wall_ms = (self.wall_sim_time[-1][0] - self.wall_sim_time[0][0]) // 1e6
+            d_fc_ms = self.wall_sim_time[-1][1] - self.wall_sim_time[0][1]
+            measured = d_fc_ms / d_wall_ms
+            self.sim_speed += (measured - self.sim_speed) * 0.5
+        except ZeroDivisionError:
+            pass

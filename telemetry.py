@@ -22,7 +22,7 @@ from pymavlink import mavutil
 from drone_state import DroneStateForHoming
 from mission_logging import log_event
 import constants
-from constants import SIM_SPEED
+from constants import TARGET_SIM_SPEED
 
 
 class Telemetry:
@@ -76,6 +76,7 @@ class Telemetry:
         self.set_a_message_interval("RC_CHANNELS",drone_state_rate)
         self.set_a_message_interval("ATTITUDE", 1/50)
         self.set_a_message_interval("HEARTBEAT", 1/2)
+        self.set_a_message_interval("SYSTEM_TIME",1/5)
 
         last_log_s = 0.0
         log_rate_s = 0.1
@@ -88,7 +89,7 @@ class Telemetry:
                 # stale (the previous message reprocessed) on later ones.
                 msg = None
             if msg is None:
-                time.sleep(0.0003/SIM_SPEED)
+                time.sleep(0.0003/TARGET_SIM_SPEED)
                 continue
             self.drone_state.set_pass_message(msg)
             # Throttle telemetry logging; high-rate raw logs are noisy.
@@ -273,7 +274,7 @@ class Telemetry:
             while time.time() < start_time + max_time and not self._v_thread_stop_event.is_set():
                 print("sending velocity command on thread")
                 self.send_velocity_command_yaw_stay_same(direction[0],direction[1],direction[2],bitmask)
-                time.sleep(0.03/SIM_SPEED)
+                time.sleep(0.03/TARGET_SIM_SPEED)
                 
         if self._v_thread is None or not self._v_thread.is_alive(): # this will check if none like after init or later is not runing
             self._v_thread_stop_event.clear()
