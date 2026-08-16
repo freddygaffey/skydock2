@@ -213,7 +213,8 @@ class TestClusteringPipeline:
 
     def test_merged_centroid_averages_member_detections(self):
         d = 0.5 / M_PER_DEG_LAT      # 0.5 m, comfortably inside MIN_WEED_SPACING
-        lats = [HOME_LAT - d, HOME_LAT, HOME_LAT + d]
+        n = scan.MIN_NUM_DET         # enough points to survive the filter
+        lats = [HOME_LAT + (i - (n - 1) / 2) * d for i in range(n)]
         snaps = [snapshot_over(lat, HOME_LON) for lat in lats]
         weeds = run_pipeline(snaps)
         assert len(weeds) == 1
