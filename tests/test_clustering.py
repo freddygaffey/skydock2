@@ -73,6 +73,9 @@ def _install_stubs():
     dba.Weed = Weed
     dba.db_abstraction = _FakeDB()
     sys.modules["DB_abstraction"] = dba
+    # scan binds db_abstraction at import; evict any cached copy so the
+    # import below rebinds against the fake regardless of test order.
+    sys.modules.pop("states.scan", None)
     return dba, ml
 
 
@@ -226,12 +229,13 @@ class TestClusteringPipeline:
         weeds = run_pipeline(good + [bad])
         assert len(weeds) == 1                  # bad detection ignored
 
-    def test_logs_weed_detected_event_per_weed(self):
-        # Assert on scan's own bound log_event (other test modules may reassign
-        # mission_logging.log_event after scan imported it).
-        scan.log_event.reset_mock()
+    def test_logs_weed_detected_event_per_weed(self, monkeypatch):
+        # Own the mock: depending on import order, scan may have bound either
+        # the stub or the real mission_logging.log_event.
+        mock_log = MagicMock()
+        monkeypatch.setattr(scan, "log_event", mock_log)
         snaps = [snapshot_over(HOME_LAT, HOME_LON) for _ in range(scan.MIN_NUM_DET)]
         run_pipeline(snaps)
-        events = [c for c in scan.log_event.call_args_list
+        events = [c for c in mock_log.call_args_list
                   if c.args and c.args[0] == "weed_detected"]
         assert len(events) == 1
