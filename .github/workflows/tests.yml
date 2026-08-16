@@ -28,3 +28,40 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt flask playwright
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest tools/log_server/tests/ -q
+
+  sitl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Pinned to the same ArduPilot commit as the local dev checkout.
+      AP_COMMIT: 44f2f67ca9539ef706ddc578fa4672c31b83ca20
+      REQUIRE_SITL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: actions/cache@v4
+        with:
+          path: ~/ardupilot
+          key: ardupilot-sitl-${{ env.AP_COMMIT }}
+      - name: Build ArduPilot SITL (on cache miss)
+        run: |
+          if [ ! -f ~/ardupilot/build/sitl/bin/arducopter ]; then
+            pip install "empy==3.3.4" future pexpect
+            git init ~/ardupilot
+            cd ~/ardupilot
+            git remote add origin https://github.com/ArduPilot/ardupilot.git
+            git fetch --depth 1 origin "$AP_COMMIT"
+            git checkout FETCH_HEAD
+            git submodule update --init --recursive --depth 1
+            ./waf configure --board sitl
+            ./waf copter
+          fi
+      - name: Create sim_vehicle venv
+        run: |
+          python -m venv ~/venv-ardupilot
+          ~/venv-ardupilot/bin/pip install -q "empy==3.3.4" future pexpect pymavlink MAVProxy
+      - run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest tests_sitl/ -q -rs

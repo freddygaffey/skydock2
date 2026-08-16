@@ -75,6 +75,11 @@ def arm_and_takeoff(conn, telemetry, altitude: float = 10, speed: float = 1):
             1, 4, 0, 0, 0, 0, 0  # 4 = GUIDED
         )
         time.sleep(WAIT_MODE_S)
+        if telemetry.drone_state.mode != "GUIDED":
+            # GUIDED is refused until the EKF has an origin. Arming now would
+            # force-arm in STABILIZE: takeoff never runs and the vehicle
+            # auto-disarms, while EKF altitude noise can fake the climb check.
+            continue
         conn.mav.command_long_send(
             conn.target_system, conn.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
