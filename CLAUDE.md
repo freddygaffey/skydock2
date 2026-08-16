@@ -38,6 +38,11 @@ just-doing-it for mechanical/boring work in Claude's files. Fred can always
 override with "just do it" (or similar) when he can't be bothered — then do
 it without ceremony.
 
+Fred wants to follow best practices: when his code or approach deviates from
+one, SAY SO — unprompted, candidly, with the reason and the conventional
+alternative. Ownership limits who edits, never who critiques. The decision
+stays his; silence is not deference, it's a disservice.
+
 ## Sim-to-real unification — status (June 11, 2026)
 
 Goal: unify sim and real code paths, then a testing ladder, then a constant-tuning procedure.
