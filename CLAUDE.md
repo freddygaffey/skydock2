@@ -15,7 +15,7 @@ file:line and the suggested replacement, and let Fred apply it:
 COLLABORATIVE — propose scope first, implement only after Fred agrees:
   DB.py, DB_abstraction.py, mission_logging.py, sim_ai.py,
   sim_data/ + real_missions/ (Fred owns real mission data; Claude may add sim
-  fixtures for tests), pull_logs_rpi.sh, tools/push_real_missions.sh,
+  fixtures for tests), tools/push_real_missions.sh,
   CLAUDE.md + .gitignore
 
 CLAUDE'S FILES — act autonomously, keep tests green, report what changed:
