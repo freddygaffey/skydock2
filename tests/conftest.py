@@ -86,6 +86,11 @@ def make_frame():
     from ai_class import Frame
 
     def _make(*detections, drone_state=None, photo_path="No photo taken"):
+        # Frames with detections must carry a drone_state (fail-fast invariant
+        # in Frame.__init__); default one in for tests that don't care.
+        if detections and drone_state is None:
+            from drone_state import DroneStateForHoming
+            drone_state = DroneStateForHoming()
         return Frame(list(detections), photo_path=photo_path, drone_state=drone_state)
 
     return _make

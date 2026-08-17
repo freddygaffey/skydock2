@@ -226,7 +226,7 @@ class TestClusteringPipeline:
         good = [snapshot_over(HOME_LAT, HOME_LON) for _ in range(scan.MIN_NUM_DET)]
         bad_state = DroneStateForHoming()       # no rotation history → not ready
         bad_state.altitude_rel_home = 10.0
-        bad = _Snapshot(bad_state, Frame([centre_detection(bad_state)]))
+        bad = _Snapshot(bad_state, Frame([centre_detection(bad_state)], drone_state=bad_state))
         weeds = run_pipeline(good + [bad])
         assert len(weeds) == 1                  # bad detection ignored
 

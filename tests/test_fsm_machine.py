@@ -159,10 +159,13 @@ def test_unknown_state_falls_back_to_override(monkeypatch, make_drone_state):
         m.assert_not_called()
 
 
-def test_scan_receives_frame_drone_state_when_present(monkeypatch, make_drone_state,
-                                                      make_frame):
-    # SCAN projects detections, so it must use the drone state captured WITH the
-    # frame, not the (newer) live telemetry state.
+def test_scan_receives_live_state_even_when_frame_has_its_own(monkeypatch,
+                                                              make_drone_state,
+                                                              make_frame):
+    # Navigation (waypoint-reached checks) must use LIVE telemetry: passing the
+    # frame's capture-time state deadlocked missions when the frame stream
+    # stalled. The capture state is used only inside scan() for snapshot
+    # logging (scan.py pairs frame.drone_state with the frame there).
     live_state = make_drone_state(mode="GUIDED")
     frame_state = make_drone_state(mode="GUIDED", lat=live_state.latitude + 0.001)
     frame = make_frame(drone_state=frame_state)
@@ -171,7 +174,7 @@ def test_scan_receives_frame_drone_state_when_present(monkeypatch, make_drone_st
 
     sm.update()
 
-    mocks["scan"].assert_called_once_with(frame_state, frame)
+    mocks["scan"].assert_called_once_with(live_state, frame)
 
 
 def test_scan_falls_back_to_telemetry_state_without_frame(monkeypatch, make_drone_state):

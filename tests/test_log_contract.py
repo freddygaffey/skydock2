@@ -179,7 +179,7 @@ class TestEncoderContract(unittest.TestCase):
     def test_detection_uses_time_detected_not_time_ns(self):
         det = Detection(label="sports ball", confidence=0.9,
                         bbox=[(1, 2), (3, 4)], time_ns=123)
-        frame = Frame([det])
+        frame = Frame([det], drone_state=DroneStateForHoming())
         rec = _emit_one("weed_detected", logger="ai", frame=frame)
         d0 = rec["frame"]["detections"][0]
         self.assertIn("time_detected", d0)

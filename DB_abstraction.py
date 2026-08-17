@@ -399,7 +399,7 @@ class DBAbstraction:
                     if det_model.photo_path:
                         photo_path = det_model.photo_path
                 
-                frame = Frame(det=detections, photo_path=photo_path)
+                frame = Frame(det=detections, photo_path=photo_path, drone_state=drone_state)
                 
                 snapshots.append(Snapshot(
                     frame=frame,
@@ -468,7 +468,7 @@ class DBAbstraction:
                 if det_model.photo_path:
                     photo_path = det_model.photo_path
             
-            frame = Frame(det=detections, photo_path=photo_path)
+            frame = Frame(det=detections, photo_path=photo_path, drone_state=drone_state)
             
             return Snapshot(
                 frame=frame,

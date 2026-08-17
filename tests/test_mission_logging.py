@@ -158,7 +158,7 @@ def test_serialize_frame_detections(configured):
     ml.init_mission_log()
     det = Detection(label="sports ball", confidence=0.9,
                     bbox=[(1.0, 2.0), (3.0, 4.0)], track_id=5, truth_id=2, time_ns=999)
-    ml.log_event("snap", logger="test", frame=Frame([det], photo_path="p.jpg"))
+    ml.log_event("snap", logger="test", frame=Frame([det], photo_path="p.jpg", drone_state=DroneStateForHoming()))
 
     record = read_lines(ml.get_mission_log_path())[-1]
     fr = record["frame"]

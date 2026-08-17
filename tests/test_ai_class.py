@@ -38,10 +38,21 @@ def test_to_db_format_shape():
     ("", False),
 ])
 def test_add_detection_label_filter(label, kept):
-    frame = Frame([])
+    from drone_state import DroneStateForHoming
+    frame = Frame([], drone_state=DroneStateForHoming())
     det = Detection(label=label, confidence=0.9, bbox=[(0, 0), (10, 10)])
     frame.add_detection(det)
     assert (len(frame.detection) == 1) == kept
+
+
+def test_detections_require_drone_state():
+    # Fail-fast invariant: a detection must never exist without the state that
+    # captured it (silent None fallback reintroduces the latency-pairing bug).
+    det = Detection(label="sports ball", confidence=0.9, bbox=[(0, 0), (10, 10)])
+    with pytest.raises(ValueError):
+        Frame([det])
+    with pytest.raises(ValueError):
+        Frame([]).add_detection(det)
 
 
 def test_ai_storage_is_singleton():
@@ -50,8 +61,9 @@ def test_ai_storage_is_singleton():
 
 
 def test_set_and_get_latest_frame(reset_state_globals):
+    from drone_state import DroneStateForHoming
     det = Detection(label="sports ball", confidence=0.9, bbox=[(0, 0), (10, 10)])
-    frame = Frame([det])
+    frame = Frame([det], drone_state=DroneStateForHoming())
     ai_storage_singleton.set_latest_frame(frame)
     assert ai_storage_singleton.get_latest_frame() is frame
 

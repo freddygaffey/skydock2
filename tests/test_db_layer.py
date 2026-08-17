@@ -144,7 +144,8 @@ def test_snapshot_roundtrip_preserves_state_and_detections(fresh_db):
     state = make_state_with_attitude()
     det = Detection(label="sports ball", confidence=0.9,
                     bbox=[(100.0, 110.0), (140.0, 160.0)], track_id=7, time_ns=12345)
-    fresh_db.log_drone_state_and_frame(state, Frame([det], photo_path="img/0001.jpg"))
+    fresh_db.log_drone_state_and_frame(state, Frame([det], photo_path="img/0001.jpg",
+                                                drone_state=state))
 
     snaps = fresh_db.get_all_snapshots()
     assert len(snaps) == 1

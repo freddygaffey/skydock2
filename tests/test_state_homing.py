@@ -196,7 +196,8 @@ def test_close_but_too_high_keeps_homing_and_descends(monkeypatch, make_drone_st
 def test_velocity_law_pid_with_cap(monkeypatch, make_drone_state, make_frame,
                                    make_detection, reset_state_globals):
     tel = setup_homing(monkeypatch)
-    # Inject a known NED offset: vN/vE = clamp(p*e + i*sum(history) + d*de, ±max_v).
+    # dt-based PID: on the FIRST sample there is no interval, so output is pure
+    # P (i_sum still 0): vN/vE = clamp(p*e, ±max_v).
     monkeypatch.setattr(homing_mod, "detection_to_ned", lambda ds, det: (9.0, -1.0))
     monkeypatch.setattr(homing_mod, "detection_to_dist", lambda ds, det: math.hypot(9.0, 1.0))
 
@@ -205,9 +206,9 @@ def test_velocity_law_pid_with_cap(monkeypatch, make_drone_state, make_frame,
     assert result == DroneStateEnum.HOMING
     n_pid, e_pid = shared_data.N_pid, shared_data.E_pid
     vN, vE, vD = tel.velocity_calls[0]
-    assert vN == n_pid.max_v                                  # p*9 = 6.3, clamped
-    assert vE == pytest_approx(-1.0 * e_pid.p + -1.0 * e_pid.i)  # linear regime
-    assert vD == 0.3                                          # in-band altitude drifts down
+    assert vN == n_pid.max_v                     # p*9 = 6.3, clamped to 2
+    assert vE == pytest_approx(-1.0 * e_pid.p)   # first sample: P only
+    assert vD == 0.3                             # in-band altitude drifts down
 
 
 def test_each_axis_uses_its_own_pid(monkeypatch, make_drone_state, make_frame,
@@ -223,8 +224,8 @@ def test_each_axis_uses_its_own_pid(monkeypatch, make_drone_state, make_frame,
             self.out = out
             self.calls = []
 
-        def get_v(self, error):
-            self.calls.append(error)
+        def get_v(self, error, time_ns, speedup):
+            self.calls.append((error, time_ns, speedup))
             return self.out
 
         def clear_history(self):
@@ -234,10 +235,13 @@ def test_each_axis_uses_its_own_pid(monkeypatch, make_drone_state, make_frame,
     monkeypatch.setattr(shared_data, "N_pid", stub_n)
     monkeypatch.setattr(shared_data, "E_pid", stub_e)
 
-    homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+    state = make_drone_state(alt=10.0)
+    homing_mod.homing(state, make_frame(make_detection()))
 
-    assert stub_n.calls == [4.0]
-    assert stub_e.calls == [-9.0]
+    assert [c[0] for c in stub_n.calls] == [4.0]
+    assert [c[0] for c in stub_e.calls] == [-9.0]
+    # timestamp comes from the detection, speedup from the live state
+    assert stub_n.calls[0][2] == state.sim_speed
     assert tel.velocity_calls[0][:2] == (0.11, -0.22)
 
 
@@ -249,16 +253,19 @@ def test_give_up_resets_pid_history(monkeypatch, make_drone_state, make_frame,
 
     # Accumulate integrator state over a couple of ticks.
     homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
+    time.sleep(0.05)  # a real dt so the second call accumulates integral
     homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
-    assert len(shared_data.N_pid.error_history) > 1
+    assert shared_data.N_pid.last_time_ns is not None
 
     # Force the total-timeout exit; the integrator must not leak into the next weed.
     shared_data.start_homing_time = time.time() - (MAX_HOMING_TIME / TARGET_SIM_SPEED + 5)
     result = homing_mod.homing(make_drone_state(alt=10.0), make_frame(make_detection()))
 
     assert result == DroneStateEnum.GOTO
-    assert shared_data.N_pid.error_history == [0]
-    assert shared_data.E_pid.error_history == [0]
+    for pid in (shared_data.N_pid, shared_data.E_pid):
+        assert pid.i_sum == 0
+        assert pid.last_time_ns is None
+        assert pid.last_distance_from_target is None
 
 
 def test_below_min_alt_climbs_while_homing(monkeypatch, make_drone_state, make_frame,

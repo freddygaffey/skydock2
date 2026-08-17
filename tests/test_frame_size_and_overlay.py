@@ -120,8 +120,10 @@ class _Fsm:
 
 def test_frame_endpoint_renders_any_image_size(tmp_path):
     from ai_class import Frame
+    from drone_state import DroneStateForHoming
     for size in (320, 1280):
-        r = _serve_frame(tmp_path, _Fsm(Frame([_Det()], width=640, height=640)), size)
+        r = _serve_frame(tmp_path, _Fsm(Frame([_Det()], width=640, height=640,
+                                      drone_state=DroneStateForHoming())), size)
         assert r.status_code == 200, size
         assert r.mimetype == "image/jpeg"
 
@@ -129,6 +131,7 @@ def test_frame_endpoint_renders_any_image_size(tmp_path):
 def test_frame_endpoint_tolerates_unknown_frame_size(tmp_path):
     # width/height None must fall back to 1:1 scaling, not divide-by-None.
     from ai_class import Frame
-    r = _serve_frame(tmp_path, _Fsm(Frame([_Det()])), 640)
+    from drone_state import DroneStateForHoming
+    r = _serve_frame(tmp_path, _Fsm(Frame([_Det()], drone_state=DroneStateForHoming())), 640)
     assert r.status_code == 200
     assert r.mimetype == "image/jpeg"
