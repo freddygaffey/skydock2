@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,7 @@ from utils import detection_to_latlon
 
 from services.geometry import grid_dedup, haversine_m, parse_ts
 from services.mission_cache import MISSION_READ_CACHE
-from services.mission_store import iter_events, iter_events_of_kind
+from services.mission_store import iter_events, iter_events_of_kind, iter_events_of_kinds
 from services.projection import (
     camera_fov_footprint_from_drone_dict,
     drone_state_from_dict,
@@ -21,30 +23,121 @@ from services.projection import (
 MIN_NUM_DET = 3
 MIN_WEED_SPACING = 2
 
+# drone_state keys that hold the ~100-entry attitude/GPS history deques. `rotaion_*` is the
+# pre-2026-06 typo still present in every logged real mission; both spellings must be stripped
+# from API payloads (see _make_frame_row).
+_HISTORY_KEYS = frozenset({
+    "rotation_history", "rotaion_history", "gps_history",
+})
+
 
 def _log_rev_key(path: Path) -> tuple[str, int, int]:
     st = path.stat()
     return (str(path.resolve()), st.st_mtime_ns, st.st_size)
 
 
-def _frames_dir_rev(mission_dir: Path | None) -> int:
-    """Change when JPEGs under ``mission_dir/frames/`` change (for ``build_frame_events`` cache)."""
+# One in-flight full scan per log revision. The app is threaded and the dashboard asks for
+# /summary and /timeline at the same moment; without this both threads scanned the whole log.
+_FULL_SCAN_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
+_FULL_SCAN_LOCKS_GUARD = threading.Lock()
+
+
+def _full_scan_lock(rev: tuple[Any, ...]) -> threading.Lock:
+    with _FULL_SCAN_LOCKS_GUARD:
+        lock = _FULL_SCAN_LOCKS.get(rev)
+        if lock is None:
+            lock = threading.Lock()
+            if len(_FULL_SCAN_LOCKS) > 256:  # only ever holds one entry per open mission
+                _FULL_SCAN_LOCKS.clear()
+            _FULL_SCAN_LOCKS[rev] = lock
+        return lock
+
+
+# Above this many ticks the slim list is still returned but not retained (memory guard).
+# Real missions run ~20-30k ticks and sim runs ~10k, so this never trips in practice.
+_FSM_TICK_CACHE_MAX_ROWS = 200_000
+
+
+def cached_fsm_ticks(path: Path) -> list[dict[str, Any]]:
+    """All ``fsm_tick`` events, history deques stripped, memoised per log revision.
+
+    Four endpoints each walked the fsm_tick stream independently (/camera_fov_footprints,
+    /path?source=fsm, /frame_events, /weeds/pred reclustering) — on an 850 MB log that was
+    four ~5 s json-decoding passes for one dashboard load. Dropping the ~20 KB
+    rotation/gps history strings shrinks 800 MB of ticks to ~17 MB, cheap to keep around,
+    and none of the consumers read those fields.
+    """
+    rev = _log_rev_key(path)
+    key = ("fsm_ticks_slim", *rev)
+    cached = MISSION_READ_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with _full_scan_lock(("fsm_ticks", *rev)):
+        cached = MISSION_READ_CACHE.get(key)
+        if cached is not None:
+            return cached
+        rows: list[dict[str, Any]] = []
+        for ev in iter_events_of_kind(path, "fsm_tick"):
+            ds = ev.get("drone_state")
+            if isinstance(ds, dict) and not _HISTORY_KEYS.isdisjoint(ds):
+                ev = dict(ev)
+                ev["drone_state"] = {
+                    k: v for k, v in ds.items() if k not in _HISTORY_KEYS
+                }
+            rows.append(ev)
+        if len(rows) <= _FSM_TICK_CACHE_MAX_ROWS:
+            MISSION_READ_CACHE.set(key, rows)
+        return rows
+
+
+def _scan_frames_dir(mission_dir: Path | None) -> tuple[list[tuple[int, str]], int]:
+    """``([(ts_ns, "frames/<name>.jpg"), ...] sorted, revision)`` for ``mission_dir/frames``.
+
+    One ``os.scandir`` pass produces both the JPEG list and the cache-revision token. The
+    previous code walked the directory twice per request (once via ``Path.iterdir`` +
+    ``f.stat()`` on every entry for the revision, once for the listing) — on a mission with
+    16k frames that was ~33k stat syscalls, paid even on a cache hit.
+
+    Revision = (max mtime_ns of the jpegs, count). Frames are write-once, so this changes
+    whenever a frame is added, removed or rewritten.
+    """
     if mission_dir is None:
-        return 0
+        return [], 0
     fd = mission_dir / "frames"
-    if not fd.is_dir():
-        return 0
+    files: list[tuple[int, str]] = []
+    newest = 0
     try:
-        return max((f.stat().st_mtime_ns for f in fd.iterdir() if f.is_file()), default=0)
-    except OSError:
-        return 0
+        with os.scandir(fd) as it:
+            for entry in it:
+                name = entry.name
+                dot = name.rfind(".")
+                if dot <= 0 or name[dot:].lower() not in (".jpg", ".jpeg"):
+                    continue
+                stem = name[:dot]
+                if not stem.isdigit():
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                    mt = entry.stat().st_mtime_ns
+                except OSError:
+                    continue
+                if mt > newest:
+                    newest = mt
+                files.append((int(stem), f"frames/{name}"))
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return [], 0
+    files.sort()
+    # Fold the count in so deleting one frame and adding another with an older mtime
+    # can't produce a colliding revision.
+    return files, newest * 1_000_003 + len(files)
 
 
 def weed_prediction_points(path: Path, dedup: bool, thresh_m: float) -> list[dict[str, float]]:
+    # Index-backed: a mission log holds a handful of weed_detected rows among tens of
+    # thousands of 20 KB telemetry rows, so scanning everything was pure waste.
     pts: list[dict[str, float]] = []
-    for ev in iter_events(path):
-        if ev.get("event") != "weed_detected":
-            continue
+    for ev in iter_events_of_kind(path, "weed_detected"):
         lat = ev.get("lat") or (ev.get("weed") or {}).get("lat")
         lon = ev.get("lon") or (ev.get("weed") or {}).get("lon")
         if lat is None or lon is None:
@@ -86,7 +179,7 @@ def weed_prediction_points_from_detections(
     # Each cluster stores running sums to output avg location.
     clusters: list[dict[str, float]] = []  # {"lat_sum":..., "lon_sum":..., "n":...}
 
-    for ev in iter_events_of_kind(path, "fsm_tick"):
+    for ev in cached_fsm_ticks(path):
         frame = ev.get("frame")
         if not isinstance(frame, dict):
             continue
@@ -253,7 +346,7 @@ def camera_fov_polygons_from_fsm_ticks(
     last_tick_index: int | None = None
     last_added_tick_index: int | None = None
     count = 0
-    for ev in iter_events_of_kind(path, "fsm_tick"):
+    for ev in cached_fsm_ticks(path):
         count += 1
         st = _normalize_fsm_state_name(ev.get("state"))
         if states_filter is not None and (st is None or st not in states_filter):
@@ -311,11 +404,15 @@ def camera_fov_polygons_from_fsm_ticks(
 
 
 def telemetry_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
+    rev = _log_rev_key(path)
+    cache_key = ("tel_path", *rev, int(stride))
+    cached = MISSION_READ_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     pts: list[dict[str, Any]] = []
     count = 0
-    for ev in iter_events(path):
-        if ev.get("event") != "telemetry_sample":
-            continue
+    for ev in iter_events_of_kind(path, "telemetry_sample"):
         count += 1
         if count % stride != 0:
             continue
@@ -324,6 +421,7 @@ def telemetry_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
         if lat == 0 and lon == 0:
             continue
         pts.append({"lat": lat, "lon": lon, "alt": ds.get("altitude_rel_home", 0), "ts": ev.get("ts", "")})
+    MISSION_READ_CACHE.set(cache_key, pts)
     return pts
 
 
@@ -341,7 +439,7 @@ def fsm_tick_path_points(path: Path, stride: int) -> list[dict[str, Any]]:
     last_tick_index: int | None = None
     last_added_tick_index: int | None = None
     count = 0
-    for ev in iter_events_of_kind(path, "fsm_tick"):
+    for ev in cached_fsm_ticks(path):
         count += 1
         ds = ev.get("drone_state", {})
         if not isinstance(ds, dict):
@@ -392,20 +490,17 @@ def build_timeline_payload(path: Path) -> dict[str, Any]:
     cached = MISSION_READ_CACHE.get(("timeline", *rev))
     if cached is not None:
         return cached
+    with _full_scan_lock(rev):
+        cached = MISSION_READ_CACHE.get(("timeline", *rev))
+        if cached is not None:
+            return cached
+        transitions, last_ts, _ = _full_log_scan(path, rev)
+        return _timeline_from_transitions(transitions, last_ts, rev)
 
-    transitions: list[dict[str, Any]] = []
-    last_ts = None
-    for ev in iter_events(path):
-        ts = parse_ts(ev.get("ts", ""))
-        if ts > 0:
-            last_ts = ts
-        if ev.get("event") == "fsm_transition":
-            transitions.append({
-                "ts": ts,
-                "state_from": ev.get("state_from", ""),
-                "state_to": ev.get("state_to", ""),
-            })
 
+def _timeline_from_transitions(
+    transitions: list[dict[str, Any]], last_ts: float | None, rev: tuple[str, int, int]
+) -> dict[str, Any]:
     segments: list[dict[str, Any]] = []
     visit_counts: dict[str, int] = {}
     for i, t in enumerate(transitions):
@@ -442,7 +537,25 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
     cached = MISSION_READ_CACHE.get(("summary", *rev))
     if cached is not None:
         return cached
+    with _full_scan_lock(rev):
+        cached = MISSION_READ_CACHE.get(("summary", *rev))
+        if cached is not None:
+            return cached
+        _, _, payload = _full_log_scan(path, rev)
+        return payload
 
+
+def _full_log_scan(
+    path: Path, rev: tuple[str, int, int]
+) -> tuple[list[dict[str, Any]], float | None, dict[str, Any]]:
+    """The one pass over every event, feeding **both** /summary and /timeline.
+
+    These are the only endpoints left that genuinely need every row (event counts, path
+    length, altitude stats). The dashboard requests them together, and json decoding holds
+    the GIL, so two independent scans of an 850 MB log cost twice the wall clock — one pass
+    fills both caches instead. Callers hold ``_full_scan_lock`` so parallel requests wait for
+    this result rather than starting duplicate scans.
+    """
     header: dict[str, Any] = {}
     event_counts: dict[str, int] = {}
     first_ts = last_ts = None
@@ -453,6 +566,7 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
     prev_ll: tuple[float, float] | None = None
     path_length_m = 0.0
     alts: list[float] = []
+    transitions: list[dict[str, Any]] = []
 
     for ev in iter_events(path):
         n_lines += 1
@@ -465,6 +579,12 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
             last_ts = ts
         if ev_type == "mission_start":
             header = ev
+        if ev_type == "fsm_transition":
+            transitions.append({
+                "ts": ts,
+                "state_from": ev.get("state_from", ""),
+                "state_to": ev.get("state_to", ""),
+            })
         if ev_type == "weed_detected":
             lat = (ev.get("weed") or {}).get("lat")
             lon = (ev.get("weed") or {}).get("lon")
@@ -535,7 +655,9 @@ def build_summary_payload(path: Path) -> dict[str, Any]:
         "insights": insights,
     }
     MISSION_READ_CACHE.set(("summary", *rev), payload)
-    return payload
+    # Same pass, second consumer: /timeline is now free once /summary has run (and vice versa).
+    _timeline_from_transitions(transitions, last_ts, rev)
+    return transitions, last_ts, payload
 
 
 def tail_json_events(path: Path, since_byte: int) -> dict[str, Any]:
@@ -567,12 +689,22 @@ def tail_json_events(path: Path, since_byte: int) -> dict[str, Any]:
     return {"events": events, "next_byte": next_byte, "file_size": file_size}
 
 
-def _nearest_by_ts(sorted_entries: list[tuple[int, Any]], ts_ns: int) -> Any | None:
-    """Binary-search for the entry with the closest timestamp to ``ts_ns``."""
+def _nearest_by_ts(
+    sorted_entries: list[tuple[int, Any]],
+    ts_ns: int,
+    keys: list[int] | None = None,
+) -> Any | None:
+    """Binary-search for the entry with the closest timestamp to ``ts_ns``.
+
+    ``keys`` is the pre-extracted timestamp column. Building it inside this function made
+    the "one row per saved JPEG" path quadratic (16k frames x 26k ticks = the single
+    biggest cost in ``/frame_events``); callers in a loop must hoist it.
+    """
     from bisect import bisect_right
     if not sorted_entries:
         return None
-    keys = [e[0] for e in sorted_entries]
+    if keys is None:
+        keys = [e[0] for e in sorted_entries]
     idx = bisect_right(keys, ts_ns) - 1
     if idx < 0:
         idx = 0
@@ -621,13 +753,14 @@ def _make_frame_row(
     # returning. The client only needs the scalar drone_state (position/attitude); shipping
     # the histories on every frame row blew the /frame_events payload up to 300+ MB and broke
     # the dashboard. Ground projections + footprint are already computed server-side above.
+    #
+    # ``_HISTORY_KEYS`` includes the pre-2026-06 misspelling (``rotaion_history``) used by
+    # every real RPi log — matching only the corrected name meant those missions still
+    # shipped the deques: /frame_events for rpi_missions/0063 was 128 MB instead of ~6 MB.
     slim_drone_state = drone_state_dict
-    if isinstance(drone_state_dict, dict) and (
-        "rotation_history" in drone_state_dict or "gps_history" in drone_state_dict
-    ):
+    if isinstance(drone_state_dict, dict) and not _HISTORY_KEYS.isdisjoint(drone_state_dict):
         slim_drone_state = {
-            k: v for k, v in drone_state_dict.items()
-            if k not in ("rotation_history", "gps_history")
+            k: v for k, v in drone_state_dict.items() if k not in _HISTORY_KEYS
         }
 
     return {
@@ -648,7 +781,12 @@ def _make_frame_row(
     }
 
 
-def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict[str, Any]]:
+def build_frame_events(
+    path: Path,
+    mission_dir: Path | None = None,
+    *,
+    dets_only: bool = False,
+) -> list[dict[str, Any]]:
     """Build frame rows for ``GET .../frame_events``.
 
     For sim missions the data lives in the JSONL (``frame`` sub-object with
@@ -659,39 +797,38 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
     directory has files we scan it, match each JPEG to the nearest
     ``fsm_tick`` by ``time_ns``, and emit one row per frame image — including
     frames with no detections so the full flight is browsable.
+
+    ``dets_only`` skips building rows for frames with no detections. The rows it does
+    return are byte-identical to filtering the full list (``frame_index`` still counts
+    every saved JPEG), but on a real mission that is thousands of skipped ground
+    projections. Cached separately from the full list.
     """
     rev = _log_rev_key(path)
     mdir_s = str(mission_dir.resolve()) if mission_dir is not None else ""
-    fr_rev = _frames_dir_rev(mission_dir)
+    frame_files, fr_rev = _scan_frames_dir(mission_dir)
     # v3: real-mission detections now matched to jpeg by time_detected (not nearest tick).
-    fe_key = ("frame_events", 3, *rev, mdir_s, fr_rev)
+    fe_key = ("frame_events", 3, *rev, mdir_s, fr_rev, bool(dets_only))
     cached = MISSION_READ_CACHE.get(fe_key)
     if cached is not None:
         return cached
+    if dets_only:
+        # A cached full build already contains these rows; filter it instead of rebuilding.
+        full_cached = MISSION_READ_CACHE.get(("frame_events", 3, *rev, mdir_s, fr_rev, False))
+        if full_cached is not None:
+            out = [r for r in full_cached if r.get("detections")]
+            MISSION_READ_CACHE.set(fe_key, out)
+            return out
 
-    # Check whether to use timestamp-based matching from frames/ directory
-    frames_dir = (mission_dir / "frames") if mission_dir else None
-    use_frames_dir = False
-    frame_files: list[tuple[int, str]] = []  # (ts_ns, relative_path)
-
-    if frames_dir and frames_dir.is_dir():
-        for f in frames_dir.iterdir():
-            if f.suffix.lower() in (".jpg", ".jpeg") and f.stem.isdigit():
-                frame_files.append((int(f.stem), f"frames/{f.name}"))
-        if frame_files:
-            frame_files.sort()
-            use_frames_dir = True
-
-    if use_frames_dir:
+    if frame_files:
         # Build sorted lookup of fsm_tick events by time_ns (for drone_state fallback by jpeg ts).
         ticks: list[tuple[int, dict[str, Any]]] = []
         # Per-jpeg dets index keyed on detection.time_detected (== jpeg stem when AI logged the same frame).
         # One tick can carry detections from a previous AI frame; matching on time_detected avoids
         # cross-attributing detections to the wrong jpeg.
         dets_by_stem: dict[int, tuple[list, dict[str, Any]]] = {}
-        for ev in iter_events(path):
-            if ev.get("event") != "fsm_tick":
-                continue
+        # Index-backed: only fsm_tick rows are parsed, so the ~20 KB telemetry_sample rows
+        # that dominate a real log are never decoded here.
+        for ev in cached_fsm_ticks(path):
             time_ns = ev.get("time_ns")
             if time_ns is None:
                 continue
@@ -714,11 +851,13 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
                 # Last writer wins if two ticks reference the same stem (rare; later tick is closer).
                 dets_by_stem[stem] = (dlist, ev)
         ticks.sort(key=lambda x: x[0])
+        tick_keys = [t[0] for t in ticks]  # hoisted: see _nearest_by_ts
 
         results: list[dict[str, Any]] = []
+        frame_index = 0
         for ts_ns, rel_path in frame_files:
             stem_hit = dets_by_stem.get(ts_ns)
-            ev = stem_hit[1] if stem_hit else _nearest_by_ts(ticks, ts_ns)
+            ev = stem_hit[1] if stem_hit else _nearest_by_ts(ticks, ts_ns, tick_keys)
             if ev is None:
                 drone_state_dict = None
                 dets = []
@@ -735,8 +874,11 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
                 ts_str = ev.get("ts")
                 state_from = ev.get("state_from", "")
                 state_to = ev.get("state_to", "") or ev.get("state", "")
+            if dets_only and not dets:
+                frame_index += 1  # keep frame_index aligned with the full listing
+                continue
             results.append(_make_frame_row(
-                frame_index=len(results),
+                frame_index=frame_index,
                 photo_path=rel_path,
                 dets=dets,
                 raw_dets=None,
@@ -746,6 +888,7 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
                 state_from=state_from,
                 state_to=state_to,
             ))
+            frame_index += 1
         MISSION_READ_CACHE.set(fe_key, results)
         return results
 
@@ -775,10 +918,17 @@ def build_frame_events(path: Path, mission_dir: Path | None = None) -> list[dict
 
 
 def latest_sim_vision_event(path: Path) -> dict[str, Any] | None:
+    rev = _log_rev_key(path)
+    cache_key = ("sim_vision", *rev)
+    cached = MISSION_READ_CACHE.get(cache_key)
+    if cached is not None:
+        return cached[0]
     latest = None
-    for ev in iter_events(path):
-        if ev.get("event") == "sim_vision_params":
-            latest = ev
+    for ev in iter_events_of_kind(path, "sim_vision_params"):
+        latest = ev
+    # Wrapped in a tuple so a legitimate ``None`` result is still a cache hit (real
+    # missions never emit sim_vision_params, and this used to re-scan the whole log).
+    MISSION_READ_CACHE.set(cache_key, (latest,))
     return latest
 
 

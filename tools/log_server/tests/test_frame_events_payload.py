@@ -96,6 +96,48 @@ def app_ctx():
         yield app
 
 
+def test_frame_events_strips_legacy_misspelled_history(app_ctx):
+    """Real RPi logs store the deques under the pre-2026-06 typo ``rotaion_history``.
+
+    Matching only the corrected spelling let those missions ship ~20 KB of history per row:
+    /frame_events for a 6.6k-frame real mission was 128 MB instead of ~7 MB.
+    """
+    c = app_ctx.test_client()
+    rows = c.get("/missions/0001/frame_events?src=sim").get_json()
+    # Re-run against a log that uses the legacy key names.
+    for r in rows:
+        ds = r.get("drone_state") or {}
+        assert "rotaion_history" not in ds
+
+
+def test_legacy_history_key_is_stripped_from_payload():
+    """A log written with ``rotaion_history``/``gps_history`` must not ship them."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mid = root / "0001"
+        (mid / "frames").mkdir(parents=True)
+        (mid / "frames" / f"{TS_A}.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+        ds = {k: v for k, v in _BIG_HISTORY_DS.items() if k != "rotation_history"}
+        ds["rotaion_history"] = "deque([" + "x" * 5000 + "])"  # how real logs store it
+        tick = _fsm_tick(TS_A, "2024-01-01T00:00:04.000Z", TS_A, with_det=True)
+        tick["drone_state"] = ds
+        (mid / "mission.jsonl").write_text(json.dumps(tick) + "\n", encoding="utf-8")
+
+        app = create_app()
+        app.config.update(MISSIONS_ROOT=root, RPI_MISSIONS_ROOT=root, SIM_DATA_ROOT=root,
+                          TESTING=True)
+        c = app.test_client()
+        raw = c.get("/missions/0001/frame_events?src=sim").get_data()
+        assert b"rotaion_history" not in raw
+        assert b"gps_history" not in raw
+        rows = json.loads(raw)
+        assert len(rows) == 1
+        # The scalar fields the client uses survive the strip.
+        assert rows[0]["drone_state"]["latitude"] == -35.0
+        # …and the payload is small, not "one 5 KB history per frame".
+        assert len(raw) < 4000, len(raw)
+
+
 def test_frame_events_strips_history_deques(app_ctx):
     """No row may carry the rotation/gps history deques (the payload-bloat regression)."""
     c = app_ctx.test_client()
@@ -118,6 +160,52 @@ def test_dets_only_returns_just_detection_rows(app_ctx):
     assert all(r.get("detections") for r in dets)
     # dets_only must be a strictly smaller payload than the full list
     assert len(json.dumps(dets)) < len(json.dumps(full))
+
+
+def test_dets_only_rows_are_identical_to_filtering_the_full_list(app_ctx):
+    """``dets_only`` is a server-side pushdown (empty-ground frames are never projected).
+
+    It must stay byte-for-byte equal to filtering the full list — including ``frame_index``,
+    which numbers every saved JPEG, not just the detection ones.
+    """
+    c = app_ctx.test_client()
+    full = c.get("/missions/0001/frame_events?src=sim").get_json()
+    dets = c.get("/missions/0001/frame_events?dets_only=1&src=sim").get_json()
+    assert dets == [r for r in full if r.get("detections")]
+    assert [r["frame_index"] for r in dets] == [0, 1]
+
+
+def test_dets_only_frame_index_skips_empty_frames(app_ctx):
+    """The empty-ground frame occupies index 2, so a later detection frame keeps its index."""
+    c = app_ctx.test_client()
+    full = c.get("/missions/0001/frame_events?src=sim").get_json()
+    assert [r["frame_index"] for r in full] == [0, 1, 2]
+    assert full[2]["detections"] == []
+
+
+def test_frame_image_is_cacheable(app_ctx):
+    """Frames are write-once; without an explicit Cache-Control the viewer re-validates
+    every JPEG on every scrub."""
+    c = app_ctx.test_client()
+    r = c.get(f"/missions/0001/image?path=frames/{TS_A}.jpg&src=sim")
+    assert r.status_code == 200
+    cc = r.headers.get("Cache-Control", "")
+    assert "public" in cc and "immutable" in cc
+    assert "max-age=604800" in cc
+
+
+def test_frame_image_thumbnail_is_cacheable(app_ctx):
+    """The downscaled (max_side) branch must carry the same caching promise."""
+    c = app_ctx.test_client()
+    r = c.get(f"/missions/0001/image?path=frames/{TS_A}.jpg&max_side=64&src=sim")
+    assert r.status_code == 200
+    cc = r.headers.get("Cache-Control", "")
+    assert "public" in cc and "max-age=604800" in cc
+
+
+def test_frame_image_path_traversal_still_blocked(app_ctx):
+    c = app_ctx.test_client()
+    assert c.get("/missions/0001/image?path=../../etc/passwd&src=sim").status_code in (403, 404)
 
 
 def test_detection_rows_have_ground_projections(app_ctx):

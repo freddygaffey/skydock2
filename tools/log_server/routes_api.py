@@ -32,6 +32,7 @@ from services.analysis import (
 )
 from services.mission_store import (
     iter_events,
+    iter_events_of_kinds,
     resolve_mission_log,
     list_real_mission_setups,
     load_real_mission_setup,
@@ -46,6 +47,10 @@ from services.live_link import live_link, LiveLinkError
 from config import camera_stream_url
 
 bp = Blueprint("log_api", __name__)
+
+# Mission frame JPEGs never change once written (a new frame gets a new timestamped name),
+# so browsers may keep them for a week without revalidating.
+_IMMUTABLE_CACHE_CONTROL = "public, max-age=604800, immutable"
 
 # Default mission ``params`` (same keys as ``main.py`` reads from setup JSON).
 _SETUP_PARAM_DEFAULTS: dict[str, Any] = {
@@ -163,19 +168,43 @@ def mission_events(mission_id: str):
     return jsonify(events)
 
 
+def _events_of_kinds_cached(p: Path, cache_tag: str, kinds: frozenset[str]) -> list[Any]:
+    """Kind-filtered events for a log, memoised per file revision.
+
+    These endpoints return a handful of rows but used to scan (and json-decode) every line
+    of the log on every request — ~5 s per call on an 850 MB mission, and the dashboard
+    fires several of them in parallel on load.
+    """
+    st = p.stat()
+    key = (cache_tag, str(p.resolve()), st.st_mtime_ns, st.st_size)
+    cached = MISSION_READ_CACHE.get(key)
+    if cached is not None:
+        return cached
+    rows = list(iter_events_of_kinds(p, kinds))
+    MISSION_READ_CACHE.set(key, rows)
+    return rows
+
+
+_WEED_EVENT_KINDS = frozenset(
+    {"weed_detected", "db_weed_sprayed", "spray_attempt", "spray_miss", "spray_ready"}
+)
+_SPRAY_EVENT_KINDS = frozenset(
+    {"db_weed_sprayed", "spray_attempt", "spray_miss", "spray_ready", "spray_skipped"}
+)
+
+
 @bp.get("/missions/<mission_id>/fsm")
 def mission_fsm(mission_id: str):
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
-    return jsonify([ev for ev in iter_events(p) if ev.get("event") == "fsm_transition"])
+    return jsonify(_events_of_kinds_cached(p, "ev_fsm", frozenset({"fsm_transition"})))
 
 
 @bp.get("/missions/<mission_id>/weeds")
 def mission_weeds(mission_id: str):
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
-    kinds = {"weed_detected", "db_weed_sprayed", "spray_attempt", "spray_miss", "spray_ready"}
-    return jsonify([ev for ev in iter_events(p) if ev.get("event") in kinds])
+    return jsonify(_events_of_kinds_cached(p, "ev_weeds", _WEED_EVENT_KINDS))
 
 
 @bp.get("/missions/<mission_id>/weeds/pred")
@@ -267,8 +296,7 @@ def mission_spray(mission_id: str):
     """All spray-related events."""
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
-    kinds = {"db_weed_sprayed", "spray_attempt", "spray_miss", "spray_ready", "spray_skipped"}
-    return jsonify([ev for ev in iter_events(p) if ev.get("event") in kinds])
+    return jsonify(_events_of_kinds_cached(p, "ev_spray", _SPRAY_EVENT_KINDS))
 
 
 @bp.get("/missions/<mission_id>/timeline")
@@ -324,12 +352,12 @@ def mission_frame_events(mission_id: str):
     src = request.args.get("src", "sim")
     p = _mission_log(mission_id, src)
     mission_dir = _missions_root(src) / mission_id
-    rows = build_frame_events(p, mission_dir)
     # The map's BBox-ground layer only needs detection rows. Sim missions can emit one row
     # per JPEG (>100k empty-ground frames), which makes the full payload too big to render.
-    # ``dets_only=1`` returns just the rows that carry detections.
-    if request.args.get("dets_only") in ("1", "true", "yes"):
-        rows = [r for r in rows if r.get("detections")]
+    # ``dets_only=1`` returns just the rows that carry detections — pushed down into
+    # build_frame_events so the empty-ground rows are never projected in the first place.
+    dets_only = request.args.get("dets_only") in ("1", "true", "yes")
+    rows = build_frame_events(p, mission_dir, dets_only=dets_only)
     return jsonify(rows)
 
 
@@ -350,6 +378,10 @@ def mission_image(mission_id: str):
 
     Optional ``max_side`` (32–640): downscale JPEG/PNG in-process for thumbnails
     and training main view (640). Falls back to the original file if OpenCV is unavailable.
+
+    Mission frames are write-once, so responses carry a long ``immutable`` Cache-Control:
+    scrubbing back and forth in the frame viewer (or re-opening a mission) then costs zero
+    requests instead of one conditional round-trip per JPEG.
     """
     if not mission_id.isdigit():
         abort(400)
@@ -396,12 +428,12 @@ def mission_image(mission_id: str):
                         return Response(
                             enc.tobytes(),
                             mimetype="image/jpeg",
-                            headers={
-                                "Cache-Control": "public, max-age=604800",
-                            },
+                            headers={"Cache-Control": _IMMUTABLE_CACHE_CONTROL},
                         )
 
-    return send_file(target)
+    resp = send_file(target, conditional=True)
+    resp.headers["Cache-Control"] = _IMMUTABLE_CACHE_CONTROL
+    return resp
 
 
 @bp.get("/missions/<mission_id>/video")

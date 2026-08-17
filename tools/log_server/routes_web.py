@@ -11,7 +11,7 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 from services.mission_store import mission_paths, resolve_mission_log, sim_files as list_sim_files
 from services.mission_store import truth_files_for_ui
 from services.mission_store import list_real_mission_setups
-from services.mission_store import iter_events
+from services.mission_store import iter_events_of_kind, mission_header
 from services.mission_index import default_index_path, index_matches_log
 from services.training_data import (
     default_model_path,
@@ -45,11 +45,9 @@ def _mission_page_common(mission_id: str) -> dict[str, Any]:
     if p is None:
         abort(404)
 
-    mission_ids = [
-        d.name
-        for d in mission_paths(missions_root)
-        if (d / "mission.jsonl").exists()
-    ]
+    # mission_paths() already filters to dirs that have a mission.jsonl and returns them
+    # newest-flight-first; re-stat'ing each one here was pure duplicate I/O.
+    mission_ids = [d.name for d in mission_paths(missions_root)]
     try:
         idx = mission_ids.index(mission_id)
     except ValueError:
@@ -57,12 +55,15 @@ def _mission_page_common(mission_id: str) -> dict[str, Any]:
     prev_mission_id = mission_ids[idx - 1] if idx > 0 else None
     next_mission_id = mission_ids[idx + 1] if 0 <= idx < len(mission_ids) - 1 else None
 
+    # The header is the log's first line in practice; read just that. Only if it isn't
+    # do we pay for an indexed lookup (which can block on building the sqlite sidecar).
     auto_truth = ""
-    for ev in iter_events(p):
-        if ev.get("event") == "mission_start":
-            raw = ev.get("sim_truth_file", "") or ""
-            auto_truth = Path(str(raw)).name if raw else ""
-            break
+    hdr = mission_header(p)
+    if hdr is None:
+        hdr = next(iter_events_of_kind(p, "mission_start"), None)
+    if hdr is not None:
+        raw = hdr.get("sim_truth_file", "") or ""
+        auto_truth = Path(str(raw)).name if raw else ""
     sf = truth_files_for_ui(sim_root, src)
     return {
         "mission_id": mission_id,
@@ -88,12 +89,9 @@ def _missions_root(src: str | None = None) -> Path:
 
 
 def _latest_mission_id(src: str) -> str | None:
-    mids = [
-        d.name
-        for d in mission_paths(_missions_root(src))
-        if (d / "mission.jsonl").exists()
-    ]
-    return mids[-1] if mids else None
+    # mission_paths() is newest-first (by mission_start time), so the latest flight is [0].
+    mids = [d.name for d in mission_paths(_missions_root(src))]
+    return mids[0] if mids else None
 
 
 @bp.context_processor
@@ -112,8 +110,9 @@ def missions_list():
     src = request.args.get("src", "sim")
     missions_root = _missions_root(src)
     sim_root: Path = current_app.config["SIM_DATA_ROOT"]
+    # Newest flight first (mission_paths sorts on the mission_start header).
     missions = [
-        {"id": d.name, "path": str(d / "mission.jsonl"), "exists": (d / "mission.jsonl").exists()}
+        {"id": d.name, "path": str(d / "mission.jsonl"), "exists": True}
         for d in mission_paths(missions_root)
     ]
     return render_template(
@@ -233,16 +232,13 @@ def compare_page():
     src = request.args.get("src", "sim")
     missions_root = _missions_root(src)
     sim_root: Path = current_app.config["SIM_DATA_ROOT"]
-    missions = [
-        {"id": d.name}
-        for d in mission_paths(missions_root)
-        if (d / "mission.jsonl").exists()
-    ]
+    missions = [{"id": d.name} for d in mission_paths(missions_root)]
     sel_a = request.args.get("a", "")
     sel_b = request.args.get("b", "")
     if not sel_a and not sel_b and len(missions) >= 2:
-        sel_a = missions[-2]["id"]
-        sel_b = missions[-1]["id"]
+        # missions is newest-first: default to comparing the two most recent flights.
+        sel_a = missions[1]["id"]
+        sel_b = missions[0]["id"]
     latest = _latest_mission_id(src)
     if latest:
         nav = _nav_urls_for_mission(latest, src)

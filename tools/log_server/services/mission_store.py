@@ -36,7 +36,12 @@ def _ensure_index(path: Path):
     )
 
     ip = default_index_path(path.resolve())
-    if _auto_index_enabled() and path.is_file() and not index_matches_log(path, ip):
+    ok = index_matches_log(path, ip)
+    if ok:
+        # index_matches_log opens the sqlite file and reads `meta`; calling it twice per
+        # request (once here, once on the way out) doubled that cost for no benefit.
+        return ip, True
+    if _auto_index_enabled() and path.is_file():
         try:
             build_mission_index(path, force=False)
         except Exception as e:
@@ -46,7 +51,8 @@ def _ensure_index(path: Path):
             # NOT an OSError, so it must be caught here explicitly.
             print(f"[mission_store] index build failed for {path}: {e}; "
                   f"reading JSONL directly", file=sys.stderr)
-    return ip, index_matches_log(path, ip)
+        ok = index_matches_log(path, ip)
+    return ip, ok
 
 
 def iter_events(path: Path) -> Iterator[dict[str, Any]]:
@@ -62,37 +68,139 @@ def iter_events(path: Path) -> Iterator[dict[str, Any]]:
 
 def iter_events_of_kind(path: Path, event: str) -> Iterator[dict[str, Any]]:
     """Yield events with ``event == event`` — prefers SQLite index when valid (fast for ``fsm_tick``)."""
+    yield from iter_events_of_kinds(path, (event,))
+
+
+def iter_events_of_kinds(
+    path: Path, kinds: "frozenset[str] | set[str] | tuple[str, ...]"
+) -> Iterator[dict[str, Any]]:
+    """Yield events whose ``event`` is in ``kinds``, in log order.
+
+    Uses the sqlite sidecar's ``idx_events_event`` when it is valid, so an endpoint that
+    only wants (say) the five spray event kinds never parses the ~20 KB telemetry rows that
+    make up the bulk of a real mission log. Falls back to a substring-prescreened JSONL scan.
+    """
     from services.mission_index import iter_events_from_index
+
+    wanted = frozenset(kinds)
+    if not wanted:
+        return
 
     ip, ok = _ensure_index(path)
     if path.is_file() and ok:
-        yield from iter_events_from_index(ip, event=event)
+        yield from iter_events_from_index(ip, events=wanted)
         return
-    spaced = f'"event": "{event}"'
-    compact = f'"event":"{event}"'
+
+    # JSONL fallback: cheap substring prescreen before paying for json.loads.
+    needles = tuple(
+        n for e in wanted for n in (f'"event": "{e}"', f'"event":"{e}"')
+    )
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            if spaced not in line and compact not in line:
+            if not any(n in line for n in needles):
                 continue
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(obj, dict) and obj.get("event") == event:
+            if isinstance(obj, dict) and obj.get("event") in wanted:
                 yield obj
 
 
+# Mission start timestamps, keyed by (resolved log path, mtime_ns, size). A mission.jsonl is
+# append-only, so its first line never changes for a given (mtime, size) revision.
+_START_TS_CACHE: dict[tuple[str, int, int], float] = {}
+
+# The header is the first line; cap the read so a corrupt/huge first line can't stall a listing.
+_HEADER_READ_BYTES = 64 * 1024
+
+
+def _parse_header_start_ts(raw: str) -> float | None:
+    """Seconds-since-epoch from a ``mission_start`` header line, or ``None``."""
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(obj, dict) or obj.get("event") != "mission_start":
+        return None
+    tn = obj.get("time_ns")
+    if isinstance(tn, (int, float)) and tn > 0:
+        return float(tn) / 1e9
+    from services.geometry import parse_ts
+
+    ts = parse_ts(obj.get("ts", ""))
+    return float(ts) if ts > 0 else None
+
+
+def mission_header(log_path: Path) -> dict[str, Any] | None:
+    """Parsed ``mission_start`` header if it is the first line of the log, else ``None``.
+
+    First-line-only read: page renders that just want ``sim_truth_file`` must not pull a
+    whole 800 MB log (or block on building its sqlite index) to find it.
+    """
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.readline(_HEADER_READ_BYTES).strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(obj, dict) and obj.get("event") == "mission_start":
+        return obj
+    return None
+
+
+def mission_start_ts(log_path: Path) -> float:
+    """Mission start time (epoch seconds).
+
+    Reads **only the first line** of ``mission.jsonl`` (the ``mission_start`` header) and
+    memoises it per file revision, so listing 60 real missions never parses whole logs.
+    Falls back to the file's mtime when the header is missing or malformed.
+    """
+    try:
+        st = log_path.stat()
+    except OSError:
+        return 0.0
+    key = (str(log_path), st.st_mtime_ns, st.st_size)
+    hit = _START_TS_CACHE.get(key)
+    if hit is not None:
+        return hit
+    ts: float | None = None
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            ts = _parse_header_start_ts(f.readline(_HEADER_READ_BYTES).strip())
+    except OSError:
+        ts = None
+    if ts is None:
+        ts = float(st.st_mtime)
+    if len(_START_TS_CACHE) > 4096:
+        _START_TS_CACHE.clear()
+    _START_TS_CACHE[key] = ts
+    return ts
+
+
 def mission_paths(missions_root: Path) -> list[Path]:
+    """Mission dirs, **newest flight first** (by ``mission_start`` time, mtime as fallback)."""
     if not missions_root.exists():
         return []
     dirs = [
         p for p in missions_root.iterdir()
         if p.is_dir() and p.name.isdigit() and (p / "mission.jsonl").is_file()
     ]
-    return sorted(dirs, key=lambda p: (p / "mission.jsonl").stat().st_mtime, reverse=True)
+    # Secondary key on the (numeric) mission id keeps the order stable when two missions
+    # report the same start time.
+    return sorted(
+        dirs,
+        key=lambda p: (mission_start_ts(p / "mission.jsonl"), int(p.name)),
+        reverse=True,
+    )
 
 
 def sim_files(sim_data_root: Path) -> list[str]:
