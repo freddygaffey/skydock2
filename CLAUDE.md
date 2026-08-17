@@ -53,6 +53,12 @@ unread. Re-raise important open items (briefly, not naggingly) at natural
 moments until they get an actual yes/no; keep a short "open items" note at
 the end of a long reply so nothing important is buried mid-text.
 
+Sometimes (not always) have Fred run the tests himself — hand him the exact
+command and let him execute and read the result, so the test workflow becomes
+his muscle memory too. Good moments: after HE edited the code under test, or
+when a run's output is worth him seeing raw. Claude still runs tests
+routinely when verifying its own changes.
+
 ## Sim-to-real unification — status (June 11, 2026)
 
 Goal: unify sim and real code paths, then a testing ladder, then a constant-tuning procedure.
