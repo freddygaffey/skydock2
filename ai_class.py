@@ -1,4 +1,3 @@
-import copy
 import threading
 import time
 from dataclasses import dataclass, field
@@ -40,11 +39,13 @@ class Frame:
         # sim_ai) pass the actual source size. None = unknown.
         self.width = width
         self.height = height
-        # state at generation time, for correct back-projection; deep-copied so
-        # later telemetry updates can't retroactively move this frame
-        self.drone_state = copy.deepcopy(drone_state) if drone_state is not None else None
+        if det and drone_state is None:
+            raise ValueError("Frame with detections requires a drone_state")
+        self.drone_state = drone_state.snapshot() if drone_state is not None else None
 
     def add_detection(self,det:Detection):
+        if self.drone_state is None:
+            raise ValueError("cannot add detections to a Frame with no drone_state")
         # match "sports ball" or "sports_ball" depending on model format
         if "ball" not in det.label.lower() and "frisbee" not in det.label.lower(): return
         self.detection.append(det)

@@ -120,7 +120,7 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             shared_data.N_pid.clear_history()
             shared_data.E_pid.clear_history()
             telemetry_singleton.stop_velocity_command()
-            if drone_state.force_homing: 
+            if drone_state.force_homing:
                 return DroneStateEnum.HOMING
             else:
                 # TODO: make leaving condtinal on wether or not the gc has given all clear
@@ -132,9 +132,8 @@ def homing(drone_state:DroneStateForHoming,frame:Frame):
             
     N, E = detection_to_ned(drone_state, best_det)
 
-    
-    vN = shared_data.N_pid.get_v(N)
-    vE = shared_data.E_pid.get_v(E)
+    vN = shared_data.N_pid.get_v(N,best_det.time_ns,drone_state.sim_speed)
+    vE = shared_data.E_pid.get_v(E,best_det.time_ns,drone_state.sim_speed)
 
     if drone_state.altitude_rel_home > MAX_HOMING_ALT:
         _alt_warn("max", "exceed max alt")

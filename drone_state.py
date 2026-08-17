@@ -14,13 +14,13 @@ to a detection timestamp so projections line up with when the frame was captured
 """
 
 from dataclasses import dataclass, field
-from sys import exc_info
 from pymavlink import mavutil
 from collections import deque
 import math
 from math import cos, radians
 import time
 import constants
+import copy
 
 # EXPERIMENTAL camera pixel->body axis mapping: ray_body = CAM_TO_BODY @ [x_cam, y_cam, 1].
 # Measured from the May 2026 flight logs by three independent methods (surveyed-truth fit,
@@ -289,3 +289,11 @@ class DroneStateForHoming:
             self.sim_speed += (measured - self.sim_speed) * 0.5
         except ZeroDivisionError:
             pass
+
+    def snapshot(self)->"DroneStateForHoming":
+        s = copy.copy(self)
+        s.rotation_history = deque([s.rotation], maxlen=100)
+        s.gps_history = deque(maxlen=100)
+        s.wall_sim_time = deque(maxlen=100)
+
+        return s

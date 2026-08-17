@@ -32,7 +32,7 @@ def scan(drone_state:DroneStateForHoming,frame:Frame):
             import time
             time.sleep(10/TARGET_SIM_SPEED)
         return DroneStateEnum.GOTO
-    db_abstraction.log_drone_state_and_frame(drone_state,frame)
+    db_abstraction.log_drone_state_and_frame(frame.drone_state or drone_state,frame)
 
     telemetry_singleton.fly_to_point(point.lat,point.lon,SCAN_HEIGHT)
     if MIN_DIST_FROM_WAYPOINT > (haversine_distance(drone_state.latitude,drone_state.longitude,point.lat,point.lon)):

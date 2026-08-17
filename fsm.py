@@ -113,7 +113,7 @@ class StateMachine:
         
     def _update_scan(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         if (check := self._override_and_rtl_checks(drone_state)):return check
-        return scan(getattr(frame, 'drone_state', None) or drone_state, frame)
+        return scan(drone_state, frame)
 
     def _update_goto(self,frame:Frame,drone_state:DroneStateForHoming) -> DroneStateEnum:
         if (check := self._override_and_rtl_checks(drone_state)):return check
