@@ -40,10 +40,12 @@ fi
 
 for mid in "${MIDS[@]}"; do
   echo "--- $mid ---"
-  # small files: append mode for growing mission.jsonl
-  rsync -aH --partial --inplace --append-verify \
+  # small files: append mode for growing mission.jsonl.
+  # macOS system rsync is 2.6.9-era: no --append-verify, no '***' filters —
+  # keep to options in its usage list.
+  rsync -aH --partial --inplace --append \
     --include='*.jsonl' --include='*.json' --include='manifest.txt' \
-    --exclude='frames/***' --exclude='*' \
+    --exclude='frames' --exclude='*' \
     -e "ssh $SSH_OPTS" \
     "$RPI_SSH:$REMOTE_ROOT/missions/$mid/" "$LOCAL/$mid/"
   # frames: whole-file, skip unchanged by size+mtime

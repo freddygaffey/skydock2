@@ -27,6 +27,15 @@ BASH4_ONLY = [
     (r"&>>", "&>> redirect (bash 4)"),
 ]
 
+# macOS system rsync is 2.6.9-era (openrsync); these rsync-3 options broke in
+# the field or are known-missing from its usage list.
+RSYNC3_ONLY = [
+    (r"--append-verify", "--append-verify (rsync 3)"),
+    (r"\*\*\*", "'***' filter patterns (rsync 3)"),
+    (r"--info[= ]", "--info (rsync 3.1)"),
+    (r"--chown[= ]", "--chown (rsync 3.1)"),
+]
+
 
 def test_script_avoids_bash4_only_constructs():
     # scan code only — comments may legitimately mention the banned builtins
@@ -36,6 +45,15 @@ def test_script_avoids_bash4_only_constructs():
     assert not hits, (
         f"{SCRIPT.name} uses bash-4-only constructs {hits}; "
         "macOS system bash is 3.2 — keep the script 3.2-portable")
+
+
+def test_script_avoids_rsync3_only_options():
+    code = "\n".join(line.split("#", 1)[0] for line in SCRIPT.read_text().splitlines()
+                     if not line.lstrip().startswith("#"))
+    hits = [name for pattern, name in RSYNC3_ONLY if re.search(pattern, code)]
+    assert not hits, (
+        f"{SCRIPT.name} uses rsync-3-only options {hits}; "
+        "macOS system rsync is 2.6.9-era — keep to its usage list")
 
 
 def _stub_bin(tmp_path: Path, mission_ids):
