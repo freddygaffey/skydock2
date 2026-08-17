@@ -29,7 +29,7 @@ else
   MIDS=()
   while IFS= read -r mid; do
     [ -n "$mid" ] && MIDS+=("$mid")
-  done < <(ssh $SSH_OPTS "$RPI_SSH" "ls -1d $REMOTE_ROOT/missions/[0-9]* 2>/dev/null | xargs -n1 basename | sort")
+  done < <(ssh $SSH_OPTS "$RPI_SSH" "ls -1d $REMOTE_ROOT/missions/[0-9]* 2>/dev/null | xargs -n1 basename | sort -r")
 fi
 
 # bash 3.2 + set -u: expanding an empty array is an error — bail out first.

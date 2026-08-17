@@ -81,13 +81,18 @@ def _run(tmp_path: Path, mission_ids, args=()):
     return r, calls
 
 
-def test_syncs_each_mission_listed_by_the_pi(tmp_path):
-    r, calls = _run(tmp_path, ["0001", "0002"])
+def test_syncs_each_mission_newest_first(tmp_path):
+    # The stub ssh ignores the remote `sort -r`, so feed ids pre-sorted the way
+    # ssh would return them and assert the script preserves newest-first order.
+    r, calls = _run(tmp_path, ["0002", "0001"])
     assert r.returncode == 0, r.stdout + r.stderr
     logged = calls.read_text() if calls.exists() else ""
-    # two rsync invocations per mission (files + frames)
     for mid in ("0001", "0002"):
         assert f"missions/{mid}/" in logged, (logged, r.stdout, r.stderr)
+    # newest (0002) synced before 0001
+    assert logged.index("missions/0002/") < logged.index("missions/0001/")
+    # and the script itself asks the Pi for reverse order
+    assert "sort -r" in SCRIPT.read_text()
 
 
 def test_no_missions_on_pi_exits_cleanly(tmp_path):
