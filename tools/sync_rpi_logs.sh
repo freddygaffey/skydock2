@@ -25,7 +25,17 @@ mkdir -p "$LOCAL"
 if [[ "$#" -gt 0 ]]; then
   MIDS=("$@")
 else
-  mapfile -t MIDS < <(ssh $SSH_OPTS "$RPI_SSH" "ls -1d $REMOTE_ROOT/missions/[0-9]* 2>/dev/null | xargs -n1 basename | sort")
+  # macOS ships bash 3.2: no mapfile/readarray — stay 3.2-portable here.
+  MIDS=()
+  while IFS= read -r mid; do
+    [ -n "$mid" ] && MIDS+=("$mid")
+  done < <(ssh $SSH_OPTS "$RPI_SSH" "ls -1d $REMOTE_ROOT/missions/[0-9]* 2>/dev/null | xargs -n1 basename | sort")
+fi
+
+# bash 3.2 + set -u: expanding an empty array is an error — bail out first.
+if [ "${#MIDS[@]}" -eq 0 ]; then
+  echo "no missions found on $RPI_SSH"
+  exit 0
 fi
 
 for mid in "${MIDS[@]}"; do
